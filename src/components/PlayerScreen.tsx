@@ -66,30 +66,10 @@ export default function PlayerScreen() {
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
 
   useEffect(() => {
-    async function resolveUrl() {
-      const initial = streamUrl ? decodeURIComponent(streamUrl) : SAMPLE_HLS;
-
-      // Resolve redirects fully client-side — the browser follows all redirects natively,
-      // including auth-token-embedded CDN links (Torbox, MediaFusion, etc.).
-      // No server proxy required or allowed.
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(initial, {
-          method: 'HEAD',
-          redirect: 'follow',
-          signal: controller.signal,
-        });
-        clearTimeout(tid);
-        // res.url is the fully-resolved final URL after all redirects
-        setResolvedSrc(res.url || initial);
-      } catch {
-        // HEAD failed (CORS or timeout) — fall back to using the original URL directly.
-        // The browser will still follow redirects when the <video> element loads it.
-        setResolvedSrc(initial);
-      }
-    }
-    resolveUrl();
+    // The native <video> element follows auth-embedded redirects (MediaFusion → Torbox CDN)
+    // natively without CORS restrictions. No HEAD pre-resolution fetch is needed.
+    const initial = streamUrl ? decodeURIComponent(streamUrl) : SAMPLE_HLS;
+    setResolvedSrc(initial);
   }, [streamUrl]);
 
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);

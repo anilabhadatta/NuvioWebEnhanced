@@ -25,7 +25,9 @@ export async function fetchUserAddons(): Promise<NuvioAddon[]> {
   let addons: NuvioAddon[] = [];
 
   if (error) {
-    console.error("Error fetching addons:", error);
+    if (error.code !== '42501') {
+      console.error("Error fetching addons:", error);
+    }
     addons = getFallbackAddons();
   } else {
     addons = data as NuvioAddon[];
@@ -134,8 +136,24 @@ function buildSubtitleUrl(manifestUrl: string, type: string, videoId: string): s
 
 export async function fetchAllSubtitles(type: string, videoId: string): Promise<SubtitleItem[]> {
   const addons = await fetchUserAddons();
-  
-  const promises = addons.map(async (addon) => {
+
+  // Known stream/catalog-only addons that never expose a subtitle endpoint.
+  // Hitting them produces guaranteed 404s, so we skip them proactively.
+  const SUBTITLE_BLACKLIST = [
+    "cinemeta.strem.io",
+    "torrentio.strem.fun",
+  ];
+
+  const subtitleAddons = addons.filter((addon) => {
+    try {
+      const host = new URL(addon.url).hostname;
+      return !SUBTITLE_BLACKLIST.some((b) => host.includes(b));
+    } catch {
+      return false;
+    }
+  });
+
+  const promises = subtitleAddons.map(async (addon) => {
     try {
       const subUrl = buildSubtitleUrl(addon.url, type, videoId);
       const res = await fetch(subUrl);
