@@ -43,17 +43,17 @@ export async function fetchUserAddons(): Promise<NuvioAddon[]> {
           if (!addons.find(a => a.url === p.url)) {
             // Check if it's a repo with providers
             if (p.providers && p.providers.length > 0) {
-               // Add each provider URL. Usually provider URL is something like the plugin url
-               // But wait, the repo just installs the providers. 
-               // Actually we just add the repo url itself, Nuvio stream parsing will handle it if supported.
-               addons.push({ url: p.url, name: p.name, enabled: true, sort_order: addons.length });
+              // Add each provider URL. Usually provider URL is something like the plugin url
+              // But wait, the repo just installs the providers. 
+              // Actually we just add the repo url itself, Nuvio stream parsing will handle it if supported.
+              addons.push({ url: p.url, name: p.name, enabled: true, sort_order: addons.length });
             } else {
-               addons.push({ url: p.url, name: p.name, enabled: true, sort_order: addons.length });
+              addons.push({ url: p.url, name: p.name, enabled: true, sort_order: addons.length });
             }
           }
         });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   return addons;
@@ -62,8 +62,7 @@ export async function fetchUserAddons(): Promise<NuvioAddon[]> {
 function getFallbackAddons(): NuvioAddon[] {
   return [
     { url: "https://v3-cinemeta.strem.io/manifest.json", name: "Cinemeta", enabled: true, sort_order: 0 },
-    { url: "https://torrentio.strem.fun/manifest.json", name: "Torrentio", enabled: true, sort_order: 1 },
-    { url: "https://opensubtitles-v3.strem.io/manifest.json", name: "OpenSubtitles v3", enabled: true, sort_order: 2 }
+    { url: "https://opensubtitles-v3.strem.io/manifest.json", name: "OpenSubtitles v3", enabled: true, sort_order: 1 }
   ];
 }
 
@@ -93,17 +92,17 @@ export async function fetchStreamsFromAddon(addon: NuvioAddon, type: string, vid
     console.log("Fetching streams from:", streamUrl);
     const res = await fetch(streamUrl);
     if (!res.ok) return [];
-    
+
     const data = await res.json();
     if (!data || !data.streams) return [];
-    
+
     return data.streams.map((s: any) => {
       let prettyName = addon.name || addon.url;
       if (prettyName.startsWith("http")) {
         try {
           const urlObj = new URL(prettyName);
           prettyName = urlObj.hostname.replace("www.", "");
-        } catch(e) {}
+        } catch (e) { }
       }
       return {
         name: s.name,
@@ -142,6 +141,7 @@ export async function fetchAllSubtitles(type: string, videoId: string): Promise<
   const SUBTITLE_BLACKLIST = [
     "cinemeta.strem.io",
     "torrentio.strem.fun",
+    "mediafusion"
   ];
 
   const subtitleAddons = addons.filter((addon) => {
@@ -160,13 +160,13 @@ export async function fetchAllSubtitles(type: string, videoId: string): Promise<
       if (!res.ok) return [];
       const data = await res.json();
       if (!data || !data.subtitles) return [];
-      
+
       return data.subtitles.map((sub: any, idx: number) => {
         let prettyName = addon.name || addon.url;
         if (prettyName.startsWith("http")) {
           try {
-             prettyName = new URL(prettyName).hostname.replace("www.", "");
-          } catch(e){}
+            prettyName = new URL(prettyName).hostname.replace("www.", "");
+          } catch (e) { }
         }
         return {
           id: `${prettyName}-${idx}`,
@@ -175,8 +175,8 @@ export async function fetchAllSubtitles(type: string, videoId: string): Promise<
           url: sub.url
         }
       });
-    } catch(e) { 
-      return []; 
+    } catch (e) {
+      return [];
     }
   });
 

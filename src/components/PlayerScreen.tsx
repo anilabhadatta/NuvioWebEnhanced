@@ -97,52 +97,95 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (movieId && mediaType) {
       setLoadingSubtitles(true);
-      const type = isSeries ? "tv" : "movie";
-      const fetchId = isSeries ? `tmdb:${movieId}:${season}:${episode}` : `tmdb:${movieId}`;
       
-      import('@/lib/addonService').then(({ fetchAllSubtitles }) => {
-        fetchAllSubtitles(type, fetchId).then(subs => {
+      const loadSubtitles = async () => {
+        try {
+          const { fetchExternalIds } = await import("@/lib/tmdb");
+          const { fetchAllSubtitles } = await import("@/lib/addonService");
+          
+          // Stremio addons expect "series", not "tv"
+          const stremioType = isSeries ? "series" : "movie";
+          
+          let imdbId = null;
+          try {
+            // TMDB expects "tv" or "movie"
+            const tmdbType = isSeries ? "tv" : "movie";
+            const externalIds = await fetchExternalIds(parseInt(movieId), tmdbType);
+            if (externalIds?.imdb_id) imdbId = externalIds.imdb_id;
+          } catch (e) {}
+
+          const baseId = imdbId || `tmdb:${movieId}`;
+          const fetchId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
+          
+          const subs = await fetchAllSubtitles(stremioType, fetchId);
           setAddonSubtitles(subs);
+        } catch (e) {
+          console.error("Failed to load subtitles:", e);
+        } finally {
           setLoadingSubtitles(false);
-        }).catch(() => setLoadingSubtitles(false));
-      });
+        }
+      };
+
+      loadSubtitles();
     }
   }, [movieId, mediaType, season, episode]);
 
-  const loadExternalSubtitle = (id: string, url: string, name: string) => {
+  const loadExternalSubtitle = async (id: string, url: string, name: string) => {
     const video = videoRef.current;
     if (!video) return;
 
-    // Remove any previously added external tracks
-    const existing = video.querySelectorAll('track.addon-sub');
-    existing.forEach(t => t.remove());
+    try {
+      // 1. Fetch the subtitle via Javascript (Stremio subtitle CDNs have CORS enabled)
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to fetch subtitle");
+      let text = await res.text();
 
-    const track = document.createElement("track");
-    track.className = "addon-sub";
-    track.kind = "subtitles";
-    track.label = name;
-    track.srclang = "en";
-    track.src = url;
-    track.default = true;
-
-    video.appendChild(track);
-    
-    // Enable the track
-    setTimeout(() => {
-      for (let i = 0; i < video.textTracks.length; i++) {
-        if (video.textTracks[i].label === name || video.textTracks[i].mode === "showing") {
-          video.textTracks[i].mode = "hidden"; // Hide others
-        }
+      // 2. Convert SRT to VTT if necessary, as browsers only support VTT tracks
+      if (!text.includes("WEBVTT")) {
+        text = "WEBVTT\n\n" + text.replace(/\r\n|\r|\n/g, '\n').replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
       }
-      for (let i = 0; i < video.textTracks.length; i++) {
-        if (video.textTracks[i].label === name) {
-          video.textTracks[i].mode = "showing";
-        }
-      }
-    }, 100);
 
-    setActiveExternalSub(id);
-    setSelectedSub(-2); // -2 indicates external
+      // 3. Create a same-origin Blob URL to bypass HTML5 opaque video cross-origin track restrictions
+      const blob = new Blob([text], { type: 'text/vtt' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      // Remove any previously added external tracks
+      const existing = video.querySelectorAll('track.addon-sub');
+      existing.forEach(t => {
+        if (t instanceof HTMLTrackElement && t.src.startsWith('blob:')) URL.revokeObjectURL(t.src);
+        t.remove();
+      });
+
+      const track = document.createElement("track");
+      track.className = "addon-sub";
+      track.kind = "subtitles";
+      track.label = name;
+      track.srclang = "en";
+      track.src = blobUrl;
+      track.default = true;
+
+      video.appendChild(track);
+
+      // Enable the track
+      setTimeout(() => {
+        if (!video.textTracks) return;
+        for (let i = 0; i < video.textTracks.length; i++) {
+          if (video.textTracks[i].label === name || video.textTracks[i].mode === "showing") {
+            video.textTracks[i].mode = "hidden"; // Hide others
+          }
+        }
+        for (let i = 0; i < video.textTracks.length; i++) {
+          if (video.textTracks[i].label === name) {
+            video.textTracks[i].mode = "showing";
+          }
+        }
+      }, 100);
+
+      setActiveExternalSub(id);
+      setSelectedSub(-2); // -2 indicates external
+    } catch (e) {
+      console.error("Error loading subtitle track", e);
+    }
     setOpenMenu(null);
   };
 
@@ -151,7 +194,7 @@ export default function PlayerScreen() {
     async function loadSkips() {
       setPlayerError(null); // Reset any previous errors
       if (!movieId) return;
-      
+
       // We only support Series intro skipping easily via IntroDB right now
       if (isSeries && season && episode) {
         try {
@@ -242,7 +285,7 @@ export default function PlayerScreen() {
         }
 
         if (resumeTime > 0 && video) video.currentTime = resumeTime;
-        video?.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => {});
+        video?.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => { });
       } catch (err) {
         console.error('Shaka load error — falling back to native video', err);
         if (mounted && video) {
@@ -250,7 +293,7 @@ export default function PlayerScreen() {
           video.src = resolvedSrc;
           video.load();
           if (resumeTime > 0) video.currentTime = resumeTime;
-          video.play().catch(() => {});
+          video.play().catch(() => { });
         }
       }
     }
@@ -277,7 +320,7 @@ export default function PlayerScreen() {
               setSelectedSub(hlsObj.subtitleTrack);
             }
             if (resumeTime > 0 && video) video.currentTime = resumeTime;
-            video?.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => {});
+            video?.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => { });
           });
         } else if (video?.canPlayType('application/vnd.apple.mpegurl')) {
           // Safari native HLS
@@ -353,7 +396,7 @@ export default function PlayerScreen() {
       mounted = false;
       if (hlsObj) { hlsObj.destroy(); setHlsInstance(null); }
       if (shakaRef.current) { shakaRef.current.destroy(); shakaRef.current = null; }
-      video?.removeEventListener('error', () => {});
+      video?.removeEventListener('error', () => { });
       video?.pause();
       video?.removeAttribute('src');
       video?.load(); // flush MSE buffers
@@ -379,7 +422,7 @@ export default function PlayerScreen() {
     const currentSkip = skipIntervals.find(
       (interval) => currentTime >= interval.startTime && currentTime <= interval.endTime
     );
-    
+
     if (currentSkip) {
       setActiveSkip(currentSkip);
     } else {
@@ -524,7 +567,7 @@ export default function PlayerScreen() {
             videoRef.current?.play().then(() => {
               setIsPlaying(true);
               setAutoplayBlocked(false);
-            }).catch(() => {});
+            }).catch(() => { });
           }}
         >
           <div className="w-20 h-20 rounded-full bg-white/10 border border-white/30 backdrop-blur-sm flex items-center justify-center hover:bg-white/20 transition-all">
@@ -544,7 +587,7 @@ export default function PlayerScreen() {
           </svg>
           <p className="text-white font-bold text-xl mb-2">Playback Failed</p>
           <p className="text-white/70 max-w-md">{playerError}</p>
-          <button 
+          <button
             onClick={() => { setTargetEpisode(undefined); setShowStreamPicker(true); }}
             className="mt-6 px-6 py-2.5 bg-white text-black font-semibold rounded-xl hover:bg-gray-200 transition-colors"
           >
@@ -589,9 +632,8 @@ export default function PlayerScreen() {
 
       {/* Controls overlay */}
       <div
-        className={`absolute inset-0 transition-opacity duration-300 pointer-events-none ${
-          showControls ? "opacity-100" : "opacity-0"
-        }`}
+        className={`absolute inset-0 transition-opacity duration-300 pointer-events-none ${showControls ? "opacity-100" : "opacity-0"
+          }`}
       >
         {/* Top bar */}
         <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent p-5 flex items-center gap-4 pointer-events-auto">
@@ -683,17 +725,17 @@ export default function PlayerScreen() {
                         <button onClick={() => setSubTab("style")} className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${subTab === "style" ? "bg-white text-black" : "text-[#aaa] hover:text-white"}`}>Style</button>
                       </div>
                     </div>
-                    
+
                     <div className="flex-1 overflow-y-auto p-2 scrollbar-hide">
                       {subTab === "builtin" && (
                         <div className="flex flex-col gap-1">
                           {subtitles.map((s) => (
                             <button
                               key={s.id}
-                              onClick={() => { 
-                                setSelectedSub(s.id); 
+                              onClick={() => {
+                                setSelectedSub(s.id);
                                 if (hlsInstance) hlsInstance.subtitleTrack = s.id;
-                                setOpenMenu(null); 
+                                setOpenMenu(null);
                               }}
                               className={`flex items-center justify-between w-full px-4 py-3 rounded-xl text-sm transition-colors ${selectedSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] bg-black/20 hover:bg-white/5"}`}
                             >
@@ -707,7 +749,7 @@ export default function PlayerScreen() {
                           ))}
                         </div>
                       )}
-                      
+
                       {subTab === "addons" && (
                         <div className="flex flex-col h-full">
                           {loadingSubtitles ? (
@@ -740,7 +782,7 @@ export default function PlayerScreen() {
                           )}
                         </div>
                       )}
-                      
+
                       {subTab === "style" && (
                         <div className="flex flex-col gap-4 p-2 pb-6 text-sm">
                           <div className="flex items-center justify-between">
@@ -751,7 +793,7 @@ export default function PlayerScreen() {
                               <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">+</button>
                             </div>
                           </div>
-                          
+
                           <div className="flex items-center justify-between">
                             <span className="text-white font-semibold">Font Size</span>
                             <div className="flex items-center gap-3 bg-black/40 rounded-full px-1 py-1">
@@ -760,7 +802,7 @@ export default function PlayerScreen() {
                               <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">+</button>
                             </div>
                           </div>
-                          
+
                           <div className="flex items-center justify-between">
                             <span className="text-white font-semibold">Shadow</span>
                             <button className="px-3 py-1 bg-white text-black font-bold text-xs rounded-full">On</button>
@@ -791,14 +833,14 @@ export default function PlayerScreen() {
                       <div className="p-4 text-center">
                         <p className="text-white text-sm font-semibold mb-1">Track Selection Unavailable</p>
                         <p className="text-[#888] text-xs">Your browser doesn't natively support reading audio tracks from this file.</p>
-                        <p className="text-[#888] text-xs mt-2">In Chrome, you can enable: <br/><span className="text-white bg-black/50 px-1 py-0.5 rounded">chrome://flags/#enable-experimental-web-platform-features</span></p>
+                        <p className="text-[#888] text-xs mt-2">In Chrome, you can enable: <br /><span className="text-white bg-black/50 px-1 py-0.5 rounded">chrome://flags/#enable-experimental-web-platform-features</span></p>
                       </div>
                     ) : (
                       audios.map((a) => (
                         <button
                           key={a.id}
-                          onClick={() => { 
-                            setSelectedAudio(a.id); 
+                          onClick={() => {
+                            setSelectedAudio(a.id);
                             if (hlsInstance) {
                               hlsInstance.audioTrack = a.id;
                             } else if (shakaRef.current) {
@@ -823,7 +865,7 @@ export default function PlayerScreen() {
                                 }
                               }
                             }
-                            setOpenMenu(null); 
+                            setOpenMenu(null);
                           }}
                           className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
                         >
@@ -855,7 +897,7 @@ export default function PlayerScreen() {
                   {openMenu === "episodes" && (
                     <div className="absolute bottom-full left-0 mb-3 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-64 w-72 z-50 max-h-80 overflow-y-auto flex flex-col">
                       <div className="p-3 border-b border-white/10 shrink-0 sticky top-0 bg-[#1e1e1e] z-10">
-                         <p className="text-white font-bold text-sm">Season {season}</p>
+                        <p className="text-white font-bold text-sm">Season {season}</p>
                       </div>
                       <div className="flex-1 overflow-y-auto p-1">
                         {episodesList.map((ep: any) => (
