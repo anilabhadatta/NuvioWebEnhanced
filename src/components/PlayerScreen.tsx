@@ -3,6 +3,9 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { fetchExternalIds } from "@/lib/tmdb";
+import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
+
 const SAMPLE_HLS = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
 function formatTime(sec: number): string {
@@ -46,24 +49,54 @@ export default function PlayerScreen() {
 
   const movieId = searchParams.get("id");
   const mediaType = searchParams.get("type");
+  const streamUrl = searchParams.get("url");
+  const season = searchParams.get("s");
+  const episode = searchParams.get("e");
 
-  // Initialize HLS.js
+  const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
+  const [activeSkip, setActiveSkip] = useState<SkipInterval | null>(null);
+
+  // Fetch Skip Intervals (Intro/Outro)
+  useEffect(() => {
+    async function loadSkips() {
+      if (!movieId) return;
+      
+      const type = mediaType === "series" ? "tv" : "movie";
+      // We only support Series intro skipping easily via IntroDB right now
+      if (type === "tv" && season && episode) {
+        try {
+          const externalIds = await fetchExternalIds(movieId, "tv");
+          if (externalIds.imdb_id) {
+            const intervals = await fetchSkipIntervals(externalIds.imdb_id, parseInt(season), parseInt(episode));
+            setSkipIntervals(intervals);
+          }
+        } catch (e) {
+          console.error("Failed to load skip intervals", e);
+        }
+      }
+    }
+    loadSkips();
+  }, [movieId, mediaType, season, episode]);
+
+  // Initialize HLS.js or Native Playback
   useEffect(() => {
     let hls: any = null;
     const video = videoRef.current;
     if (!video) return;
 
-    const src = SAMPLE_HLS;
+    const src = streamUrl ? decodeURIComponent(streamUrl) : SAMPLE_HLS;
+    const isM3u8 = src.includes(".m3u8");
 
     import("hls.js").then(({ default: Hls }) => {
-      if (Hls.isSupported()) {
+      if (isM3u8 && Hls.isSupported()) {
         hls = new Hls({ maxBufferLength: 30 });
         hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           video.play().then(() => setIsPlaying(true)).catch(() => {});
         });
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      } else {
+        // Native playback for mp4/mkv (if supported) or native HLS (Safari)
         video.src = src;
         video.addEventListener("loadedmetadata", () => {
           video.play().then(() => setIsPlaying(true)).catch(() => {});
@@ -72,7 +105,7 @@ export default function PlayerScreen() {
     });
 
     return () => { if (hls) hls.destroy(); };
-  }, []);
+  }, [streamUrl]);
 
   // Show/hide controls on mouse move
   const resetControlsTimeout = useCallback(() => {
@@ -89,12 +122,20 @@ export default function PlayerScreen() {
 
   // Skip intro/outro triggers
   useEffect(() => {
-    if (currentTime >= 10 && currentTime <= 80) setShowSkipIntro(true);
-    else setShowSkipIntro(false);
+    // Check if we are inside a skip interval
+    const currentSkip = skipIntervals.find(
+      (interval) => currentTime >= interval.startTime && currentTime <= interval.endTime
+    );
+    
+    if (currentSkip) {
+      setActiveSkip(currentSkip);
+    } else {
+      setActiveSkip(null);
+    }
 
     if (duration > 0 && currentTime >= duration - 120) setShowNextEpisode(true);
     else setShowNextEpisode(false);
-  }, [currentTime, duration]);
+  }, [currentTime, duration, skipIntervals]);
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -176,13 +217,13 @@ export default function PlayerScreen() {
         </div>
       )}
 
-      {/* Skip Intro */}
-      {showSkipIntro && showControls && (
+      {/* Skip Segment Button */}
+      {activeSkip && showControls && (
         <button
-          onClick={() => { if (videoRef.current) videoRef.current.currentTime = 82; }}
+          onClick={() => { if (videoRef.current) videoRef.current.currentTime = activeSkip.endTime; }}
           className="absolute bottom-28 right-8 bg-black/70 hover:bg-black/90 border border-white/40 text-white font-semibold px-5 py-2.5 rounded-xl text-sm backdrop-blur-sm transition-all"
         >
-          Skip Intro →
+          Skip {activeSkip.type.charAt(0).toUpperCase() + activeSkip.type.slice(1)} →
         </button>
       )}
 

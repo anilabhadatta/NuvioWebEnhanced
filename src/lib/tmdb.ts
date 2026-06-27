@@ -9,6 +9,22 @@ export const tmdb = axios.create({
   baseURL: TMDB_BASE_URL,
 });
 
+export const fetchTvDetails = async (id: number | string) => {
+  const res = await tmdb.get(`/tv/${id}?api_key=${TMDB_API_KEY}&language=en-US`);
+  return res.data;
+};
+
+export const fetchTvSeason = async (tvId: number | string, seasonNumber: number) => {
+  const res = await tmdb.get(`/tv/${tvId}/season/${seasonNumber}?api_key=${TMDB_API_KEY}&language=en-US`);
+  return res.data;
+};
+
+export const fetchExternalIds = async (id: number | string, type: "movie" | "tv") => {
+  const res = await tmdb.get(`/${type}/${id}/external_ids?api_key=${TMDB_API_KEY}`);
+  return res.data;
+};
+
+
 export const TMDB_URLS = {
   trending: `/trending/all/week?api_key=${TMDB_API_KEY}&language=en-US`,
   trendingMovies: `/trending/movie/week?api_key=${TMDB_API_KEY}&language=en-US`,

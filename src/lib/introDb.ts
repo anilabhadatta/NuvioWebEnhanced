@@ -1,0 +1,44 @@
+export interface SkipInterval {
+  startTime: number;
+  endTime: number;
+  type: "intro" | "outro" | "recap";
+}
+
+export const INTRODB_API_URL = "https://api.introdb.app";
+
+export async function fetchSkipIntervals(imdbId: string, season: number, episode: number): Promise<SkipInterval[]> {
+  try {
+    const url = `${INTRODB_API_URL}/segments?imdb_id=${imdbId}&season=${season}&episode=${episode}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    
+    const data = await res.json();
+    const intervals: SkipInterval[] = [];
+
+    const addInterval = (segment: any, type: SkipInterval["type"]) => {
+      if (!segment) return;
+      const start = Number.isFinite(Number(segment.start_sec))
+        ? Number(segment.start_sec)
+        : Number.isFinite(Number(segment.start_ms))
+          ? Number(segment.start_ms) / 1000
+          : NaN;
+      const end = Number.isFinite(Number(segment.end_sec))
+        ? Number(segment.end_sec)
+        : Number.isFinite(Number(segment.end_ms))
+          ? Number(segment.end_ms) / 1000
+          : NaN;
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        intervals.push({ startTime: start, endTime: end, type });
+      }
+    };
+
+    addInterval(data.intro, "intro");
+    addInterval(data.recap, "recap");
+    addInterval(data.outro, "outro");
+
+    return intervals.sort((a, b) => a.startTime - b.startTime);
+  } catch (err) {
+    console.error("Failed to fetch IntroDB segments", err);
+    return [];
+  }
+}

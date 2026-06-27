@@ -52,7 +52,7 @@ export default function HeroBanner() {
   const genres = getGenreNames(movie.genre_ids || []);
 
   const handlePlay = () => {
-    router.push(`/player?id=${movie.id}&type=${movie.media_type || (movie.title ? "movie" : "tv")}`);
+    setSelectedMovie(movie);
   };
 
   return (
@@ -141,9 +141,16 @@ export default function HeroBanner() {
         <MovieModal
           movie={selectedMovie}
           onClose={() => setSelectedMovie(null)}
-          onPlay={() => {
+          onPlay={(movie, stream, season, episode) => {
             setSelectedMovie(null);
-            handlePlay();
+            const url = stream.url ? encodeURIComponent(stream.url) : "";
+            const tmdbId = movie.id;
+            const type = movie.media_type || (movie.title ? "movie" : "tv");
+            let route = `/player?id=${tmdbId}&type=${type}&url=${url}`;
+            if (season && episode) {
+              route += `&s=${season}&e=${episode}`;
+            }
+            router.push(route);
           }}
         />
       )}

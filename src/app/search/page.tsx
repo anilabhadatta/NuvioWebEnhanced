@@ -89,9 +89,16 @@ export default function SearchPage() {
         <MovieModal
           movie={selectedMovie}
           onClose={() => setSelectedMovie(null)}
-          onPlay={(m) => {
+          onPlay={(movie, stream, season, episode) => {
             setSelectedMovie(null);
-            router.push(`/player?id=${m.id}&type=${m.media_type || "movie"}`);
+            const url = stream.url ? encodeURIComponent(stream.url) : "";
+            const tmdbId = movie.id;
+            const type = movie.media_type || (movie.title ? "movie" : "tv");
+            let route = `/player?id=${tmdbId}&type=${type}&url=${url}`;
+            if (season && episode) {
+              route += `&s=${season}&e=${episode}`;
+            }
+            router.push(route);
           }}
         />
       )}

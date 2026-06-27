@@ -30,8 +30,7 @@ export default function ContentRow({ title, url, large, first }: RowProps) {
   const scrollRight = () => rowRef.current?.scrollBy({ left: 600, behavior: "smooth" });
 
   const handlePlay = (movie: TMDBMovie) => {
-    setSelectedMovie(null);
-    router.push(`/player?id=${movie.id}&type=${movie.media_type || (movie.title ? "movie" : "tv")}`);
+    setSelectedMovie(movie);
   };
 
   if (loading) {
@@ -139,7 +138,17 @@ export default function ContentRow({ title, url, large, first }: RowProps) {
         <MovieModal
           movie={selectedMovie}
           onClose={() => setSelectedMovie(null)}
-          onPlay={handlePlay}
+          onPlay={(movie, stream, season, episode) => {
+            setSelectedMovie(null);
+            const url = stream.url ? encodeURIComponent(stream.url) : "";
+            const tmdbId = movie.id;
+            const type = movie.media_type || (movie.title ? "movie" : "tv");
+            let route = `/player?id=${tmdbId}&type=${type}&url=${url}`;
+            if (season && episode) {
+              route += `&s=${season}&e=${episode}`;
+            }
+            router.push(route);
+          }}
         />
       )}
     </>
