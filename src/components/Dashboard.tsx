@@ -9,6 +9,7 @@ import ContentRow from "./ContentRow";
 import ContinueWatchingRow from "./ContinueWatchingRow";
 import { TMDB_URLS, TMDBMovie } from "@/lib/tmdb";
 import MovieModal from "./MovieModal";
+import { syncWatchProgressFromCloud } from "@/lib/watchProgress";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -38,6 +39,8 @@ export default function Dashboard() {
       const anon = localStorage.getItem("nuvio_anon");
       if (!session && !anon) {
         router.replace("/");
+      } else {
+        syncWatchProgressFromCloud();
       }
     };
     check();

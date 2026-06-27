@@ -127,10 +127,14 @@ export interface SubtitleItem {
   url: string;
 }
 
-function buildSubtitleUrl(manifestUrl: string, type: string, videoId: string): string {
+function buildSubtitleUrl(manifestUrl: string, type: string, videoId: string, hash?: string | null): string {
   const baseUrl = manifestUrl.split("/manifest.json")[0];
   const query = manifestUrl.includes("?") ? "?" + manifestUrl.split("?")[1] : "";
-  return `${baseUrl}/subtitles/${encodeURIComponent(type)}/${encodeURIComponent(videoId)}.json${query}`;
+  let id = videoId;
+  if (hash) {
+    id += `|videoHash=${hash}|infoHash=${hash}`;
+  }
+  return `${baseUrl}/subtitles/${encodeURIComponent(type)}/${encodeURIComponent(id)}.json${query}`;
 }
 
 export async function fetchAllSubtitles(type: string, videoId: string, streamHash?: string | null): Promise<SubtitleItem[]> {
