@@ -296,12 +296,12 @@ export default function PlayerScreen() {
               setSubtitles([{ id: -1, name: 'None' }, ...hlsObj.subtitleTracks.map((t: any) => ({ id: t.id, name: t.name || t.lang || `Subtitle ${t.id}` }))]);
               setSelectedSub(hlsObj.subtitleTrack);
             }
-            if (resumeTime > 0) video.currentTime = resumeTime;
-            video.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => {});
+            if (resumeTime > 0 && video) video.currentTime = resumeTime;
+            video?.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => {});
           });
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        } else if (video?.canPlayType('application/vnd.apple.mpegurl')) {
           // Safari native HLS
-          video.src = resolvedSrc;
+          if (video) video.src = resolvedSrc;
         }
       });
     }
@@ -328,9 +328,9 @@ export default function PlayerScreen() {
           setAudios([{ id: -1, name: 'Audio track selection not supported natively by your browser' }]);
         }
         setSelectedAudio(0);
-        if (resumeTime > 0) video.currentTime = resumeTime;
+        if (resumeTime > 0 && video) video.currentTime = resumeTime;
         // Attempt autoplay; show manual play button if browser blocks it
-        video.play().then(() => {
+        video?.play().then(() => {
           if (mounted) { setIsPlaying(true); setAutoplayBlocked(false); }
         }).catch(() => {
           // Autoplay was blocked — show a visible play button overlay
@@ -339,7 +339,7 @@ export default function PlayerScreen() {
       };
 
       const onError = () => {
-        if (!mounted) return;
+        if (!mounted || !video) return;
         // Video element hit a decode/network error
         console.error('Video element error', video.error);
         if (video.error) {
@@ -353,11 +353,11 @@ export default function PlayerScreen() {
         }
       };
 
-      video.addEventListener('loadedmetadata', onMeta, { once: true });
-      video.addEventListener('error', onError);
+      video?.addEventListener('loadedmetadata', onMeta, { once: true });
+      video?.addEventListener('error', onError);
 
       // Set src last so the events above are definitely registered
-      video.src = resolvedSrc;
+      if (video) video.src = resolvedSrc;
     }
 
     if (isHls) {
@@ -373,10 +373,10 @@ export default function PlayerScreen() {
       mounted = false;
       if (hlsObj) { hlsObj.destroy(); setHlsInstance(null); }
       if (shakaRef.current) { shakaRef.current.destroy(); shakaRef.current = null; }
-      video.removeEventListener('error', () => {});
-      video.pause();
-      video.removeAttribute('src');
-      video.load(); // flush MSE buffers
+      video?.removeEventListener('error', () => {});
+      video?.pause();
+      video?.removeAttribute('src');
+      video?.load(); // flush MSE buffers
     };
   }, [resolvedSrc]);
 
