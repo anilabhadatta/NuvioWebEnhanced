@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+:root {
+  --nuvio-bg: #111111;
+  --nuvio-bg-card: #1a1a1a;
+  --nuvio-bg-elevated: #222222;
+  --nuvio-text: #f5f5f5;
+  --nuvio-text-muted: #999999;
+  --nuvio-accent: #e50914;
+  --nuvio-sidebar-width: 220px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  background: var(--nuvio-bg);
+  color: var(--nuvio-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #666; }
+
+/* autofill */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px #2a2a2a inset !important;
+  -webkit-text-fill-color: #f5f5f5 !important;
+  transition: background-color 5000s;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Row scroll animations */
+.row-card {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  flex-shrink: 0;
+}
+.row-card:hover {
+  transform: scale(1.06) translateY(-4px);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.7);
+  z-index: 10;
+}
+
+/* Hero gradient */
+.hero-gradient {
+  background: linear-gradient(
+    to right,
+    rgba(17, 17, 17, 0.95) 0%,
+    rgba(17, 17, 17, 0.6) 50%,
+    rgba(17, 17, 17, 0) 100%
+  ), linear-gradient(
+    to top,
+    rgba(17, 17, 17, 1) 0%,
+    rgba(17, 17, 17, 0) 40%
+  );
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease;
+}
+
+/* Sidebar active */
+.sidebar-item-active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
