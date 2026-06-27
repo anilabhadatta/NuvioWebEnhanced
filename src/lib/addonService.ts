@@ -22,13 +22,39 @@ export async function fetchUserAddons(): Promise<NuvioAddon[]> {
     .eq("profile_id", 1)
     .order("sort_order", { ascending: true });
 
+  let addons: NuvioAddon[] = [];
+
   if (error) {
     console.error("Error fetching addons:", error);
-    // If not authenticated or error, return default addons
-    return getFallbackAddons();
+    addons = getFallbackAddons();
+  } else {
+    addons = data as NuvioAddon[];
   }
 
-  return data as NuvioAddon[];
+  // Merge with localStorage addons if in browser
+  if (typeof window !== "undefined") {
+    try {
+      const cached = localStorage.getItem("nuvio_plugins");
+      if (cached) {
+        const localPlugins = JSON.parse(cached);
+        localPlugins.forEach((p: any) => {
+          if (!addons.find(a => a.url === p.url)) {
+            // Check if it's a repo with providers
+            if (p.providers && p.providers.length > 0) {
+               // Add each provider URL. Usually provider URL is something like the plugin url
+               // But wait, the repo just installs the providers. 
+               // Actually we just add the repo url itself, Nuvio stream parsing will handle it if supported.
+               addons.push({ url: p.url, name: p.name, enabled: true, sort_order: addons.length });
+            } else {
+               addons.push({ url: p.url, name: p.name, enabled: true, sort_order: addons.length });
+            }
+          }
+        });
+      }
+    } catch (e) {}
+  }
+
+  return addons;
 }
 
 function getFallbackAddons(): NuvioAddon[] {

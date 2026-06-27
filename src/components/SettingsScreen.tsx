@@ -66,6 +66,14 @@ export default function SettingsScreen() {
   const [addError, setAddError] = useState("");
 
   React.useEffect(() => {
+    const cached = localStorage.getItem("nuvio_plugins");
+    if (cached) {
+      try {
+        setPlugins(JSON.parse(cached));
+        return;
+      } catch (e) {}
+    }
+    
     fetchUserAddons().then((addons) => {
       setPlugins(addons.map(a => ({
         id: a.url,
@@ -75,6 +83,12 @@ export default function SettingsScreen() {
       })));
     });
   }, []);
+
+  React.useEffect(() => {
+    if (plugins.length > 0) {
+      localStorage.setItem("nuvio_plugins", JSON.stringify(plugins));
+    }
+  }, [plugins]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -108,7 +122,15 @@ export default function SettingsScreen() {
   };
 
   const handleUninstall = (id: string) => {
-    setPlugins((prev) => prev.filter((p) => p.id !== id));
+    setPlugins((prev) => {
+      const updated = prev.filter((p) => p.id !== id);
+      if (updated.length === 0) {
+        localStorage.removeItem("nuvio_plugins");
+      } else {
+        localStorage.setItem("nuvio_plugins", JSON.stringify(updated));
+      }
+      return updated;
+    });
   };
 
   return (

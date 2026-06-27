@@ -137,9 +137,8 @@ export default function PlayerScreen() {
     async function loadSkips() {
       if (!movieId) return;
       
-      const type = mediaType === "series" ? "tv" : "movie";
       // We only support Series intro skipping easily via IntroDB right now
-      if (type === "tv" && season && episode) {
+      if (isSeries && season && episode) {
         try {
           const externalIds = await fetchExternalIds(movieId, "tv");
           if (externalIds.imdb_id) {
