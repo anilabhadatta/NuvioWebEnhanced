@@ -35,6 +35,7 @@ function getFallbackAddons(): NuvioAddon[] {
   return [
     { url: "https://v3-cinemeta.strem.io/manifest.json", name: "Cinemeta", enabled: true, sort_order: 0 },
     { url: "https://torrentio.strem.fun/manifest.json", name: "Torrentio", enabled: true, sort_order: 1 },
+    { url: "https://opensubtitles-v3.strem.io/manifest.json", name: "OpenSubtitles v3", enabled: true, sort_order: 2 }
   ];
 }
 
@@ -68,17 +69,73 @@ export async function fetchStreamsFromAddon(addon: NuvioAddon, type: string, vid
     const data = await res.json();
     if (!data || !data.streams) return [];
     
-    return data.streams.map((s: any) => ({
-      name: s.name,
-      title: s.title,
-      description: s.description || s.title,
-      url: s.url,
-      infoHash: s.infoHash,
-      externalUrl: s.externalUrl,
-      addonName: addon.name || addon.url,
-    }));
+    return data.streams.map((s: any) => {
+      let prettyName = addon.name || addon.url;
+      if (prettyName.startsWith("http")) {
+        try {
+          const urlObj = new URL(prettyName);
+          prettyName = urlObj.hostname.replace("www.", "");
+        } catch(e) {}
+      }
+      return {
+        name: s.name,
+        title: s.title,
+        description: s.description || s.title,
+        url: s.url,
+        infoHash: s.infoHash,
+        externalUrl: s.externalUrl,
+        addonName: prettyName,
+      };
+    });
   } catch (err) {
     console.error("Error fetching from addon", addon.url, err);
     return [];
   }
+}
+
+export interface SubtitleItem {
+  id: string;
+  lang: string;
+  name: string;
+  url: string;
+}
+
+function buildSubtitleUrl(manifestUrl: string, type: string, videoId: string): string {
+  const baseUrl = manifestUrl.split("/manifest.json")[0];
+  const query = manifestUrl.includes("?") ? "?" + manifestUrl.split("?")[1] : "";
+  return `${baseUrl}/subtitles/${encodeURIComponent(type)}/${encodeURIComponent(videoId)}.json${query}`;
+}
+
+export async function fetchAllSubtitles(type: string, videoId: string): Promise<SubtitleItem[]> {
+  const addons = await fetchUserAddons();
+  
+  const promises = addons.map(async (addon) => {
+    try {
+      const subUrl = buildSubtitleUrl(addon.url, type, videoId);
+      const res = await fetch(subUrl);
+      if (!res.ok) return [];
+      const data = await res.json();
+      if (!data || !data.subtitles) return [];
+      
+      return data.subtitles.map((sub: any, idx: number) => {
+        let prettyName = addon.name || addon.url;
+        if (prettyName.startsWith("http")) {
+          try {
+             prettyName = new URL(prettyName).hostname.replace("www.", "");
+          } catch(e){}
+        }
+        return {
+          id: `${prettyName}-${idx}`,
+          lang: sub.lang || 'Unknown',
+          name: sub.lang ? `${sub.lang} (${prettyName})` : `Subtitle (${prettyName})`,
+          url: sub.url
+        }
+      });
+    } catch(e) { 
+      return []; 
+    }
+  });
+
+  const results = await Promise.all(promises);
+  return results.flat();
 }

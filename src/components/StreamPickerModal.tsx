@@ -5,22 +5,22 @@ import { TMDBMovie, fetchExternalIds } from "@/lib/tmdb";
 import { NuvioAddon, StreamItem, fetchUserAddons, fetchStreamsFromAddon } from "@/lib/addonService";
 
 interface StreamPickerModalProps {
-  movie: TMDBMovie;
+  tmdbId: number;
+  type: string;
   season?: number;
   episode?: number;
   onClose: () => void;
   onPlayStream: (stream: StreamItem) => void;
 }
 
-export default function StreamPickerModal({ movie, season, episode, onClose, onPlayStream }: StreamPickerModalProps) {
+export default function StreamPickerModal({ tmdbId, type: mediaType, season, episode, onClose, onPlayStream }: StreamPickerModalProps) {
   const [addons, setAddons] = useState<NuvioAddon[]>([]);
   const [streams, setStreams] = useState<StreamItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedAddonFilter, setSelectedAddonFilter] = useState<string>("All");
 
-  const title = movie.title || movie.name;
-  const isSeries = movie.media_type === "tv" || !!season;
+  const isSeries = mediaType === "tv" || mediaType === "series" || !!season;
   
   // Format the ID for addons
   // Movies: ttXXXXXX
@@ -43,7 +43,7 @@ export default function StreamPickerModal({ movie, season, episode, onClose, onP
         const type = isSeries ? "tv" : "movie";
         let imdbId = null;
         try {
-          const externalIds = await fetchExternalIds(movie.id, type);
+          const externalIds = await fetchExternalIds(tmdbId, type);
           if (externalIds && externalIds.imdb_id) {
             imdbId = externalIds.imdb_id;
           }
@@ -51,7 +51,7 @@ export default function StreamPickerModal({ movie, season, episode, onClose, onP
           console.error("Failed to fetch IMDB ID", e);
         }
 
-        const baseId = imdbId ? imdbId : "tmdb:" + movie.id;
+        const baseId = imdbId ? imdbId : "tmdb:" + tmdbId;
         const videoId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
         const mediaType = isSeries ? "series" : "movie";
 
@@ -85,7 +85,7 @@ export default function StreamPickerModal({ movie, season, episode, onClose, onP
     loadStreams();
 
     return () => { isMounted = false; };
-  }, [movie.id, isSeries, season, episode]);
+  }, [tmdbId, isSeries, season, episode]);
 
   // Close on ESC
   useEffect(() => {
@@ -107,7 +107,7 @@ export default function StreamPickerModal({ movie, season, episode, onClose, onP
           <div>
             <h2 className="text-xl font-bold text-white">Select Stream</h2>
             <p className="text-[#888] text-sm mt-1">
-              {title} {isSeries && season && episode ? `- S${season} E${episode}` : ""}
+              Stream Selection {isSeries && season && episode ? `- S${season} E${episode}` : ""}
             </p>
           </div>
           <button

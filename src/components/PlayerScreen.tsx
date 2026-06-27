@@ -3,9 +3,10 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { fetchExternalIds } from "@/lib/tmdb";
+import { fetchExternalIds, fetchTvSeason } from "@/lib/tmdb";
 import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
 import { saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
+import StreamPickerModal from "./StreamPickerModal";
 
 const SAMPLE_HLS = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
@@ -18,7 +19,6 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-const QUALITIES = ["Auto", "1080p", "720p", "480p", "360p"];
 
 export default function PlayerScreen() {
   const router = useRouter();
@@ -35,9 +35,10 @@ export default function PlayerScreen() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   // Menus
-  const [openMenu, setOpenMenu] = useState<"sub" | "audio" | "quality" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"sub" | "audio" | "episodes" | null>(null);
   const [hlsInstance, setHlsInstance] = useState<any>(null);
 
   const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
@@ -46,7 +47,6 @@ export default function PlayerScreen() {
 
   const [selectedSub, setSelectedSub] = useState(-1);
   const [selectedAudio, setSelectedAudio] = useState(0);
-  const [selectedQuality, setSelectedQuality] = useState("Auto");
 
   // Overlays
   const [showSkipIntro, setShowSkipIntro] = useState(false);
@@ -60,6 +60,77 @@ export default function PlayerScreen() {
 
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
   const [activeSkip, setActiveSkip] = useState<SkipInterval | null>(null);
+
+  const [episodesList, setEpisodesList] = useState<any[]>([]);
+  const [showStreamPicker, setShowStreamPicker] = useState(false);
+  const [targetEpisode, setTargetEpisode] = useState<number | undefined>();
+
+  const [addonSubtitles, setAddonSubtitles] = useState<any[]>([]);
+  const [loadingSubtitles, setLoadingSubtitles] = useState(false);
+  const [activeExternalSub, setActiveExternalSub] = useState<string | null>(null);
+
+  const isSeries = mediaType === "series" || mediaType === "tv" || !!season;
+
+  useEffect(() => {
+    if (isSeries && movieId && season) {
+      fetchTvSeason(parseInt(movieId), parseInt(season)).then(data => {
+        setEpisodesList(data.episodes || []);
+      }).catch(console.error);
+    }
+  }, [movieId, isSeries, season]);
+
+  // Fetch external subtitles
+  useEffect(() => {
+    if (movieId && mediaType) {
+      setLoadingSubtitles(true);
+      const type = isSeries ? "tv" : "movie";
+      const fetchId = isSeries ? `tmdb:${movieId}:${season}:${episode}` : `tmdb:${movieId}`;
+      
+      import('@/lib/addonService').then(({ fetchAllSubtitles }) => {
+        fetchAllSubtitles(type, fetchId).then(subs => {
+          setAddonSubtitles(subs);
+          setLoadingSubtitles(false);
+        }).catch(() => setLoadingSubtitles(false));
+      });
+    }
+  }, [movieId, mediaType, season, episode]);
+
+  const loadExternalSubtitle = (id: string, url: string, name: string) => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Remove any previously added external tracks
+    const existing = video.querySelectorAll('track.addon-sub');
+    existing.forEach(t => t.remove());
+
+    const track = document.createElement("track");
+    track.className = "addon-sub";
+    track.kind = "subtitles";
+    track.label = name;
+    track.srclang = "en";
+    track.src = url;
+    track.default = true;
+
+    video.appendChild(track);
+    
+    // Enable the track
+    setTimeout(() => {
+      for (let i = 0; i < video.textTracks.length; i++) {
+        if (video.textTracks[i].label === name || video.textTracks[i].mode === "showing") {
+          video.textTracks[i].mode = "hidden"; // Hide others
+        }
+      }
+      for (let i = 0; i < video.textTracks.length; i++) {
+        if (video.textTracks[i].label === name) {
+          video.textTracks[i].mode = "showing";
+        }
+      }
+    }, 100);
+
+    setActiveExternalSub(id);
+    setSelectedSub(-2); // -2 indicates external
+    setOpenMenu(null);
+  };
 
   // Fetch Skip Intervals (Intro/Outro)
   useEffect(() => {
@@ -128,7 +199,19 @@ export default function PlayerScreen() {
         // Native playback for mp4/mkv (if supported) or native HLS (Safari)
         video.src = src;
         video.addEventListener("loadedmetadata", () => {
-          setAudios([{ id: 0, name: "Default" }]);
+          const vAny = video as any;
+          if (vAny.audioTracks && vAny.audioTracks.length > 0) {
+            const arr = [];
+            for (let i = 0; i < vAny.audioTracks.length; i++) {
+              const track = vAny.audioTracks[i];
+              arr.push({ id: i, name: track.label || track.language || `Audio ${i + 1}` });
+            }
+            setAudios(arr);
+            const activeIndex = Array.from(vAny.audioTracks).findIndex((t: any) => t.enabled);
+            setSelectedAudio(activeIndex !== -1 ? activeIndex : 0);
+          } else {
+            setAudios([{ id: 0, name: "Default" }]);
+          }
           if (resumeTime > 0) {
             video.currentTime = resumeTime;
           }
@@ -248,6 +331,28 @@ export default function PlayerScreen() {
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
+  const togglePiP = async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (videoRef.current) {
+        await videoRef.current.requestPictureInPicture();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const cycleSpeed = () => {
+    const speeds = [1, 1.25, 1.5, 2];
+    const currentIndex = speeds.indexOf(playbackSpeed);
+    const nextSpeed = speeds[(currentIndex + 1) % speeds.length];
+    setPlaybackSpeed(nextSpeed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = nextSpeed;
+    }
+  };
+
   return (
     <div
       ref={containerRef}
@@ -338,84 +443,55 @@ export default function PlayerScreen() {
 
           {/* Controls row */}
           <div className="flex items-center justify-between">
-            {/* Left: play, skip, volume */}
-            <div className="flex items-center gap-3">
+            {/* Left side: Play, PiP, Speed, CC, Audio, Switch, Episodes, Fullscreen */}
+            <div className="flex items-center gap-2">
               {/* Play/Pause */}
               <button
                 onClick={togglePlay}
-                className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center text-white transition-all"
+                className="w-10 h-10 rounded-full bg-white text-black hover:bg-gray-200 flex items-center justify-center transition-colors shadow-lg mr-2"
               >
                 {isPlaying ? (
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
                     <path fillRule="evenodd" d="M6.75 5.25a.75.75 0 01.75-.75H9a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H7.5a.75.75 0 01-.75-.75V5.25zm7.5 0A.75.75 0 0115 4.5h1.5a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H15a.75.75 0 01-.75-.75V5.25z" clipRule="evenodd" />
                   </svg>
                 ) : (
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 ml-0.5">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 ml-0.5">
                     <path fillRule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clipRule="evenodd" />
                   </svg>
                 )}
               </button>
 
-              {/* Skip back 10s */}
-              <button onClick={() => skip(-10)} className="text-white hover:text-white/70 transition-colors">
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                  <path d="M9.195 18.44c1.25.713 2.805-.19 2.805-1.629v-2.34l6.945 3.968c1.25.714 2.805-.188 2.805-1.628V8.688c0-1.44-1.555-2.342-2.805-1.628L12 11.03v-2.34c0-1.44-1.555-2.343-2.805-1.629l-7.108 4.062c-1.26.72-1.26 2.536 0 3.256l7.108 4.061z" />
+              {/* PiP */}
+              <button onClick={togglePiP} className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors" title="Picture in Picture">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                  <rect x="3" y="5" width="18" height="14" rx="2" ry="2" />
+                  <rect x="12" y="11" width="7" height="5" rx="1" ry="1" />
                 </svg>
               </button>
 
-              {/* Skip forward 10s */}
-              <button onClick={() => skip(10)} className="text-white hover:text-white/70 transition-colors">
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                  <path d="M5.055 7.06c-1.25-.714-2.805.188-2.805 1.628v8.123c0 1.44 1.555 2.342 2.805 1.628L12 14.47v2.34c0 1.44 1.555 2.342 2.805 1.628l7.108-4.061c1.26-.72 1.26-2.536 0-3.256L14.805 7.06C13.555 6.346 12 7.25 12 8.688v2.34L5.055 7.06z" />
+              {/* Speed */}
+              <button onClick={cycleSpeed} className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors relative" title="Playback Speed">
+                {playbackSpeed !== 1 && <span className="text-[10px] font-bold absolute bottom-0 right-0 bg-black/80 px-1 rounded text-white shadow">{playbackSpeed}x</span>}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 13l4-4m-4 4a2 2 0 110-4 2 2 0 010 4z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </button>
 
-              {/* Volume */}
-              <div className="flex items-center gap-2 group/vol">
-                <button onClick={toggleMute} className="text-white hover:text-white/70 transition-colors">
-                  {isMuted || volume === 0 ? (
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                      <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905H6.44l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 001.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 00-1.06-1.06l-1.72 1.72-1.72-1.72z" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                      <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905H6.44l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 01-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
-                      <path d="M15.932 7.757a.75.75 0 011.061 0 6 6 0 010 8.486.75.75 0 01-1.06-1.061 4.5 4.5 0 000-6.364.75.75 0 010-1.06z" />
-                    </svg>
-                  )}
-                </button>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={isMuted ? 0 : volume}
-                  onChange={handleVolumeChange}
-                  className="w-20 h-1 accent-white cursor-pointer opacity-0 group-hover/vol:opacity-100 transition-opacity"
-                />
-              </div>
-
-              {/* Time */}
-              <span className="text-white/80 text-sm tabular-nums">
-                {formatTime(currentTime)} / {formatTime(duration)}
-              </span>
-            </div>
-
-            {/* Right: subtitle, audio, quality, fullscreen */}
-            <div className="flex items-center gap-2">
-              {/* Subtitles */}
+              {/* Subtitles (CC) */}
               <div className="relative">
                 <button
                   onClick={() => setOpenMenu(openMenu === "sub" ? null : "sub")}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${openMenu === "sub" ? "bg-white text-black" : "text-white hover:bg-white/10"}`}
+                  className={`w-10 h-10 flex items-center justify-center transition-colors ${openMenu === "sub" ? "text-white" : "text-white/80 hover:text-white"}`}
+                  title="Subtitles"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-6 h-6">
+                    <rect x="3" y="6" width="18" height="12" rx="2" ry="2" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 14.5a2.5 2.5 0 01-5 0v-5a2.5 2.5 0 015 0M19 14.5a2.5 2.5 0 01-5 0v-5a2.5 2.5 0 015 0" />
                   </svg>
-                  CC
                 </button>
                 {openMenu === "sub" && (
-                  <div className="absolute bottom-full right-0 mb-3 bg-[#1e1e1e] border border-white/10 rounded-2xl overflow-hidden shadow-2xl w-[320px] z-50 flex flex-col max-h-[70vh]">
+                  <div className="absolute bottom-full left-0 mb-3 bg-[#1e1e1e] border border-white/10 rounded-2xl overflow-hidden shadow-2xl w-[320px] z-50 flex flex-col max-h-[70vh]">
                     <div className="p-4 border-b border-white/5 shrink-0">
                       <h3 className="text-white font-bold text-lg mb-4">Subtitles</h3>
                       <div className="flex bg-black/40 rounded-xl p-1 gap-1">
@@ -450,9 +526,35 @@ export default function PlayerScreen() {
                       )}
                       
                       {subTab === "addons" && (
-                        <div className="flex flex-col items-center justify-center py-10 px-4 text-center h-full">
-                          <p className="text-white font-semibold mb-2">OpenSubtitles v3</p>
-                          <p className="text-[#888] text-xs">Fetching subtitles from OpenSubtitles and other addons is currently being implemented.</p>
+                        <div className="flex flex-col h-full">
+                          {loadingSubtitles ? (
+                            <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+                              <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin mb-3" />
+                              <p className="text-[#888] text-xs">Finding subtitles...</p>
+                            </div>
+                          ) : addonSubtitles.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+                              <p className="text-white font-semibold mb-2">No Subtitles Found</p>
+                              <p className="text-[#888] text-xs">Ensure you have OpenSubtitles or other subtitle addons installed in Settings.</p>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {addonSubtitles.map((s) => (
+                                <button
+                                  key={s.id}
+                                  onClick={() => loadExternalSubtitle(s.id, s.url, s.name)}
+                                  className={`flex items-center justify-between w-full px-4 py-3 rounded-xl text-sm transition-colors ${activeExternalSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] bg-black/20 hover:bg-white/5"}`}
+                                >
+                                  <span className="truncate pr-4 text-left">{s.name}</span>
+                                  {activeExternalSub === s.id && (
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-white shrink-0">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                    </svg>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                       
@@ -491,21 +593,32 @@ export default function PlayerScreen() {
               <div className="relative">
                 <button
                   onClick={() => setOpenMenu(openMenu === "audio" ? null : "audio")}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${openMenu === "audio" ? "bg-white text-black" : "text-white hover:bg-white/10"}`}
+                  className={`w-10 h-10 flex items-center justify-center transition-colors ${openMenu === "audio" ? "text-white" : "text-white/80 hover:text-white"}`}
+                  title="Audio Tracks"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                    <rect x="7" y="4" width="10" height="16" rx="3" ry="3" />
+                    <circle cx="12" cy="15" r="2" />
+                    <circle cx="12" cy="8" r="1" />
                   </svg>
-                  Audio
                 </button>
                 {openMenu === "audio" && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-52 z-50 max-h-64 overflow-y-auto">
+                  <div className="absolute bottom-full left-0 mb-3 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-52 z-50 max-h-64 overflow-y-auto">
                     {audios.map((a) => (
                       <button
                         key={a.id}
                         onClick={() => { 
                           setSelectedAudio(a.id); 
-                          if (hlsInstance) hlsInstance.audioTrack = a.id;
+                          if (hlsInstance) {
+                            hlsInstance.audioTrack = a.id;
+                          } else {
+                            const vAny = videoRef.current as any;
+                            if (vAny && vAny.audioTracks) {
+                              for (let i = 0; i < vAny.audioTracks.length; i++) {
+                                vAny.audioTracks[i].enabled = (i === a.id);
+                              }
+                            }
+                          }
                           setOpenMenu(null); 
                         }}
                         className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
@@ -518,37 +631,53 @@ export default function PlayerScreen() {
                 )}
               </div>
 
-              {/* Quality */}
-              <div className="relative">
-                <button
-                  onClick={() => setOpenMenu(openMenu === "quality" ? null : "quality")}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${openMenu === "quality" ? "bg-white text-black" : "text-white hover:bg-white/10"}`}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
-                  </svg>
-                  {selectedQuality}
-                </button>
-                {openMenu === "quality" && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-36 z-50">
-                    {QUALITIES.map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => { setSelectedQuality(q); setOpenMenu(null); }}
-                        className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedQuality === q ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
-                      >
-                        {q}
-                        {selectedQuality === q && <span className="w-1.5 h-1.5 bg-white rounded-full" />}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* Switch Stream */}
+              <button onClick={() => { setTargetEpisode(undefined); setShowStreamPicker(true); }} className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors" title="Switch Stream">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                </svg>
+              </button>
+
+              {/* Episodes */}
+              {isSeries && (
+                <div className="relative">
+                  <button onClick={() => setOpenMenu(openMenu === "episodes" ? null : "episodes")} className={`w-10 h-10 flex items-center justify-center transition-colors ${openMenu === "episodes" ? "text-white" : "text-white/80 hover:text-white"}`} title="Episodes">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                      <rect x="3" y="4" width="18" height="16" rx="2" ry="2" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M3 16h18" />
+                    </svg>
+                  </button>
+                  {openMenu === "episodes" && (
+                    <div className="absolute bottom-full left-0 mb-3 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-64 w-72 z-50 max-h-80 overflow-y-auto flex flex-col">
+                      <div className="p-3 border-b border-white/10 shrink-0 sticky top-0 bg-[#1e1e1e] z-10">
+                         <p className="text-white font-bold text-sm">Season {season}</p>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-1">
+                        {episodesList.map((ep: any) => (
+                          <button
+                            key={ep.id}
+                            onClick={() => {
+                              setTargetEpisode(ep.episode_number);
+                              setShowStreamPicker(true);
+                              setOpenMenu(null);
+                            }}
+                            className={`flex flex-col w-full px-3 py-2 text-left transition-colors rounded-lg ${parseInt(episode || "1") === ep.episode_number ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}
+                          >
+                            <span className="text-xs text-white/50 mb-0.5">Episode {ep.episode_number}</span>
+                            <span className="text-sm line-clamp-1">{ep.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Fullscreen */}
               <button
                 onClick={toggleFullscreen}
-                className="text-white hover:text-white/70 transition-colors p-2"
+                className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors"
+                title="Fullscreen"
               >
                 {isFullscreen ? (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
@@ -561,6 +690,39 @@ export default function PlayerScreen() {
                 )}
               </button>
             </div>
+
+            {/* Right side: Volume, Time */}
+            <div className="flex items-center gap-4">
+              {/* Volume */}
+              <div className="flex items-center gap-2 group/vol">
+                <button onClick={toggleMute} className="text-white/80 hover:text-white transition-colors" title="Mute">
+                  {isMuted || volume === 0 ? (
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                      <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905H6.44l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 001.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 00-1.06-1.06l-1.72 1.72-1.72-1.72z" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                      <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905H6.44l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 01-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
+                      <path d="M15.932 7.757a.75.75 0 011.061 0 6 6 0 010 8.486.75.75 0 01-1.06-1.061 4.5 4.5 0 000-6.364.75.75 0 010-1.06z" />
+                    </svg>
+                  )}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={isMuted ? 0 : volume}
+                  onChange={handleVolumeChange}
+                  className="w-20 h-1 accent-white cursor-pointer opacity-0 group-hover/vol:opacity-100 transition-opacity"
+                />
+              </div>
+
+              {/* Time */}
+              <span className="text-white/80 text-sm tabular-nums mr-2">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -570,6 +732,26 @@ export default function PlayerScreen() {
         <div
           className="absolute inset-0 z-40"
           onClick={() => setOpenMenu(null)}
+        />
+      )}
+
+      {/* Stream Picker Modal */}
+      {showStreamPicker && movieId && (
+        <StreamPickerModal
+          tmdbId={parseInt(movieId)}
+          type={mediaType!}
+          season={season ? parseInt(season) : undefined}
+          episode={targetEpisode || (episode ? parseInt(episode) : undefined)}
+          onClose={() => setShowStreamPicker(false)}
+          onPlayStream={(stream) => {
+            const url = stream.url ? encodeURIComponent(stream.url) : "";
+            let route = `/player?id=${movieId}&type=${mediaType}&url=${url}`;
+            if (season && (targetEpisode || episode)) {
+              route += `&s=${season}&e=${targetEpisode || episode}`;
+            }
+            router.replace(route);
+            setShowStreamPicker(false);
+          }}
         />
       )}
     </div>

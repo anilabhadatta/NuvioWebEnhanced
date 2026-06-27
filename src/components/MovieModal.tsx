@@ -305,7 +305,8 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
 
       {showStreamPicker && (
         <StreamPickerModal
-          movie={movie}
+          tmdbId={movie.id}
+          type={movie.media_type || (movie.title ? "movie" : "tv")}
           season={targetSeason}
           episode={targetEpisode}
           onClose={() => setShowStreamPicker(false)}

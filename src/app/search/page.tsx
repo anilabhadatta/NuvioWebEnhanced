@@ -15,13 +15,38 @@ export default function SearchPage() {
 
   const handleSearch = async (q: string) => {
     setQuery(q);
+    sessionStorage.setItem("lastSearchQuery", q);
     if (!q.trim()) { setResults([]); return; }
     setLoading(true);
     try {
       const res = await tmdb.get(`/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=en-US`);
-      setResults(res.data.results?.filter((r: any) => r.media_type !== "person") || []);
+      const filtered = res.data.results?.filter((r: any) => r.media_type !== "person") || [];
+      setResults(filtered);
+      sessionStorage.setItem("lastSearchResults", JSON.stringify(filtered));
     } finally {
       setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    const q = sessionStorage.getItem("lastSearchQuery");
+    const r = sessionStorage.getItem("lastSearchResults");
+    const m = sessionStorage.getItem("lastOpenedMovie");
+    if (q) setQuery(q);
+    if (r) {
+      try { setResults(JSON.parse(r)); } catch(e){}
+    }
+    if (m) {
+      try { setSelectedMovie(JSON.parse(m)); } catch(e){}
+    }
+  }, []);
+
+  const handleSelectMovie = (m: TMDBMovie | null) => {
+    setSelectedMovie(m);
+    if (m) {
+      sessionStorage.setItem("lastOpenedMovie", JSON.stringify(m));
+    } else {
+      sessionStorage.removeItem("lastOpenedMovie");
     }
   };
 
@@ -60,7 +85,7 @@ export default function SearchPage() {
                 return (
                   <div
                     key={movie.id}
-                    onClick={() => setSelectedMovie(movie)}
+                    onClick={() => handleSelectMovie(movie)}
                     className="cursor-pointer group rounded-xl overflow-hidden bg-[#1a1a1a] hover:scale-105 transition-transform duration-200"
                   >
                     {imgSrc ? (
@@ -88,9 +113,9 @@ export default function SearchPage() {
       {selectedMovie && (
         <MovieModal
           movie={selectedMovie}
-          onClose={() => setSelectedMovie(null)}
+          onClose={() => handleSelectMovie(null)}
           onPlay={(movie, stream, season, episode) => {
-            setSelectedMovie(null);
+            // Do not clear selectedMovie so it stays in sessionStorage for back button
             const url = stream.url ? encodeURIComponent(stream.url) : "";
             const tmdbId = movie.id;
             const type = movie.media_type || (movie.title ? "movie" : "tv");

@@ -11,6 +11,8 @@ interface Plugin {
   name: string;
   url: string;
   installed: boolean;
+  version?: string;
+  providers?: any[];
 }
 
 const SETTINGS_CATEGORIES = [
@@ -93,6 +95,8 @@ export default function SettingsScreen() {
         name: manifest.name || newPluginUrl,
         url: newPluginUrl.trim(),
         installed: true,
+        version: manifest.version,
+        providers: manifest.providers || [],
       };
       setPlugins((prev) => [...prev, newPlugin]);
       setNewPluginUrl("");
@@ -219,32 +223,108 @@ export default function SettingsScreen() {
                         <p className="text-[#888] text-xs mt-1">Add a repository URL to install provider plugins for stream discovery.</p>
                       </div>
                     ) : (
-                      plugins.map((plugin, i) => (
-                        <div
-                          key={plugin.id}
-                          className={`flex items-center justify-between px-5 py-4 ${
-                            i < plugins.length - 1 ? "border-b border-white/5" : ""
-                          }`}
-                        >
-                          <div>
-                            <p className="text-white font-semibold text-sm">{plugin.name}</p>
-                            <p className="text-[#555] text-xs mt-0.5 truncate max-w-sm">{plugin.url}</p>
+                      plugins.map((plugin, i) => {
+                        let prettyName = plugin.name || plugin.url;
+                        if (prettyName.startsWith("http")) {
+                          try {
+                            const urlObj = new URL(prettyName);
+                            prettyName = urlObj.hostname.replace("www.", "");
+                          } catch (e) {}
+                        }
+                        
+                        return (
+                          <div
+                            key={plugin.id}
+                            className={`flex flex-col px-5 py-4 ${
+                              i < plugins.length - 1 ? "border-b border-white/5" : ""
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1 overflow-hidden pr-4">
+                                <p className="text-white font-bold text-xl truncate">{prettyName}</p>
+                                {plugin.version && <p className="text-[#888] text-sm mt-1">Version {plugin.version}</p>}
+                                <p className="text-[#555] text-xs mt-1 truncate max-w-lg">{plugin.url}</p>
+                                
+                                {plugin.providers && plugin.providers.length > 0 && (
+                                  <div className="mt-3">
+                                    <span className="text-xs font-semibold text-white/70 bg-white/10 px-3 py-1.5 rounded-full">
+                                      {plugin.providers.length} providers
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-4 mt-1">
+                                <button
+                                  className="text-[#888] hover:text-white transition-colors"
+                                  title="Refresh"
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                  </svg>
+                                </button>
+                                <button
+                                  onClick={() => handleUninstall(plugin.id)}
+                                  className="text-red-400 hover:text-red-300 transition-colors"
+                                  title="Uninstall"
+                                >
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs text-green-400 font-semibold bg-green-400/10 px-2 py-1 rounded-full">
-                              Active
-                            </span>
-                            <button
-                              onClick={() => handleUninstall(plugin.id)}
-                              className="text-xs text-red-400 hover:text-red-300 font-semibold bg-red-400/10 hover:bg-red-400/20 px-3 py-1 rounded-full transition-colors"
-                            >
-                              Uninstall
-                            </button>
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
+
+                  {plugins.some(p => p.providers && p.providers.length > 0) && (
+                    <>
+                      <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Providers</p>
+                      <div className="flex flex-col gap-4 mb-8">
+                        {plugins.map(plugin => {
+                          if (!plugin.providers || plugin.providers.length === 0) return null;
+                          return plugin.providers.map((provider, idx) => (
+                            <div key={`${plugin.id}-${idx}`} className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5">
+                              <div className="flex justify-between items-start mb-4">
+                                <div className="flex gap-4">
+                                  <div className="mt-1 w-6 h-6 text-green-500 shrink-0">
+                                    <svg viewBox="0 0 24 24" fill="currentColor">
+                                      <path d="M20.5 11h-3V8.5a1.5 1.5 0 00-3 0V11h-1.5V9.5a1.5 1.5 0 00-3 0V11H7a2 2 0 00-2 2v2.5h-1.5a1.5 1.5 0 000 3H5V21a2 2 0 002 2h3v-1.5a1.5 1.5 0 013 0V23h1.5v-1.5a1.5 1.5 0 013 0V23h3a2 2 0 002-2v-2.5h1.5a1.5 1.5 0 000-3H20.5V13z" />
+                                    </svg>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-white/60 font-semibold mb-0.5">{plugin.name}</p>
+                                    <p className="text-white font-bold text-lg">{provider.name}</p>
+                                    <p className="text-[#888] text-sm mt-0.5">{provider.description || `${provider.name} direct links`}</p>
+                                    <div className="flex items-center gap-2 mt-3">
+                                      <span className="text-[10px] font-bold text-white/50 bg-white/5 px-2.5 py-1 rounded-full uppercase tracking-wider">{provider.types?.join(' | ') || 'movie | tv'}</span>
+                                      {provider.version && <span className="text-[10px] font-bold text-white/50 bg-white/5 px-2.5 py-1 rounded-full tracking-wider">v{provider.version}</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <button className="text-white/60 hover:text-white transition-colors">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    </svg>
+                                  </button>
+                                  <div className="w-12 h-6 bg-white text-black flex justify-end items-center px-1 rounded-full cursor-pointer">
+                                    <div className="w-4 h-4 bg-black rounded-full" />
+                                  </div>
+                                </div>
+                              </div>
+                              <button className="w-full py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[#888] hover:text-white font-semibold transition-colors text-sm">
+                                Test Provider
+                              </button>
+                            </div>
+                          ));
+                        })}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
