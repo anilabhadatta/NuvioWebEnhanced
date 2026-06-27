@@ -1,0 +1,18 @@
+export const config = {
+  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+  supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+  tvLoginRedirectBaseUrl: process.env.NEXT_PUBLIC_TV_LOGIN_REDIRECT_BASE_URL || "",
+  youtubeProxyUrl: process.env.NEXT_PUBLIC_YOUTUBE_PROXY_URL || "",
+  parentalGuideApiUrl: process.env.NEXT_PUBLIC_PARENTAL_GUIDE_API_URL || "",
+  introDbApiUrl: process.env.NEXT_PUBLIC_INTRODB_API_URL || "",
+  imdbRatingsApiBaseUrl: process.env.NEXT_PUBLIC_IMDB_RATINGS_API_BASE_URL || "",
+  avatarPublicBaseUrl: process.env.NEXT_PUBLIC_AVATAR_PUBLIC_BASE_URL || "",
+  contributionsUrl: process.env.NEXT_PUBLIC_CONTRIBUTIONS_URL || "",
+  donationsBaseUrl: process.env.NEXT_PUBLIC_DONATIONS_BASE_URL || "",
+  donationsDonateUrl: process.env.NEXT_PUBLIC_DONATIONS_DONATE_URL || "",
+  tmdbApiKey: process.env.NEXT_PUBLIC_TMDB_API_KEY || "",
+  traktClientId: process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID || "",
+  traktClientSecret: process.env.NEXT_PUBLIC_TRAKT_CLIENT_SECRET || "",
+  traktApiUrl: process.env.NEXT_PUBLIC_TRAKT_API_URL || "",
+  traktRedirectUri: process.env.NEXT_PUBLIC_TRAKT_REDIRECT_URI || "",
+};

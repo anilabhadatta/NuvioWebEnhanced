@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export const TMDB_API_KEY = "ecb37597e45cfeed0586f3cd57233d0b";
+export const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || "ecb37597e45cfeed0586f3cd57233d0b";
 export const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 export const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
 export const TMDB_IMAGE_W500 = "https://image.tmdb.org/t/p/w500";

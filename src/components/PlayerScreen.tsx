@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { fetchExternalIds } from "@/lib/tmdb";
 import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
+import { saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
 
 const SAMPLE_HLS = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
@@ -17,8 +18,6 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-const SUBTITLES = ["Off", "English", "Spanish", "French", "German"];
-const AUDIOS = ["English (Original)", "Spanish", "French"];
 const QUALITIES = ["Auto", "1080p", "720p", "480p", "360p"];
 
 export default function PlayerScreen() {
@@ -39,8 +38,14 @@ export default function PlayerScreen() {
 
   // Menus
   const [openMenu, setOpenMenu] = useState<"sub" | "audio" | "quality" | null>(null);
-  const [selectedSub, setSelectedSub] = useState("Off");
-  const [selectedAudio, setSelectedAudio] = useState("English (Original)");
+  const [hlsInstance, setHlsInstance] = useState<any>(null);
+
+  const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
+  const [subTab, setSubTab] = useState<"builtin" | "addons" | "style">("builtin");
+  const [audios, setAudios] = useState<{ id: number; name: string }[]>([]);
+
+  const [selectedSub, setSelectedSub] = useState(-1);
+  const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedQuality, setSelectedQuality] = useState("Auto");
 
   // Overlays
@@ -88,23 +93,56 @@ export default function PlayerScreen() {
     const isM3u8 = src.includes(".m3u8");
 
     import("hls.js").then(({ default: Hls }) => {
+      const resumeTime = getResumeTime(movieId!, mediaType!, season ? parseInt(season) : undefined, episode ? parseInt(episode) : undefined);
+
       if (isM3u8 && Hls.isSupported()) {
         hls = new Hls({ maxBufferLength: 30 });
         hls.loadSource(src);
         hls.attachMedia(video);
+        
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setHlsInstance(hls);
+
+          // Populate audio tracks
+          if (hls.audioTracks && hls.audioTracks.length > 0) {
+            setAudios(hls.audioTracks.map((t: any) => ({ id: t.id, name: t.name || t.lang || `Audio ${t.id}` })));
+            setSelectedAudio(hls.audioTrack);
+          } else {
+            setAudios([{ id: 0, name: "Default" }]);
+            setSelectedAudio(0);
+          }
+
+          // Populate subtitle tracks
+          if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
+            setSubtitles([{ id: -1, name: "None" }, ...hls.subtitleTracks.map((t: any) => ({ id: t.id, name: t.name || t.lang || `Subtitle ${t.id}` }))]);
+            setSelectedSub(hls.subtitleTrack);
+          }
+
+          if (resumeTime > 0) {
+            video.currentTime = resumeTime;
+          }
           video.play().then(() => setIsPlaying(true)).catch(() => {});
         });
+
       } else {
         // Native playback for mp4/mkv (if supported) or native HLS (Safari)
         video.src = src;
         video.addEventListener("loadedmetadata", () => {
+          setAudios([{ id: 0, name: "Default" }]);
+          if (resumeTime > 0) {
+            video.currentTime = resumeTime;
+          }
           video.play().then(() => setIsPlaying(true)).catch(() => {});
         });
       }
     });
 
-    return () => { if (hls) hls.destroy(); };
+    return () => { 
+      if (hls) {
+        hls.destroy(); 
+      }
+      setHlsInstance(null);
+    };
   }, [streamUrl]);
 
   // Show/hide controls on mouse move
@@ -150,6 +188,26 @@ export default function PlayerScreen() {
     setCurrentTime(video.currentTime);
     setDuration(video.duration || 0);
   };
+
+  // Save progress periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isPlaying && duration > 0 && movieId && mediaType) {
+        saveWatchProgress({
+          id: movieId,
+          type: mediaType,
+          title: "Stream", // We should pass title in searchParams, but for now fallback
+          poster: "",
+          season: season ? parseInt(season) : undefined,
+          episode: episode ? parseInt(episode) : undefined,
+          currentTime,
+          duration,
+          updatedAt: Date.now()
+        });
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isPlaying, currentTime, duration, movieId, mediaType, season, episode]);
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     const video = videoRef.current;
@@ -357,17 +415,74 @@ export default function PlayerScreen() {
                   CC
                 </button>
                 {openMenu === "sub" && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-40 z-50">
-                    {SUBTITLES.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => { setSelectedSub(s); setOpenMenu(null); }}
-                        className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedSub === s ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
-                      >
-                        {s}
-                        {selectedSub === s && <span className="w-1.5 h-1.5 bg-white rounded-full" />}
-                      </button>
-                    ))}
+                  <div className="absolute bottom-full right-0 mb-3 bg-[#1e1e1e] border border-white/10 rounded-2xl overflow-hidden shadow-2xl w-[320px] z-50 flex flex-col max-h-[70vh]">
+                    <div className="p-4 border-b border-white/5 shrink-0">
+                      <h3 className="text-white font-bold text-lg mb-4">Subtitles</h3>
+                      <div className="flex bg-black/40 rounded-xl p-1 gap-1">
+                        <button onClick={() => setSubTab("builtin")} className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${subTab === "builtin" ? "bg-white text-black" : "text-[#aaa] hover:text-white"}`}>Built-in</button>
+                        <button onClick={() => setSubTab("addons")} className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${subTab === "addons" ? "bg-white text-black" : "text-[#aaa] hover:text-white"}`}>Addons</button>
+                        <button onClick={() => setSubTab("style")} className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${subTab === "style" ? "bg-white text-black" : "text-[#aaa] hover:text-white"}`}>Style</button>
+                      </div>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-2 scrollbar-hide">
+                      {subTab === "builtin" && (
+                        <div className="flex flex-col gap-1">
+                          {subtitles.map((s) => (
+                            <button
+                              key={s.id}
+                              onClick={() => { 
+                                setSelectedSub(s.id); 
+                                if (hlsInstance) hlsInstance.subtitleTrack = s.id;
+                                setOpenMenu(null); 
+                              }}
+                              className={`flex items-center justify-between w-full px-4 py-3 rounded-xl text-sm transition-colors ${selectedSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] bg-black/20 hover:bg-white/5"}`}
+                            >
+                              {s.name}
+                              {selectedSub === s.id && (
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-white">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                </svg>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {subTab === "addons" && (
+                        <div className="flex flex-col items-center justify-center py-10 px-4 text-center h-full">
+                          <p className="text-white font-semibold mb-2">OpenSubtitles v3</p>
+                          <p className="text-[#888] text-xs">Fetching subtitles from OpenSubtitles and other addons is currently being implemented.</p>
+                        </div>
+                      )}
+                      
+                      {subTab === "style" && (
+                        <div className="flex flex-col gap-4 p-2 pb-6 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-white font-semibold">Subtitle Delay</span>
+                            <div className="flex items-center gap-3 bg-black/40 rounded-full px-1 py-1">
+                              <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">-</button>
+                              <span className="text-white font-bold text-xs min-w-12 text-center">+0.000s</span>
+                              <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">+</button>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center justify-between">
+                            <span className="text-white font-semibold">Font Size</span>
+                            <div className="flex items-center gap-3 bg-black/40 rounded-full px-1 py-1">
+                              <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">-</button>
+                              <span className="text-white font-bold text-xs min-w-10 text-center">18sp</span>
+                              <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">+</button>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center justify-between">
+                            <span className="text-white font-semibold">Shadow</span>
+                            <button className="px-3 py-1 bg-white text-black font-bold text-xs rounded-full">On</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -384,15 +499,19 @@ export default function PlayerScreen() {
                   Audio
                 </button>
                 {openMenu === "audio" && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-52 z-50">
-                    {AUDIOS.map((a) => (
+                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-52 z-50 max-h-64 overflow-y-auto">
+                    {audios.map((a) => (
                       <button
-                        key={a}
-                        onClick={() => { setSelectedAudio(a); setOpenMenu(null); }}
-                        className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedAudio === a ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
+                        key={a.id}
+                        onClick={() => { 
+                          setSelectedAudio(a.id); 
+                          if (hlsInstance) hlsInstance.audioTrack = a.id;
+                          setOpenMenu(null); 
+                        }}
+                        className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
                       >
-                        {a}
-                        {selectedAudio === a && <span className="w-1.5 h-1.5 bg-white rounded-full" />}
+                        {a.name}
+                        {selectedAudio === a.id && <span className="w-1.5 h-1.5 bg-white rounded-full" />}
                       </button>
                     ))}
                   </div>

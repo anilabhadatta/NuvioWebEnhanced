@@ -10,13 +10,13 @@ interface RowProps {
   url: string;
   large?: boolean;   // poster-style cards
   first?: boolean;   // overlap hero
+  onSelectMovie?: (m: TMDBMovie) => void;
 }
 
-export default function ContentRow({ title, url, large, first }: RowProps) {
+export default function ContentRow({ title, url, large, first, onSelectMovie }: RowProps) {
   const router = useRouter();
   const [movies, setMovies] = useState<TMDBMovie[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,7 +30,7 @@ export default function ContentRow({ title, url, large, first }: RowProps) {
   const scrollRight = () => rowRef.current?.scrollBy({ left: 600, behavior: "smooth" });
 
   const handlePlay = (movie: TMDBMovie) => {
-    setSelectedMovie(movie);
+    onSelectMovie?.(movie);
   };
 
   if (loading) {
@@ -80,7 +80,7 @@ export default function ContentRow({ title, url, large, first }: RowProps) {
           {/* Scroll row */}
           <div
             ref={rowRef}
-            className="flex gap-3 overflow-x-auto hide-scrollbar pb-2"
+            className="flex gap-4 overflow-x-auto hide-scrollbar pb-6 pt-2 px-1"
           >
             {movies.map((movie) => {
               const imgSrc = large
@@ -91,40 +91,42 @@ export default function ContentRow({ title, url, large, first }: RowProps) {
               return (
                 <div
                   key={movie.id}
-                  onClick={() => setSelectedMovie(movie)}
-                  className={`row-card cursor-pointer rounded-xl overflow-hidden relative group/card shrink-0 ${
-                    large ? "w-36" : "w-52"
+                  onClick={() => onSelectMovie?.(movie)}
+                  className={`row-card cursor-pointer rounded-xl relative group/card shrink-0 transition-transform duration-300 hover:scale-105 hover:z-10 shadow-md ${
+                    large ? "w-40 h-[240px]" : "w-60 h-[135px]"
                   }`}
                 >
-                  {imgSrc && (imgSrc.includes("/null") === false) ? (
-                    <img
-                      src={imgSrc}
-                      alt={title_}
-                      className={`w-full object-cover ${large ? "h-52" : "h-28"}`}
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className={`w-full bg-[#222] flex items-center justify-center text-[#555] text-xs ${large ? "h-52" : "h-28"}`}>
-                      No Image
-                    </div>
-                  )}
+                  <div className="w-full h-full rounded-xl overflow-hidden relative">
+                    {imgSrc && (imgSrc.includes("/null") === false) ? (
+                      <img
+                        src={imgSrc}
+                        alt={title_}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-[#222] flex items-center justify-center text-[#555] text-xs">
+                        No Image
+                      </div>
+                    )}
 
-                  {/* Hover overlay */}
-                  <div className="absolute inset-0 bg-black/0 group-hover/card:bg-black/50 transition-all duration-200 flex flex-col justify-end p-2 opacity-0 group-hover/card:opacity-100">
-                    <p className="text-white text-xs font-semibold line-clamp-2 drop-shadow">{title_}</p>
-                    <div className="flex gap-1 mt-1.5">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handlePlay(movie); }}
-                        className="flex items-center gap-1 bg-white text-black text-[10px] font-bold px-2 py-1 rounded-md"
-                      >
-                        ▶ Play
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setSelectedMovie(movie); }}
-                        className="flex items-center gap-1 bg-white/20 border border-white/30 text-white text-[10px] font-semibold px-2 py-1 rounded-md"
-                      >
-                        Info
-                      </button>
+                    {/* Hover overlay */}
+                    <div className="absolute inset-0 bg-black/0 group-hover/card:bg-black/50 transition-all duration-200 flex flex-col justify-end p-3 opacity-0 group-hover/card:opacity-100">
+                      <p className="text-white text-xs font-semibold line-clamp-2 drop-shadow mb-2">{title_}</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handlePlay(movie); }}
+                          className="flex items-center justify-center gap-1 bg-white text-black text-xs font-bold px-3 py-1.5 rounded-lg flex-1"
+                        >
+                          ▶ Play
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onSelectMovie?.(movie); }}
+                          className="flex items-center justify-center gap-1 bg-white/20 border border-white/30 hover:bg-white/30 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex-1 transition-colors"
+                        >
+                          Info
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -133,24 +135,6 @@ export default function ContentRow({ title, url, large, first }: RowProps) {
           </div>
         </div>
       </div>
-
-      {selectedMovie && (
-        <MovieModal
-          movie={selectedMovie}
-          onClose={() => setSelectedMovie(null)}
-          onPlay={(movie, stream, season, episode) => {
-            setSelectedMovie(null);
-            const url = stream.url ? encodeURIComponent(stream.url) : "";
-            const tmdbId = movie.id;
-            const type = movie.media_type || (movie.title ? "movie" : "tv");
-            let route = `/player?id=${tmdbId}&type=${type}&url=${url}`;
-            if (season && episode) {
-              route += `&s=${season}&e=${episode}`;
-            }
-            router.push(route);
-          }}
-        />
-      )}
     </>
   );
 }

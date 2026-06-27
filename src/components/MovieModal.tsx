@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { TMDB_IMAGE_BASE, TMDB_IMAGE_W500, TMDBMovie, getGenreNames, fetchTvDetails, fetchTvSeason } from "@/lib/tmdb";
+import React, { useState, useEffect, useCallback } from "react";
+import { TMDB_IMAGE_BASE, TMDB_IMAGE_W500, TMDBMovie, getGenreNames, fetchTvDetails, fetchTvSeason, fetchExternalIds } from "@/lib/tmdb";
 import StreamPickerModal from "./StreamPickerModal";
 import { StreamItem } from "@/lib/addonService";
+import { config } from "@/lib/config";
 
 interface MovieModalProps {
   movie: TMDBMovie;
@@ -16,6 +17,10 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [episodes, setEpisodes] = useState<any[]>([]);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
+  const [episodesError, setEpisodesError] = useState(false);
+  
+  const [imdbRating, setImdbRating] = useState<string | null>(null);
+  const [parentalGuide, setParentalGuide] = useState<string | null>(null);
   
   const [showStreamPicker, setShowStreamPicker] = useState(false);
   const [targetSeason, setTargetSeason] = useState<number | undefined>();
@@ -28,26 +33,77 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
 
   useEffect(() => {
     if (isSeries) {
-      fetchTvDetails(movie.id).then(details => {
-        setTvDetails(details);
-        if (details.seasons && details.seasons.length > 0) {
-          // Select season 1 by default (or the first available non-0 season if possible)
-          const s1 = details.seasons.find((s: any) => s.season_number > 0);
-          setSelectedSeason(s1 ? s1.season_number : details.seasons[0].season_number);
-        }
-      });
+      fetchTvDetails(movie.id)
+        .then(details => {
+          setTvDetails(details);
+          if (details.seasons && details.seasons.length > 0) {
+            const lastSeasonId = sessionStorage.getItem("lastOpenedMovieId");
+            const lastSeasonStr = sessionStorage.getItem("lastOpenedSeason");
+            const lastSeason = (lastSeasonId === String(movie.id) && lastSeasonStr) ? parseInt(lastSeasonStr) : null;
+
+            if (lastSeason) {
+              setSelectedSeason(lastSeason);
+            } else {
+              const s1 = details.seasons.find((s: any) => s.season_number > 0);
+              setSelectedSeason(s1 ? s1.season_number : details.seasons[0].season_number);
+            }
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch TV details", err);
+          setEpisodesError(true);
+        });
     }
+
+    // Fetch external ID for IMDB specific APIs
+    const type = isSeries ? "tv" : "movie";
+    fetchExternalIds(movie.id, type).then(externalIds => {
+      const imdbId = externalIds?.imdb_id;
+      if (!imdbId) return;
+
+      if (config.imdbRatingsApiBaseUrl) {
+        fetch(`${config.imdbRatingsApiBaseUrl}rating?id=${imdbId}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data?.rating) setImdbRating(data.rating);
+          })
+          .catch(() => {});
+      }
+
+      if (config.parentalGuideApiUrl) {
+        fetch(`${config.parentalGuideApiUrl}title/${imdbId}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data?.contentRating) setParentalGuide(data.contentRating);
+          })
+          .catch(() => {});
+      }
+    }).catch(() => {});
   }, [movie.id, isSeries]);
+
+  const loadSeason = useCallback((seasonNum: number) => {
+    setLoadingEpisodes(true);
+    setEpisodesError(false);
+    fetchTvSeason(movie.id, seasonNum)
+      .then(seasonData => {
+        setEpisodes(seasonData.episodes || []);
+        setLoadingEpisodes(false);
+      })
+      .catch(err => {
+        console.error("Failed to fetch TV season", err);
+        setEpisodes([]);
+        setEpisodesError(true);
+        setLoadingEpisodes(false);
+      });
+  }, [movie.id]);
 
   useEffect(() => {
     if (isSeries && selectedSeason !== undefined) {
-      setLoadingEpisodes(true);
-      fetchTvSeason(movie.id, selectedSeason).then(seasonData => {
-        setEpisodes(seasonData.episodes || []);
-        setLoadingEpisodes(false);
-      });
+      sessionStorage.setItem("lastOpenedMovieId", String(movie.id));
+      sessionStorage.setItem("lastOpenedSeason", String(selectedSeason));
+      loadSeason(selectedSeason);
     }
-  }, [movie.id, isSeries, selectedSeason]);
+  }, [isSeries, selectedSeason, loadSeason, movie.id]);
 
   // Close on ESC
   useEffect(() => {
@@ -130,9 +186,20 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
           <h2 className="text-3xl font-bold text-white mb-2">{title}</h2>
           <div className="flex items-center gap-3 mb-4">
             {date && <span className="text-green-400 font-semibold text-sm">{date.slice(0, 4)}</span>}
-            {movie.vote_average > 0 && (
+            {movie.vote_average > 0 && !imdbRating && (
               <span className="text-yellow-400 font-semibold text-sm flex items-center gap-1">
                 ★ {movie.vote_average.toFixed(1)}
+              </span>
+            )}
+            {imdbRating && (
+              <span className="text-[#f5c518] font-bold text-sm flex items-center gap-1">
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                {imdbRating}
+              </span>
+            )}
+            {parentalGuide && (
+              <span className="text-[#888] text-xs font-bold border border-white/20 px-1.5 py-0.5 rounded">
+                {parentalGuide}
               </span>
             )}
             {movie.original_language && (
@@ -184,6 +251,17 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
               {loadingEpisodes ? (
                 <div className="flex justify-center py-10">
                   <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                </div>
+              ) : episodesError ? (
+                <div className="text-center py-10">
+                  <p className="text-red-400 font-semibold mb-2">Failed to load episodes.</p>
+                  <button onClick={() => loadSeason(selectedSeason)} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg text-sm transition-colors">
+                    Retry
+                  </button>
+                </div>
+              ) : episodes.length === 0 ? (
+                <div className="text-center py-10">
+                  <p className="text-[#888]">No episodes available for this season.</p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">

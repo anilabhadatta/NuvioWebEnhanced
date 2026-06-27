@@ -6,10 +6,31 @@ import { supabase } from "@/lib/supabase";
 import Sidebar from "./Sidebar";
 import HeroBanner from "./HeroBanner";
 import ContentRow from "./ContentRow";
-import { TMDB_URLS } from "@/lib/tmdb";
+import ContinueWatchingRow from "./ContinueWatchingRow";
+import { TMDB_URLS, TMDBMovie } from "@/lib/tmdb";
+import MovieModal from "./MovieModal";
 
 export default function Dashboard() {
   const router = useRouter();
+  const [selectedMovie, setSelectedMovie] = React.useState<TMDBMovie | null>(null);
+
+  useEffect(() => {
+    const last = sessionStorage.getItem("lastOpenedMovie");
+    if (last) {
+      try {
+        setSelectedMovie(JSON.parse(last));
+      } catch(e) {}
+    }
+  }, []);
+
+  const handleSelectMovie = (m: TMDBMovie | null) => {
+    setSelectedMovie(m);
+    if (m) {
+      sessionStorage.setItem("lastOpenedMovie", JSON.stringify(m));
+    } else {
+      sessionStorage.removeItem("lastOpenedMovie");
+    }
+  };
 
   useEffect(() => {
     const check = async () => {
@@ -33,18 +54,36 @@ export default function Dashboard() {
 
         {/* Content rows - exactly like Netflix clone structure */}
         <div className="px-6 pb-12 -mt-2">
-          <ContentRow title="Trending Now" url={TMDB_URLS.trending} first />
-          <ContentRow title="Trending Movies" url={TMDB_URLS.trendingMovies} />
-          <ContentRow title="Trending Series" url={TMDB_URLS.trendingSeries} />
-          <ContentRow title="Top Rated" url={TMDB_URLS.topRated} />
-          <ContentRow title="Action" url={TMDB_URLS.action} />
-          <ContentRow title="Science Fiction" url={TMDB_URLS.scifi} />
-          <ContentRow title="Animated" url={TMDB_URLS.animated} />
-          <ContentRow title="Comedy" url={TMDB_URLS.comedy} />
-          <ContentRow title="Horror" url={TMDB_URLS.horror} />
-          <ContentRow title="Upcoming" url={TMDB_URLS.upcoming} />
-          <ContentRow title="Netflix Originals" url={TMDB_URLS.originals} large />
+          <ContinueWatchingRow first />
+          <ContentRow title="Trending Now" url={TMDB_URLS.trending} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Trending Movies" url={TMDB_URLS.trendingMovies} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Trending Series" url={TMDB_URLS.trendingSeries} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Top Rated" url={TMDB_URLS.topRated} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Action" url={TMDB_URLS.action} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Science Fiction" url={TMDB_URLS.scifi} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Animated" url={TMDB_URLS.animated} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Comedy" url={TMDB_URLS.comedy} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Horror" url={TMDB_URLS.horror} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Upcoming" url={TMDB_URLS.upcoming} onSelectMovie={handleSelectMovie} />
+          <ContentRow title="Netflix Originals" url={TMDB_URLS.originals} large onSelectMovie={handleSelectMovie} />
         </div>
+
+        {selectedMovie && (
+          <MovieModal
+            movie={selectedMovie}
+            onClose={() => handleSelectMovie(null)}
+            onPlay={(movie, stream, season, episode) => {
+              const url = stream.url ? encodeURIComponent(stream.url) : "";
+              const tmdbId = movie.id;
+              const type = movie.media_type || (movie.title ? "movie" : "tv");
+              let route = `/player?id=${tmdbId}&type=${type}&url=${url}`;
+              if (season && episode) {
+                route += `&s=${season}&e=${episode}`;
+              }
+              router.push(route);
+            }}
+          />
+        )}
       </main>
     </div>
   );

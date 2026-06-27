@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { config } from "@/lib/config";
 
 const NAV_ITEMS = [
   {
@@ -59,8 +60,10 @@ export default function Sidebar() {
     <aside className="fixed left-0 top-0 h-full w-[220px] bg-[#111111] border-r border-white/5 flex flex-col z-40">
       {/* User profile at top - matches screenshot */}
       <div className="flex items-center gap-3 p-5 pb-4 border-b border-white/5">
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white font-bold text-sm shrink-0 cursor-pointer" onClick={() => router.push("/settings")}>
-          A
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white font-bold text-sm shrink-0 cursor-pointer overflow-hidden" onClick={() => router.push("/settings")}>
+          {config.avatarPublicBaseUrl ? (
+            <img src={`${config.avatarPublicBaseUrl}/default_avatar.png`} alt="Avatar" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.innerText = 'A'; }} />
+          ) : "A"}
         </div>
         <span className="text-[15px] font-semibold text-white">Anilabha</span>
       </div>

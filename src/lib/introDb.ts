@@ -4,7 +4,7 @@ export interface SkipInterval {
   type: "intro" | "outro" | "recap";
 }
 
-export const INTRODB_API_URL = "https://api.introdb.app";
+export const INTRODB_API_URL = process.env.NEXT_PUBLIC_INTRODB_API_URL || "https://api.introdb.app/";
 
 export async function fetchSkipIntervals(imdbId: string, season: number, episode: number): Promise<SkipInterval[]> {
   try {

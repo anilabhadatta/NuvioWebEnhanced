@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { TMDBMovie } from "@/lib/tmdb";
+import { TMDBMovie, fetchExternalIds } from "@/lib/tmdb";
 import { NuvioAddon, StreamItem, fetchUserAddons, fetchStreamsFromAddon } from "@/lib/addonService";
 
 interface StreamPickerModalProps {
@@ -16,41 +16,76 @@ export default function StreamPickerModal({ movie, season, episode, onClose, onP
   const [addons, setAddons] = useState<NuvioAddon[]>([]);
   const [streams, setStreams] = useState<StreamItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedAddonFilter, setSelectedAddonFilter] = useState<string>("All");
 
   const title = movie.title || movie.name;
   const isSeries = movie.media_type === "tv" || !!season;
   
   // Format the ID for addons
   // Movies: ttXXXXXX
-  // Series: ttXXXXXX:season:episode
-  // TMDB API gives us TMDB ID, but many addons require IMDB ID.
-  // For simplicity, we will pass the ID. We should ideally fetch the external IDs to get IMDB ID,
-  // but let's assume we pass the tmdb prefix or imdb id if available.
-  const tmdbPrefixId = `tmdb:${movie.id}`;
-  const videoId = isSeries ? `${tmdbPrefixId}:${season}:${episode}` : tmdbPrefixId;
-  const type = isSeries ? "series" : "movie";
 
   useEffect(() => {
+    let isMounted = true;
+    setLoading(true);
+    setStreams([]);
+    setError(null);
+
     async function loadStreams() {
-      setLoading(true);
-      const userAddons = await fetchUserAddons();
-      setAddons(userAddons);
+      try {
+        const addons = await fetchUserAddons();
+        if (!addons || addons.length === 0) {
+          if (isMounted) setError("No addons installed.");
+          return;
+        }
 
-      const allStreams: StreamItem[] = [];
-      const fetchPromises = userAddons
-        .filter(a => a.enabled)
-        .map(async (addon) => {
-          const addonStreams = await fetchStreamsFromAddon(addon, type, videoId);
-          if (addonStreams.length > 0) {
-            setStreams(prev => [...prev, ...addonStreams]);
+        // Fetch IMDB ID for proper addon compatibility (many addons only support ttXXXXXX)
+        const type = isSeries ? "tv" : "movie";
+        let imdbId = null;
+        try {
+          const externalIds = await fetchExternalIds(movie.id, type);
+          if (externalIds && externalIds.imdb_id) {
+            imdbId = externalIds.imdb_id;
           }
-        });
+        } catch (e) {
+          console.error("Failed to fetch IMDB ID", e);
+        }
 
-      await Promise.all(fetchPromises);
-      setLoading(false);
+        const baseId = imdbId ? imdbId : "tmdb:" + movie.id;
+        const videoId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
+        const mediaType = isSeries ? "series" : "movie";
+
+        const promises = addons.map((addon) =>
+          fetchStreamsFromAddon(addon, mediaType, videoId)
+            .then((res) => {
+              if (isMounted && res && res.length > 0) {
+                setStreams((prev) => [...prev, ...res]);
+              }
+            })
+            .catch(() => []) // Ignore failed addons
+        );
+
+        await Promise.all(promises);
+
+        if (isMounted) {
+          setLoading(false);
+          setStreams((prev) => {
+            if (prev.length === 0) setError("No streams found.");
+            return prev;
+          });
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setError("Error loading streams.");
+          setLoading(false);
+        }
+      }
     }
+
     loadStreams();
-  }, [videoId, type]);
+
+    return () => { isMounted = false; };
+  }, [movie.id, isSeries, season, episode]);
 
   // Close on ESC
   useEffect(() => {
@@ -98,24 +133,59 @@ export default function StreamPickerModal({ movie, season, episode, onClose, onP
               <p className="text-[#888] text-sm">We couldn't find any streams for this content. Check your installed addons in Settings.</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-3">
-              {streams.map((stream, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onPlayStream(stream)}
-                  className="w-full bg-[#222] hover:bg-[#333] border border-white/5 rounded-xl p-4 text-left transition-colors group"
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-white font-semibold text-sm line-clamp-1">{stream.title || stream.name || "Unknown Stream"}</span>
-                    <span className="text-xs bg-white/10 text-[#aaa] px-2 py-1 rounded whitespace-nowrap ml-2">
-                      {stream.addonName}
-                    </span>
-                  </div>
-                  {stream.description && (
-                    <p className="text-[#888] text-xs line-clamp-2">{stream.description}</p>
+            <div className="flex flex-col gap-4">
+              {/* Filter Chips */}
+              {streams.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                  <button
+                    onClick={() => setSelectedAddonFilter("All")}
+                    className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+                      selectedAddonFilter === "All" ? "bg-white text-black" : "bg-white/10 text-[#aaa] hover:bg-white/20"
+                    }`}
+                  >
+                    All
+                  </button>
+                  {Array.from(new Set(streams.map((s) => s.addonName))).filter(Boolean).map((addonName) => (
+                    <button
+                      key={addonName}
+                      onClick={() => setSelectedAddonFilter(addonName as string)}
+                      className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+                        selectedAddonFilter === addonName ? "bg-white text-black" : "bg-white/10 text-[#aaa] hover:bg-white/20"
+                      }`}
+                    >
+                      {addonName}
+                    </button>
+                  ))}
+                  {loading && (
+                    <div className="ml-2 w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin shrink-0" title="Searching for more..." />
                   )}
-                </button>
-              ))}
+                </div>
+              )}
+
+              {/* Streams List */}
+              <div className="flex flex-col gap-3">
+                {streams
+                  .filter((s) => selectedAddonFilter === "All" || s.addonName === selectedAddonFilter)
+                  .map((stream, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => onPlayStream(stream)}
+                      className="w-full bg-[#222] hover:bg-[#333] border border-white/5 rounded-xl p-4 text-left transition-colors group"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-white font-semibold text-sm line-clamp-1">
+                          {stream.title || stream.name || "Unknown Stream"}
+                        </span>
+                        <span className="text-xs bg-white/10 text-[#aaa] px-2 py-1 rounded whitespace-nowrap ml-2">
+                          {stream.addonName}
+                        </span>
+                      </div>
+                      {stream.description && (
+                        <p className="text-[#888] text-xs line-clamp-2">{stream.description}</p>
+                      )}
+                    </button>
+                  ))}
+              </div>
               
               {loading && (
                 <div className="py-4 text-center">

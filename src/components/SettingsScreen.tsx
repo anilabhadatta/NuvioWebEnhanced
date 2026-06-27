@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Sidebar from "./Sidebar";
+import { config } from "@/lib/config";
 
 interface Plugin {
   id: string;
@@ -15,7 +16,6 @@ interface Plugin {
 const SETTINGS_CATEGORIES = [
   { id: "account", label: "Account" },
   { id: "general", label: "General" },
-  { id: "player", label: "Player" },
   { id: "advanced", label: "Advanced" },
 ];
 
@@ -52,20 +52,27 @@ const GENERAL_ITEMS = [
   },
 ];
 
-const INITIAL_PLUGINS: Plugin[] = [
-  { id: "cinemeta-movie", name: "Cinemeta (Movies)", url: "https://v3-cinemeta.strem.io/manifest.json", installed: true },
-  { id: "cinemeta-series", name: "Cinemeta (Series)", url: "https://v3-cinemeta.strem.io/manifest.json", installed: true },
-  { id: "opensubtitles", name: "OpenSubtitles v3", url: "https://opensubtitles-v3.strem.io/manifest.json", installed: true },
-];
+import { fetchUserAddons } from "@/lib/addonService";
 
 export default function SettingsScreen() {
   const router = useRouter();
   const [activeCategory, setActiveCategory] = useState("general");
   const [activeItem, setActiveItem] = useState("plugins");
-  const [plugins, setPlugins] = useState<Plugin[]>(INITIAL_PLUGINS);
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [newPluginUrl, setNewPluginUrl] = useState("");
   const [addingPlugin, setAddingPlugin] = useState(false);
   const [addError, setAddError] = useState("");
+
+  React.useEffect(() => {
+    fetchUserAddons().then((addons) => {
+      setPlugins(addons.map(a => ({
+        id: a.url,
+        name: a.name || a.url,
+        url: a.url,
+        installed: true
+      })));
+    });
+  }, []);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -157,44 +164,60 @@ export default function SettingsScreen() {
               {/* Plugins section appears when Content & Discovery is active */}
               {activeItem === "plugins" && (
                 <div className="mt-8">
-                  <h3 className="text-lg font-bold text-white mb-4">Plugins & Addons</h3>
+                  <h3 className="text-lg font-bold text-white mb-6">Plugins</h3>
 
-                  {/* Add plugin */}
-                  <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-4">
-                    <p className="text-sm font-semibold text-[#aaa] mb-3">Add via Manifest URL</p>
-                    <div className="flex gap-3">
-                      <input
-                        type="url"
-                        value={newPluginUrl}
-                        onChange={(e) => setNewPluginUrl(e.target.value)}
-                        placeholder="https://your-addon.com/manifest.json"
-                        className="flex-1 bg-[#111] border border-white/10 focus:border-white/30 rounded-xl px-4 py-2.5 text-white placeholder-[#555] outline-none text-sm transition-colors"
-                        onKeyDown={(e) => e.key === "Enter" && handleAddPlugin()}
-                      />
-                      <button
-                        onClick={handleAddPlugin}
-                        disabled={addingPlugin || !newPluginUrl.trim()}
-                        className="bg-white hover:bg-gray-200 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0 flex items-center gap-2"
-                      >
-                        {addingPlugin ? (
-                          <span className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                        ) : (
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                          </svg>
-                        )}
-                        Install
-                      </button>
+                  <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Overview</p>
+                  <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-8">
+                    <p className="text-xs text-red-400 mb-4">Plugin providers require a TMDB API key. Set it on the TMDB screen or plugin providers will not work correctly.</p>
+                    
+                    <div className="flex items-center justify-between py-2 border-b border-white/5">
+                      <div>
+                        <p className="text-white text-sm font-semibold">Enable plugin providers globally</p>
+                        <p className="text-[#888] text-xs">Use plugin providers during stream discovery.</p>
+                      </div>
+                      <div className="w-10 h-6 bg-white/20 rounded-full relative cursor-pointer">
+                        <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full"></div>
+                      </div>
                     </div>
-                    {addError && (
-                      <p className="text-red-400 text-xs mt-2">{addError}</p>
-                    )}
+                    
+                    <div className="flex items-center justify-between py-2 pt-4">
+                      <div>
+                        <p className="text-white text-sm font-semibold">Group plugin providers by repository</p>
+                        <p className="text-[#888] text-xs">In Streams, show one provider per repository instead of one per source.</p>
+                      </div>
+                      <div className="w-10 h-6 bg-white/10 rounded-full relative cursor-pointer opacity-50">
+                        <div className="absolute left-1 top-1 w-4 h-4 bg-[#666] rounded-full"></div>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Installed plugins */}
-                  <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl overflow-hidden">
+                  <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Add Repository</p>
+                  <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-8 flex flex-col gap-3">
+                    <input
+                      type="url"
+                      value={newPluginUrl}
+                      onChange={(e) => setNewPluginUrl(e.target.value)}
+                      placeholder="Plugin manifest URL"
+                      className="w-full bg-[#222] border border-white/5 rounded-xl px-4 py-3 text-white placeholder-[#666] outline-none text-sm focus:border-white/20 transition-colors"
+                      onKeyDown={(e) => e.key === "Enter" && handleAddPlugin()}
+                    />
+                    <button
+                      onClick={handleAddPlugin}
+                      disabled={addingPlugin || !newPluginUrl.trim()}
+                      className="w-full bg-white/20 hover:bg-white/30 text-white font-bold py-3 rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {addingPlugin ? "Installing..." : "Install Plugin Repository"}
+                    </button>
+                    {addError && <p className="text-red-400 text-xs text-center mt-1">{addError}</p>}
+                  </div>
+
+                  <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Installed Repositories</p>
+                  <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl overflow-hidden mb-8">
                     {plugins.length === 0 ? (
-                      <p className="text-[#666] text-sm text-center py-10">No plugins installed</p>
+                      <div className="p-6">
+                        <p className="text-white font-semibold text-sm">No plugin repositories installed yet.</p>
+                        <p className="text-[#888] text-xs mt-1">Add a repository URL to install provider plugins for stream discovery.</p>
+                      </div>
                     ) : (
                       plugins.map((plugin, i) => (
                         <div
@@ -225,10 +248,115 @@ export default function SettingsScreen() {
                 </div>
               )}
 
+              {/* Playback settings section */}
+              {activeItem === "playback" && (
+                <div className="mt-8">
+                  <h3 className="text-lg font-bold text-white mb-6">Playback</h3>
+                  
+                  <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl overflow-hidden mb-8">
+                    {[
+                      { label: "Preferred Audio Language", value: "Device language", desc: "" },
+                      { label: "Secondary Audio Language", value: "None", desc: "" },
+                      { label: "Preferred Language", value: "None", desc: "" },
+                      { label: "Secondary Preferred Language", value: "None", desc: "" },
+                      { label: "Use Forced Subtitles", toggle: true, desc: "Prefer forced subtitles when matching your subtitle language settings." },
+                      { label: "Show Only Preferred Languages", toggle: true, desc: "Only show subtitles matching your preferred subtitle languages." },
+                      { label: "Addon Subtitle Startup", value: "All subtitles", desc: "" },
+                    ].map((item, i, arr) => (
+                      <div key={item.label} className={`flex items-center justify-between px-5 py-4 ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
+                        <div>
+                          <p className="text-white font-semibold text-sm">{item.label}</p>
+                          {item.value && item.desc === "" && <p className="text-[#666] text-xs mt-0.5">{item.value}</p>}
+                          {item.desc && <p className="text-[#666] text-xs mt-0.5">{item.desc}</p>}
+                        </div>
+                        {item.toggle && (
+                          <div className="w-10 h-6 bg-white/10 rounded-full relative cursor-pointer">
+                            <div className="absolute left-1 top-1 w-4 h-4 bg-[#666] rounded-full"></div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Subtitle Rendering</p>
+                  <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl overflow-hidden">
+                    
+                    <div className="px-5 py-4 border-b border-white/5">
+                      <div className="flex justify-between mb-2">
+                        <p className="text-white font-semibold text-sm">Subtitle Size</p>
+                        <p className="text-white font-bold text-sm">18sp</p>
+                      </div>
+                      <input type="range" min="10" max="30" defaultValue="18" className="w-full accent-white" />
+                    </div>
+
+                    <div className="px-5 py-4 border-b border-white/5">
+                      <div className="flex justify-between mb-2">
+                        <p className="text-white font-semibold text-sm">Vertical Offset</p>
+                        <p className="text-white font-bold text-sm">20</p>
+                      </div>
+                      <input type="range" min="0" max="100" defaultValue="20" className="w-full accent-white" />
+                    </div>
+
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                      <div>
+                        <p className="text-white font-semibold text-sm">Bold</p>
+                        <p className="text-[#666] text-xs mt-0.5">Use a heavier subtitle font weight.</p>
+                      </div>
+                      <div className="w-10 h-6 bg-white/10 rounded-full relative cursor-pointer">
+                        <div className="absolute left-1 top-1 w-4 h-4 bg-[#666] rounded-full"></div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                      <div>
+                        <p className="text-white font-semibold text-sm">Text Color</p>
+                        <p className="text-[#666] text-xs mt-0.5">#FFFFD700</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                      <div>
+                        <p className="text-white font-semibold text-sm">Background Color</p>
+                        <p className="text-[#666] text-xs mt-0.5">Transparent</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                      <div>
+                        <p className="text-white font-semibold text-sm">Outline</p>
+                        <p className="text-[#666] text-xs mt-0.5">Draw a border around subtitle text.</p>
+                      </div>
+                      <div className="w-10 h-6 bg-white/10 rounded-full relative cursor-pointer">
+                        <div className="absolute left-1 top-1 w-4 h-4 bg-[#666] rounded-full"></div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                      <div>
+                        <p className="text-white font-semibold text-sm">Shadow</p>
+                        <p className="text-[#666] text-xs mt-0.5">Draw a drop shadow behind subtitle text.</p>
+                      </div>
+                      <div className="w-10 h-6 bg-white/20 rounded-full relative cursor-pointer">
+                        <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full"></div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              )}
+
               {/* Footer - matches NuvioDesktop screenshot */}
-              <div className="mt-16 text-center text-[#555] text-xs pb-12">
+              <div className="mt-16 text-center text-[#555] text-xs pb-12 flex flex-col items-center gap-1">
                 <p>Made with ❤️ by Tapframe and friends</p>
-                <p className="mt-1">Version 1.0.0 (web)</p>
+                <div className="flex items-center gap-3 mt-2">
+                  {config.contributionsUrl && (
+                    <a href={config.contributionsUrl} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Contributions</a>
+                  )}
+                  {config.donationsBaseUrl && (
+                    <a href={config.donationsBaseUrl} target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Donate</a>
+                  )}
+                </div>
+                <p className="mt-4">Version 1.0.0 (web)</p>
                 <p>Based on Nuvio 0.2.12</p>
               </div>
             </>
@@ -260,28 +388,7 @@ export default function SettingsScreen() {
             </div>
           )}
 
-          {activeCategory === "player" && (
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-8">Player</h2>
-              <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl overflow-hidden">
-                {[
-                  { label: "Preferred Audio Language", value: "English", desc: "Select default audio track" },
-                  { label: "Subtitle Language", value: "Off", desc: "Select default subtitle track" },
-                  { label: "Auto-play Next Episode", value: "On", desc: "Automatically plays next episode after countdown" },
-                  { label: "Skip Intro", value: "On", desc: "Show skip intro button when detected" },
-                  { label: "Video Quality", value: "Auto", desc: "Preferred stream quality" },
-                ].map((item, i, arr) => (
-                  <div key={item.label} className={`flex items-center justify-between px-5 py-4 ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
-                    <div>
-                      <p className="text-white font-semibold text-sm">{item.label}</p>
-                      <p className="text-[#666] text-xs mt-0.5">{item.desc}</p>
-                    </div>
-                    <span className="text-[#aaa] text-sm font-medium bg-white/5 px-3 py-1.5 rounded-lg">{item.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+
 
           {activeCategory === "advanced" && (
             <div>
