@@ -8,6 +8,8 @@ import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
 import { saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
 import StreamPickerModal from "./StreamPickerModal";
 
+
+
 const SAMPLE_HLS = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
 function formatTime(sec: number): string {
@@ -28,6 +30,8 @@ export default function PlayerScreen() {
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
@@ -40,6 +44,7 @@ export default function PlayerScreen() {
   // Menus
   const [openMenu, setOpenMenu] = useState<"sub" | "audio" | "episodes" | null>(null);
   const [hlsInstance, setHlsInstance] = useState<any>(null);
+  const shakaRef = useRef<any>(null);
 
   const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
   const [subTab, setSubTab] = useState<"builtin" | "addons" | "style">("builtin");
@@ -57,6 +62,35 @@ export default function PlayerScreen() {
   const streamUrl = searchParams.get("url");
   const season = searchParams.get("s");
   const episode = searchParams.get("e");
+
+  const [resolvedSrc, setResolvedSrc] = useState<string>("");
+
+  useEffect(() => {
+    async function resolveUrl() {
+      const initial = streamUrl ? decodeURIComponent(streamUrl) : SAMPLE_HLS;
+
+      // Resolve redirects fully client-side — the browser follows all redirects natively,
+      // including auth-token-embedded CDN links (Torbox, MediaFusion, etc.).
+      // No server proxy required or allowed.
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(initial, {
+          method: 'HEAD',
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        clearTimeout(tid);
+        // res.url is the fully-resolved final URL after all redirects
+        setResolvedSrc(res.url || initial);
+      } catch {
+        // HEAD failed (CORS or timeout) — fall back to using the original URL directly.
+        // The browser will still follow redirects when the <video> element loads it.
+        setResolvedSrc(initial);
+      }
+    }
+    resolveUrl();
+  }, [streamUrl]);
 
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
   const [activeSkip, setActiveSkip] = useState<SkipInterval | null>(null);
@@ -135,6 +169,7 @@ export default function PlayerScreen() {
   // Fetch Skip Intervals (Intro/Outro)
   useEffect(() => {
     async function loadSkips() {
+      setPlayerError(null); // Reset any previous errors
       if (!movieId) return;
       
       // We only support Series intro skipping easily via IntroDB right now
@@ -153,79 +188,197 @@ export default function PlayerScreen() {
     loadSkips();
   }, [movieId, mediaType, season, episode]);
 
-  // Initialize HLS.js or Native Playback
+  // Initialize player on resolvedSrc change.
+  // Strategy:
+  //   • .m3u8  → HLS.js (or native Safari)
+  //   • .mpd   → Shaka Player (DASH)
+  //   • everything else (MP4/MKV direct CDN link) → native <video src>
+  //     The browser follows auth-embedded redirects natively; no server proxy needed.
   useEffect(() => {
-    let hls: any = null;
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !resolvedSrc) return;
+    let mounted = true;
+    let hlsObj: any = null;
 
-    const src = streamUrl ? decodeURIComponent(streamUrl) : SAMPLE_HLS;
-    const isM3u8 = src.includes(".m3u8");
+    const resumeTime = getResumeTime(
+      movieId!, mediaType!,
+      season ? parseInt(season) : undefined,
+      episode ? parseInt(episode) : undefined
+    );
 
-    import("hls.js").then(({ default: Hls }) => {
-      const resumeTime = getResumeTime(movieId!, mediaType!, season ? parseInt(season) : undefined, episode ? parseInt(episode) : undefined);
+    const lower = resolvedSrc.toLowerCase().split('?')[0];
+    const isHls = lower.endsWith('.m3u8') || resolvedSrc.includes('.m3u8');
+    const isDash = lower.endsWith('.mpd') || resolvedSrc.includes('.mpd');
 
-      if (isM3u8 && Hls.isSupported()) {
-        hls = new Hls({ maxBufferLength: 30 });
-        hls.loadSource(src);
-        hls.attachMedia(video);
-        
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          setHlsInstance(hls);
+    // ── Shaka for DASH manifests only ─────────────────────────────────────────
+    async function initShaka() {
+      const shaka = await import('shaka-player') as any;
+      if (!mounted) return;
 
-          // Populate audio tracks
-          if (hls.audioTracks && hls.audioTracks.length > 0) {
-            setAudios(hls.audioTracks.map((t: any) => ({ id: t.id, name: t.name || t.lang || `Audio ${t.id}` })));
-            setSelectedAudio(hls.audioTrack);
-          } else {
-            setAudios([{ id: 0, name: "Default" }]);
-            setSelectedAudio(0);
-          }
+      if (shaka.polyfill?.installAll) shaka.polyfill.installAll();
+      else if (shaka.default?.polyfill?.installAll) shaka.default.polyfill.installAll();
 
-          // Populate subtitle tracks
-          if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
-            setSubtitles([{ id: -1, name: "None" }, ...hls.subtitleTracks.map((t: any) => ({ id: t.id, name: t.name || t.lang || `Subtitle ${t.id}` }))]);
-            setSelectedSub(hls.subtitleTrack);
-          }
+      const ShakaPlayer = shaka.Player || shaka.default?.Player;
+      if (!ShakaPlayer || !ShakaPlayer.isBrowserSupported()) {
+        if (video) video.src = resolvedSrc;
+        return;
+      }
 
-          if (resumeTime > 0) {
-            video.currentTime = resumeTime;
-          }
-          video.play().then(() => setIsPlaying(true)).catch(() => {});
-        });
+      if (shakaRef.current) { await shakaRef.current.destroy(); shakaRef.current = null; }
 
-      } else {
-        // Native playback for mp4/mkv (if supported) or native HLS (Safari)
-        video.src = src;
-        video.addEventListener("loadedmetadata", () => {
-          const vAny = video as any;
-          if (vAny.audioTracks && vAny.audioTracks.length > 0) {
-            const arr = [];
-            for (let i = 0; i < vAny.audioTracks.length; i++) {
-              const track = vAny.audioTracks[i];
-              arr.push({ id: i, name: track.label || track.language || `Audio ${i + 1}` });
+      const player = new ShakaPlayer();
+      await player.attach(video);
+      shakaRef.current = player;
+
+      player.addEventListener('error', (e: any) => {
+        console.error('Shaka error', e.detail);
+      });
+
+      try {
+        await player.load(resolvedSrc);
+        if (!mounted) return;
+
+        const variantTracks: any[] = player.getVariantTracks();
+        const audioLangs = player.getAudioLanguages();
+        if (audioLangs && audioLangs.length > 1) {
+          setAudios(audioLangs.map((lang: string, i: number) => ({
+            id: i,
+            name: lang === 'und' ? `Audio ${i + 1}` : lang.toUpperCase()
+          })));
+        } else {
+          const audioIds = [...new Set(variantTracks.map((t: any) => t.audioId).filter(Boolean))];
+          setAudios(audioIds.length > 1
+            ? audioIds.map((_, i) => ({ id: i, name: `Audio ${i + 1}` }))
+            : [{ id: 0, name: 'Default' }]);
+        }
+        setSelectedAudio(0);
+
+        const textTracks: any[] = player.getTextTracks();
+        if (textTracks.length > 0) {
+          setSubtitles([{ id: -1, name: 'None' }, ...textTracks.map((t: any, i: number) => ({
+            id: i,
+            name: t.label || t.language || `Subtitle ${i + 1}`
+          }))]);
+        }
+
+        if (resumeTime > 0 && video) video.currentTime = resumeTime;
+        video?.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => {});
+      } catch (err) {
+        console.error('Shaka load error — falling back to native video', err);
+        if (mounted && video) {
+          setPlayerError(null);
+          video.src = resolvedSrc;
+          video.load();
+          if (resumeTime > 0) video.currentTime = resumeTime;
+          video.play().catch(() => {});
+        }
+      }
+    }
+
+    // ── HLS.js for .m3u8 ──────────────────────────────────────────────────────
+    function initHls() {
+      import('hls.js').then(({ default: Hls }) => {
+        if (!mounted) return;
+        if (Hls.isSupported()) {
+          hlsObj = new Hls({ maxBufferLength: 60, maxMaxBufferLength: 120 });
+          hlsObj.loadSource(resolvedSrc);
+          hlsObj.attachMedia(video);
+          hlsObj.on(Hls.Events.MANIFEST_PARSED, () => {
+            setHlsInstance(hlsObj);
+            if (hlsObj.audioTracks?.length > 0) {
+              setAudios(hlsObj.audioTracks.map((t: any) => ({ id: t.id, name: t.name || t.lang || `Audio ${t.id}` })));
+              setSelectedAudio(hlsObj.audioTrack);
+            } else {
+              setAudios([{ id: 0, name: 'Default' }]);
+              setSelectedAudio(0);
             }
-            setAudios(arr);
-            const activeIndex = Array.from(vAny.audioTracks).findIndex((t: any) => t.enabled);
-            setSelectedAudio(activeIndex !== -1 ? activeIndex : 0);
-          } else {
-            setAudios([{ id: 0, name: "Default" }]);
-          }
-          if (resumeTime > 0) {
-            video.currentTime = resumeTime;
-          }
-          video.play().then(() => setIsPlaying(true)).catch(() => {});
-        });
-      }
-    });
+            if (hlsObj.subtitleTracks?.length > 0) {
+              setSubtitles([{ id: -1, name: 'None' }, ...hlsObj.subtitleTracks.map((t: any) => ({ id: t.id, name: t.name || t.lang || `Subtitle ${t.id}` }))]);
+              setSelectedSub(hlsObj.subtitleTrack);
+            }
+            if (resumeTime > 0) video.currentTime = resumeTime;
+            video.play().then(() => { if (mounted) setIsPlaying(true); }).catch(() => {});
+          });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // Safari native HLS
+          video.src = resolvedSrc;
+        }
+      });
+    }
 
-    return () => { 
-      if (hls) {
-        hls.destroy(); 
-      }
-      setHlsInstance(null);
+    // ── Native video for direct CDN MP4/MKV (Torbox, etc.) ───────────────────
+    // The browser handles auth-token-embedded URLs and follows redirects natively.
+    // No server proxy or Shaka MSE pipeline needed — just set src directly.
+    function initNative() {
+      if (shakaRef.current) { shakaRef.current.destroy(); shakaRef.current = null; }
+
+      // Add listeners BEFORE setting src so we never miss an event
+      const onMeta = () => {
+        if (!mounted) return;
+        const vAny = video as any;
+        if (vAny.audioTracks) {
+          if (vAny.audioTracks.length > 1) {
+            const tracks = Array.from(vAny.audioTracks) as any[];
+            setAudios(tracks.map((t, i) => ({ id: i, name: t.label || t.language || `Audio ${i + 1}` })));
+          } else {
+            setAudios([{ id: 0, name: 'Default' }]);
+          }
+        } else {
+          // The audioTracks API is not supported/enabled in this browser
+          setAudios([{ id: -1, name: 'Audio track selection not supported natively by your browser' }]);
+        }
+        setSelectedAudio(0);
+        if (resumeTime > 0) video.currentTime = resumeTime;
+        // Attempt autoplay; show manual play button if browser blocks it
+        video.play().then(() => {
+          if (mounted) { setIsPlaying(true); setAutoplayBlocked(false); }
+        }).catch(() => {
+          // Autoplay was blocked — show a visible play button overlay
+          if (mounted) setAutoplayBlocked(true);
+        });
+      };
+
+      const onError = () => {
+        if (!mounted) return;
+        // Video element hit a decode/network error
+        console.error('Video element error', video.error);
+        if (video.error) {
+          if (video.error.code === 4) {
+            setPlayerError("Format Not Supported: The browser cannot play this file (likely unsupported HEVC video or DTS/AC3 audio). Please choose a different stream.");
+          } else if (video.error.code === 3) {
+            setPlayerError("Decode Error: The browser failed to decode the media. Please try a different stream.");
+          } else {
+            setPlayerError(`Playback Error (Code ${video.error.code}). Please try a different stream.`);
+          }
+        }
+      };
+
+      video.addEventListener('loadedmetadata', onMeta, { once: true });
+      video.addEventListener('error', onError);
+
+      // Set src last so the events above are definitely registered
+      video.src = resolvedSrc;
+    }
+
+    if (isHls) {
+      initHls();
+    } else if (isDash) {
+      initShaka();
+    } else {
+      // Direct file (MP4, MKV, WebM, etc.) — use native video
+      initNative();
+    }
+
+    return () => {
+      mounted = false;
+      if (hlsObj) { hlsObj.destroy(); setHlsInstance(null); }
+      if (shakaRef.current) { shakaRef.current.destroy(); shakaRef.current = null; }
+      video.removeEventListener('error', () => {});
+      video.pause();
+      video.removeAttribute('src');
+      video.load(); // flush MSE buffers
     };
-  }, [streamUrl]);
+  }, [resolvedSrc]);
 
   // Show/hide controls on mouse move
   const resetControlsTimeout = useCallback(() => {
@@ -360,30 +513,81 @@ export default function PlayerScreen() {
       onMouseLeave={() => isPlaying && setShowControls(false)}
       style={{ cursor: showControls ? "default" : "none" }}
     >
-      {/* Video */}
+      {/* Loading overlay — shown while resolvedSrc is empty */}
+      {!resolvedSrc && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white/50 z-10">
+          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+          <p>Resolving stream source...</p>
+        </div>
+      )}
+
+      {/* Video element is always mounted so videoRef is always valid */}
       <video
         ref={videoRef}
         className="w-full h-full object-contain"
         onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleTimeUpdate}  /* also grab duration when metadata arrives */
         onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => setIsBuffering(false)}
+        onPlaying={() => { setIsBuffering(false); setAutoplayBlocked(false); }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onClick={togglePlay}
+        playsInline
+        style={{ display: resolvedSrc ? 'block' : 'none' }}
       />
 
+      {/* Autoplay-blocked overlay — tap/click to start playback */}
+      {autoplayBlocked && resolvedSrc && !playerError && (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center z-30 cursor-pointer"
+          onClick={() => {
+            videoRef.current?.play().then(() => {
+              setIsPlaying(true);
+              setAutoplayBlocked(false);
+            }).catch(() => {});
+          }}
+        >
+          <div className="w-20 h-20 rounded-full bg-white/10 border border-white/30 backdrop-blur-sm flex items-center justify-center hover:bg-white/20 transition-all">
+            <svg viewBox="0 0 24 24" fill="currentColor" className="w-10 h-10 text-white ml-1">
+              <path fillRule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <p className="text-white/60 text-sm mt-4">Click to play</p>
+        </div>
+      )}
+
+      {/* Player Error Overlay */}
+      {playerError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-40 p-8 text-center backdrop-blur-sm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-16 h-16 text-red-500 mb-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <p className="text-white font-bold text-xl mb-2">Playback Failed</p>
+          <p className="text-white/70 max-w-md">{playerError}</p>
+          <button 
+            onClick={() => { setTargetEpisode(undefined); setShowStreamPicker(true); }}
+            className="mt-6 px-6 py-2.5 bg-white text-black font-semibold rounded-xl hover:bg-gray-200 transition-colors"
+          >
+            Switch Stream
+          </button>
+        </div>
+      )}
+
       {/* Buffering spinner */}
-      {isBuffering && (
+      {isBuffering && resolvedSrc && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
         </div>
       )}
 
-      {/* Skip Segment Button */}
-      {activeSkip && showControls && (
+      {/* Skip Segment Button — always pointer-events-auto, outside controls opacity */}
+      {activeSkip && (
         <button
-          onClick={() => { if (videoRef.current) videoRef.current.currentTime = activeSkip.endTime; }}
-          className="absolute bottom-28 right-8 bg-black/70 hover:bg-black/90 border border-white/40 text-white font-semibold px-5 py-2.5 rounded-xl text-sm backdrop-blur-sm transition-all"
+          onClick={() => {
+            const video = videoRef.current;
+            if (video) video.currentTime = activeSkip.endTime;
+          }}
+          className="absolute bottom-28 right-8 bg-black/80 hover:bg-black/95 border border-white/40 text-white font-semibold px-5 py-2.5 rounded-xl text-sm backdrop-blur-sm transition-all z-50 pointer-events-auto"
         >
           Skip {activeSkip.type.charAt(0).toUpperCase() + activeSkip.type.slice(1)} →
         </button>
@@ -603,29 +807,51 @@ export default function PlayerScreen() {
                 </button>
                 {openMenu === "audio" && (
                   <div className="absolute bottom-full left-0 mb-3 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-52 z-50 max-h-64 overflow-y-auto">
-                    {audios.map((a) => (
-                      <button
-                        key={a.id}
-                        onClick={() => { 
-                          setSelectedAudio(a.id); 
-                          if (hlsInstance) {
-                            hlsInstance.audioTrack = a.id;
-                          } else {
-                            const vAny = videoRef.current as any;
-                            if (vAny && vAny.audioTracks) {
-                              for (let i = 0; i < vAny.audioTracks.length; i++) {
-                                vAny.audioTracks[i].enabled = (i === a.id);
+                    {audios.length === 1 && audios[0].id === -1 ? (
+                      <div className="p-4 text-center">
+                        <p className="text-white text-sm font-semibold mb-1">Track Selection Unavailable</p>
+                        <p className="text-[#888] text-xs">Your browser doesn't natively support reading audio tracks from this file.</p>
+                        <p className="text-[#888] text-xs mt-2">In Chrome, you can enable: <br/><span className="text-white bg-black/50 px-1 py-0.5 rounded">chrome://flags/#enable-experimental-web-platform-features</span></p>
+                      </div>
+                    ) : (
+                      audios.map((a) => (
+                        <button
+                          key={a.id}
+                          onClick={() => { 
+                            setSelectedAudio(a.id); 
+                            if (hlsInstance) {
+                              hlsInstance.audioTrack = a.id;
+                            } else if (shakaRef.current) {
+                              // Shaka Player: select audio language by index
+                              const langs = shakaRef.current.getAudioLanguages();
+                              if (langs && langs[a.id]) {
+                                shakaRef.current.selectAudioLanguage(langs[a.id]);
+                              } else {
+                                // Fallback: select variant track by audioId
+                                const tracks = shakaRef.current.getVariantTracks();
+                                const audioIds = [...new Set(tracks.map((t: any) => t.audioId).filter(Boolean))];
+                                if (audioIds[a.id] !== undefined) {
+                                  const target = tracks.find((t: any) => t.audioId === audioIds[a.id]);
+                                  if (target) shakaRef.current.selectVariantTrack(target, true);
+                                }
+                              }
+                            } else {
+                              const vAny = videoRef.current as any;
+                              if (vAny?.audioTracks) {
+                                for (let i = 0; i < vAny.audioTracks.length; i++) {
+                                  vAny.audioTracks[i].enabled = (i === a.id);
+                                }
                               }
                             }
-                          }
-                          setOpenMenu(null); 
-                        }}
-                        className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
-                      >
-                        {a.name}
-                        {selectedAudio === a.id && <span className="w-1.5 h-1.5 bg-white rounded-full" />}
-                      </button>
-                    ))}
+                            setOpenMenu(null); 
+                          }}
+                          className={`flex items-center justify-between w-full px-4 py-2.5 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-semibold" : "text-[#bbb] hover:bg-white/5"}`}
+                        >
+                          {a.name}
+                          {selectedAudio === a.id && <span className="w-1.5 h-1.5 bg-white rounded-full" />}
+                        </button>
+                      ))
+                    )}
                   </div>
                 )}
               </div>
