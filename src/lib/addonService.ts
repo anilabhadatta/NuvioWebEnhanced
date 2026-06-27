@@ -133,7 +133,7 @@ function buildSubtitleUrl(manifestUrl: string, type: string, videoId: string): s
   return `${baseUrl}/subtitles/${encodeURIComponent(type)}/${encodeURIComponent(videoId)}.json${query}`;
 }
 
-export async function fetchAllSubtitles(type: string, videoId: string): Promise<SubtitleItem[]> {
+export async function fetchAllSubtitles(type: string, videoId: string, streamHash?: string | null): Promise<SubtitleItem[]> {
   const addons = await fetchUserAddons();
 
   // Known stream/catalog-only addons that never expose a subtitle endpoint.
@@ -153,9 +153,9 @@ export async function fetchAllSubtitles(type: string, videoId: string): Promise<
     }
   });
 
-  const promises = subtitleAddons.map(async (addon) => {
+  const promises = subtitleAddons.map(async (addon, addonIndex) => {
     try {
-      const subUrl = buildSubtitleUrl(addon.url, type, videoId);
+      const subUrl = buildSubtitleUrl(addon.url, type, videoId, streamHash);
       const res = await fetch(subUrl);
       if (!res.ok) return [];
       const data = await res.json();
@@ -165,11 +165,12 @@ export async function fetchAllSubtitles(type: string, videoId: string): Promise<
         let prettyName = addon.name || addon.url;
         if (prettyName.startsWith("http")) {
           try {
-            prettyName = new URL(prettyName).hostname.replace("www.", "");
+            const urlObj = new URL(prettyName);
+            prettyName = urlObj.hostname.replace("www.", "");
           } catch (e) { }
         }
         return {
-          id: `${prettyName}-${idx}`,
+          id: `${prettyName}-${addonIndex}-${idx}`,
           lang: sub.lang || 'Unknown',
           name: sub.lang ? `${sub.lang} (${prettyName})` : `Subtitle (${prettyName})`,
           url: sub.url

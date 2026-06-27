@@ -62,6 +62,7 @@ export default function PlayerScreen() {
   const streamUrl = searchParams.get("url");
   const season = searchParams.get("s");
   const episode = searchParams.get("e");
+  const streamHash = searchParams.get("hash");
 
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
 
@@ -82,6 +83,10 @@ export default function PlayerScreen() {
   const [addonSubtitles, setAddonSubtitles] = useState<any[]>([]);
   const [loadingSubtitles, setLoadingSubtitles] = useState(false);
   const [activeExternalSub, setActiveExternalSub] = useState<string | null>(null);
+  const [activeExternalSubName, setActiveExternalSubName] = useState<string | null>(null);
+  
+  const [subDelay, setSubDelay] = useState<number>(0);
+  const [activeVttText, setActiveVttText] = useState<string | null>(null);
 
   const isSeries = mediaType === "series" || mediaType === "tv" || !!season;
 
@@ -117,7 +122,7 @@ export default function PlayerScreen() {
           const baseId = imdbId || `tmdb:${movieId}`;
           const fetchId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
           
-          const subs = await fetchAllSubtitles(stremioType, fetchId);
+          const subs = await fetchAllSubtitles(stremioType, fetchId, streamHash);
           setAddonSubtitles(subs);
         } catch (e) {
           console.error("Failed to load subtitles:", e);
@@ -130,59 +135,102 @@ export default function PlayerScreen() {
     }
   }, [movieId, mediaType, season, episode]);
 
-  const loadExternalSubtitle = async (id: string, url: string, name: string) => {
+  const applySubtitleToVideo = (vttText: string, name: string) => {
     const video = videoRef.current;
     if (!video) return;
 
+    let finalText = vttText;
+    if (subDelay !== 0) {
+      finalText = vttText.replace(/(\d{2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})/g, (match) => {
+        const parts = match.split(':');
+        let hours = 0, mins = 0, secs = 0, ms = 0;
+        if (parts.length === 3) {
+          hours = parseInt(parts[0], 10);
+          mins = parseInt(parts[1], 10);
+          const secParts = parts[2].split('.');
+          secs = parseInt(secParts[0], 10);
+          if (secParts.length > 1) ms = parseInt(secParts[1], 10);
+        } else {
+          mins = parseInt(parts[0], 10);
+          const secParts = parts[1].split('.');
+          secs = parseInt(secParts[0], 10);
+          if (secParts.length > 1) ms = parseInt(secParts[1], 10);
+        }
+        
+        let totalMs = (hours * 3600000) + (mins * 60000) + (secs * 1000) + ms + subDelay;
+        if (totalMs < 0) totalMs = 0;
+        
+        const newHours = Math.floor(totalMs / 3600000);
+        totalMs %= 3600000;
+        const newMins = Math.floor(totalMs / 60000);
+        totalMs %= 60000;
+        const newSecs = Math.floor(totalMs / 1000);
+        const newMs = totalMs % 1000;
+        
+        const hStr = newHours.toString().padStart(2, '0');
+        const mStr = newMins.toString().padStart(2, '0');
+        const sStr = newSecs.toString().padStart(2, '0');
+        const msStr = newMs.toString().padStart(3, '0');
+        
+        if (parts.length === 3) return `${hStr}:${mStr}:${sStr}.${msStr}`;
+        return `${mStr}:${sStr}.${msStr}`;
+      });
+    }
+
+    const blob = new Blob([finalText], { type: 'text/vtt' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const existing = video.querySelectorAll('track.addon-sub');
+    existing.forEach(t => {
+      if (t instanceof HTMLTrackElement && t.src.startsWith('blob:')) URL.revokeObjectURL(t.src);
+      t.remove();
+    });
+
+    const track = document.createElement("track");
+    track.className = "addon-sub";
+    track.kind = "subtitles";
+    track.label = name;
+    track.srclang = "en";
+    track.src = blobUrl;
+    track.default = true;
+
+    video.appendChild(track);
+
+    setTimeout(() => {
+      if (!video.textTracks) return;
+      for (let i = 0; i < video.textTracks.length; i++) {
+        if (video.textTracks[i].label === name || video.textTracks[i].mode === "showing") {
+          video.textTracks[i].mode = "hidden";
+        }
+      }
+      for (let i = 0; i < video.textTracks.length; i++) {
+        if (video.textTracks[i].label === name) {
+          video.textTracks[i].mode = "showing";
+        }
+      }
+    }, 100);
+  };
+
+  useEffect(() => {
+    if (activeVttText && activeExternalSubName) {
+      applySubtitleToVideo(activeVttText, activeExternalSubName);
+    }
+  }, [subDelay, activeVttText, activeExternalSubName]);
+
+  const loadExternalSubtitle = async (id: string, url: string, name: string) => {
     try {
-      // 1. Fetch the subtitle via Javascript (Stremio subtitle CDNs have CORS enabled)
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch subtitle");
       let text = await res.text();
 
-      // 2. Convert SRT to VTT if necessary, as browsers only support VTT tracks
       if (!text.includes("WEBVTT")) {
         text = "WEBVTT\n\n" + text.replace(/\r\n|\r|\n/g, '\n').replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
       }
 
-      // 3. Create a same-origin Blob URL to bypass HTML5 opaque video cross-origin track restrictions
-      const blob = new Blob([text], { type: 'text/vtt' });
-      const blobUrl = URL.createObjectURL(blob);
-
-      // Remove any previously added external tracks
-      const existing = video.querySelectorAll('track.addon-sub');
-      existing.forEach(t => {
-        if (t instanceof HTMLTrackElement && t.src.startsWith('blob:')) URL.revokeObjectURL(t.src);
-        t.remove();
-      });
-
-      const track = document.createElement("track");
-      track.className = "addon-sub";
-      track.kind = "subtitles";
-      track.label = name;
-      track.srclang = "en";
-      track.src = blobUrl;
-      track.default = true;
-
-      video.appendChild(track);
-
-      // Enable the track
-      setTimeout(() => {
-        if (!video.textTracks) return;
-        for (let i = 0; i < video.textTracks.length; i++) {
-          if (video.textTracks[i].label === name || video.textTracks[i].mode === "showing") {
-            video.textTracks[i].mode = "hidden"; // Hide others
-          }
-        }
-        for (let i = 0; i < video.textTracks.length; i++) {
-          if (video.textTracks[i].label === name) {
-            video.textTracks[i].mode = "showing";
-          }
-        }
-      }, 100);
-
+      setActiveVttText(text);
+      setActiveExternalSubName(name);
       setActiveExternalSub(id);
-      setSelectedSub(-2); // -2 indicates external
+      setSelectedSub(-2);
     } catch (e) {
       console.error("Error loading subtitle track", e);
     }
@@ -788,9 +836,11 @@ export default function PlayerScreen() {
                           <div className="flex items-center justify-between">
                             <span className="text-white font-semibold">Subtitle Delay</span>
                             <div className="flex items-center gap-3 bg-black/40 rounded-full px-1 py-1">
-                              <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">-</button>
-                              <span className="text-white font-bold text-xs min-w-12 text-center">+0.000s</span>
-                              <button className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold">+</button>
+                              <button onClick={() => setSubDelay(d => d - 250)} className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold hover:bg-white/20 transition-colors">-</button>
+                              <span className="text-white font-bold text-xs min-w-12 text-center">
+                                {subDelay > 0 ? '+' : ''}{(subDelay / 1000).toFixed(2)}s
+                              </span>
+                              <button onClick={() => setSubDelay(d => d + 250)} className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-white font-bold hover:bg-white/20 transition-colors">+</button>
                             </div>
                           </div>
 
