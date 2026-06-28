@@ -171,10 +171,8 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     // Create immediately as a plain, unregistered element
     let player = wrapperRef.current.querySelector("movi-player") as any;
     if (!player) {
-      player = document.createElement("movi-player");
-      player.className = "w-full h-full object-contain";
-      player.setAttribute("playsinline", "true");
-      wrapperRef.current.appendChild(player);
+      wrapperRef.current.innerHTML = `<movi-player class="w-full h-full object-contain" playsinline="true"></movi-player>`;
+      player = wrapperRef.current.querySelector("movi-player") as any;
       playerRef.current = player;
       onInit(player);
     }
@@ -183,7 +181,26 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
       if (!cancelled) setMoviReady(true);
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (player) {
+        try {
+          if (player.player && typeof player.player.destroy === "function") {
+            player.player.destroy();
+          } else if (player.player && typeof player.player.unload === "function") {
+            player.player.unload();
+          }
+          if (typeof player.destroy === "function") {
+            player.destroy();
+          }
+          if (player.parentNode) {
+            player.parentNode.removeChild(player);
+          }
+        } catch (e) {
+          console.error("Error during movi-player cleanup", e);
+        }
+      }
+    };
   }, [onInit]);
 
   // Phase 2: Set/update src only AFTER the custom element is fully upgraded.
@@ -194,9 +211,13 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     if (!player || !moviReady) return;
 
     if (resolvedSrc && player.getAttribute("src") !== resolvedSrc) {
-      // Clean up Shaka player before loading a new source to prevent stalls
-      if (player.player && typeof player.player.unload === "function") {
-        try { player.player.unload(); } catch (_) {}
+      // Aggressively clean up internal WebCodecs state before source switch
+      if (player.player) {
+        try {
+          if (typeof player.player.unload === "function") {
+            player.player.unload(); // Frees VideoFrames
+          }
+        } catch (_) {}
       }
       player.setAttribute("src", resolvedSrc);
       player.style.display = "block";
@@ -220,6 +241,7 @@ export default function PlayerScreen() {
 
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [userPaused, setUserPaused] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -705,19 +727,11 @@ export default function PlayerScreen() {
             p.then(() => {
               hasStartedPlayingThisStream.current = true;
             }).catch(async (err: any) => {
-              // ONLY fallback to muted autoplay if the browser strictly blocks it via NotAllowedError.
-              // Other errors (like AbortError when play is interrupted) should NOT mute the audio.
+              // If the browser strictly blocks unmuted autoplay, do NOT fall back to muted playback.
+              // Instead, we accept that the video cannot auto-start and update the UI to show the Play button,
+              // requiring the user to explicitly click Play to begin the unmuted stream.
               if (err && err.name === "NotAllowedError") {
-                try {
-                  v.muted = true;
-                  setIsMuted(true);
-                  const rp = v.play();
-                  if (rp && typeof rp.then === "function") {
-                    rp.then(() => { hasStartedPlayingThisStream.current = true; }).catch(()=>{});
-                  } else {
-                    hasStartedPlayingThisStream.current = true;
-                  }
-                } catch (_) { /* ignore */ }
+                setUserPaused(true);
               }
             });
           } else {
@@ -726,9 +740,14 @@ export default function PlayerScreen() {
         }
       } catch (_) { /* ignore */ }
     };
+    const onStateChange = (e: any) => {
+      if (e.detail === 'ready') tryPlay();
+    };
     v.addEventListener("canplay", tryPlay);
+    v.addEventListener("statechange", onStateChange);
     return () => {
       v.removeEventListener("canplay", tryPlay);
+      v.removeEventListener("statechange", onStateChange);
     };
   }, [resolvedSrc]);
 
@@ -746,6 +765,7 @@ export default function PlayerScreen() {
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
+    setUserPaused(false);
     setShowNextEpisodeCard(false);
   }, [streamUrl]);
 
@@ -781,12 +801,12 @@ export default function PlayerScreen() {
     const video = videoRef.current;
     if (!video) return;
 
-    if (isPlaying) {
+    if (!userPaused) { // user thinks it is playing or trying to play, so they want to pause
       if (typeof video.pause === 'function') video.pause();
-      setIsPlaying(false);
-    } else {
+      setUserPaused(true);
+    } else { // user thinks it is paused, so they want to play
       if (typeof video.play === 'function') video.play();
-      setIsPlaying(true);
+      setUserPaused(false);
     }
   };
 
@@ -1307,7 +1327,7 @@ export default function PlayerScreen() {
             <div className="flex items-center gap-4">
               {/* Play / Pause */}
               <button onClick={togglePlay} className="w-12 h-12 rounded-full bg-white text-black hover:bg-gray-200 flex items-center justify-center transition-colors shadow-lg">
-                {isPlaying
+                {!userPaused
                   ? <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6"><path fillRule="evenodd" d="M6.75 5.25a.75.75 0 01.75-.75H9a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H7.5a.75.75 0 01-.75-.75V5.25zm7.5 0A.75.75 0 0115 4.5h1.5a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H15a.75.75 0 01-.75-.75V5.25z" clipRule="evenodd" /></svg>
                   : <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 ml-1"><path fillRule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clipRule="evenodd" /></svg>}
               </button>
