@@ -188,3 +188,52 @@ export async function fetchAllSubtitles(type: string, videoId: string, streamHas
   const results = await Promise.all(promises);
   return results.flat();
 }
+
+/**
+ * Auto-resolve a playable stream URL for a video. Races all enabled addons
+ * in parallel and returns the first stream that comes back. Used for
+ * auto-next-episode flow where we want to start the next episode quickly
+ * without surfacing the stream picker.
+ */
+export async function autoResolveFirstStream(
+  type: string,
+  videoId: string,
+  timeoutMs: number = 10000,
+): Promise<StreamItem | null> {
+  const addons = await fetchUserAddons();
+  const enabled = addons.filter((a) => a.enabled !== false);
+  if (enabled.length === 0) return null;
+
+  return new Promise<StreamItem | null>((resolve) => {
+    let settled = false;
+    let pending = enabled.length;
+
+    const finish = (stream: StreamItem | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(stream);
+    };
+
+    const timeout = setTimeout(() => finish(null), timeoutMs);
+
+    enabled.forEach((addon) => {
+      fetchStreamsFromAddon(addon, type, videoId)
+        .then((streams) => {
+          if (settled) return;
+          const playable = streams.find((s) => s.url && s.url.startsWith("http"));
+          if (playable) {
+            clearTimeout(timeout);
+            finish(playable);
+          }
+        })
+        .catch(() => { /* ignore */ })
+        .finally(() => {
+          pending -= 1;
+          if (pending <= 0 && !settled) {
+            clearTimeout(timeout);
+            finish(null);
+          }
+        });
+    });
+  });
+}

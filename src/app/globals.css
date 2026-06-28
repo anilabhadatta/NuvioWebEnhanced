@@ -97,3 +97,9 @@ input:-webkit-autofill:active {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
 }
+
+/* Player overlays */
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}

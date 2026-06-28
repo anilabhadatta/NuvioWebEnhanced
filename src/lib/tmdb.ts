@@ -19,6 +19,65 @@ export const fetchTvSeason = async (tvId: number | string, seasonNumber: number)
   return res.data;
 };
 
+export interface NextEpisodeMeta {
+  season: number;
+  episode: number;
+  title: string;
+  thumbnail: string | null;
+  overview: string | null;
+  airDate: string | null;
+  hasAired: boolean;
+}
+
+/**
+ * Resolves the next episode after (season, episode). First tries the same season,
+ * then falls back to season+1 episode 1. Returns null if there is no next episode.
+ */
+export const fetchNextEpisode = async (
+  tvId: number | string,
+  season: number,
+  episode: number,
+): Promise<NextEpisodeMeta | null> => {
+  const buildMeta = (s: number, ep: any): NextEpisodeMeta => {
+    const airDate: string | null = ep.air_date || null;
+    let hasAired = true;
+    if (airDate) {
+      const air = new Date(airDate).getTime();
+      const today = new Date().setHours(0, 0, 0, 0);
+      hasAired = !Number.isNaN(air) && air <= today;
+    }
+    return {
+      season: s,
+      episode: ep.episode_number,
+      title: ep.name || `Episode ${ep.episode_number}`,
+      thumbnail: ep.still_path ? `https://image.tmdb.org/t/p/w342${ep.still_path}` : null,
+      overview: ep.overview || null,
+      airDate,
+      hasAired,
+    };
+  };
+
+  try {
+    const data = await fetchTvSeason(tvId, season);
+    const eps: any[] = data?.episodes || [];
+    const nextInSameSeason = eps.find((e) => e.episode_number === episode + 1);
+    if (nextInSameSeason) return buildMeta(season, nextInSameSeason);
+  } catch (_) {
+    /* fall through */
+  }
+
+  try {
+    const nextSeason = await fetchTvSeason(tvId, season + 1);
+    const eps: any[] = nextSeason?.episodes || [];
+    const first = eps.find((e) => e.episode_number === 1) || eps[0];
+    if (first) return buildMeta(season + 1, first);
+  } catch (_) {
+    /* no next season */
+  }
+
+  return null;
+};
+
 export const fetchExternalIds = async (id: number | string, type: "movie" | "tv") => {
   const res = await tmdb.get(`/${type}/${id}/external_ids?api_key=${TMDB_API_KEY}`);
   return res.data;

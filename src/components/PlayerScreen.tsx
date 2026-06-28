@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { fetchExternalIds } from "@/lib/tmdb";
+import { fetchExternalIds, fetchNextEpisode, NextEpisodeMeta } from "@/lib/tmdb";
 import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
 import { saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
+import { autoResolveFirstStream } from "@/lib/addonService";
 import StreamPickerModal from "./StreamPickerModal";
 
 function formatTime(sec: number): string {
@@ -243,7 +244,7 @@ export default function PlayerScreen() {
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Menus
-  const [openMenu, setOpenMenu] = useState<"sub" | "audio" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"sub" | "audio" | "speed" | null>(null);
   const [subActiveTab, setSubActiveTab] = useState<"tracks" | "style">("tracks");
   const [audios, setAudios] = useState<{ id: number; name: string }[]>([{ id: 0, name: "Default" }]);
   const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
@@ -300,6 +301,29 @@ export default function PlayerScreen() {
   // Modal & Overlays
   const [showStreamPicker, setShowStreamPicker] = useState(false);
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
+
+  // Next-episode (series) + auto-play
+  const [nextEpisode, setNextEpisode] = useState<NextEpisodeMeta | null>(null);
+  const [showNextEpisodeCard, setShowNextEpisodeCard] = useState(false);
+  const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const stored = localStorage.getItem("nuvio.autoNextEpisode");
+    return stored == null ? true : stored === "true";
+  });
+  const [nextSearching, setNextSearching] = useState(false);
+  const [nextCountdown, setNextCountdown] = useState<number | null>(null);
+
+  // Playback speed
+  const [playbackRate, setPlaybackRate] = useState(1);
+
+  // External player picker
+  const [showExternalPlayer, setShowExternalPlayer] = useState(false);
+
+  // Fullscreen
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Extended menu union (audio | sub | speed)
+  // Note: existing openMenu type only had "audio" | "sub" — we widen via local string.
 
   const movieId = searchParams.get("id");
   const mediaType = searchParams.get("type");
@@ -389,6 +413,31 @@ export default function PlayerScreen() {
       }
     }
     loadSkips();
+  }, [movieId, mediaType, season, episode]);
+
+  // Load next-episode metadata from TMDB when on a TV show.
+  const lastFetchedNextId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!movieId) { setNextEpisode(null); return; }
+    const isSeries = mediaType === "series" || mediaType === "tv" || season;
+    if (!isSeries || !season || !episode) { setNextEpisode(null); return; }
+
+    const fetchId = `${movieId}:${season}:${episode}`;
+    if (lastFetchedNextId.current === fetchId) return;
+    lastFetchedNextId.current = fetchId;
+    setShowNextEpisodeCard(false);
+    setNextSearching(false);
+    setNextCountdown(null);
+
+    (async () => {
+      try {
+        const next = await fetchNextEpisode(parseInt(movieId!), parseInt(season!), parseInt(episode!));
+        setNextEpisode(next);
+      } catch (e) {
+        console.error("fetchNextEpisode failed", e);
+        setNextEpisode(null);
+      }
+    })();
   }, [movieId, mediaType, season, episode]);
 
 
@@ -525,6 +574,97 @@ export default function PlayerScreen() {
   // Skip segment — derived value, no setState needed
   const activeSkip = skipIntervals.find(i => currentTime >= i.startTime && currentTime <= i.endTime) || null;
 
+  // Ref used by the threshold/ended effects to invoke playNextEpisode without
+  // a direct lexical reference (the callback is declared further down).
+  const playNextRef = useRef<(() => void) | null>(null);
+
+  // Show next-episode card when we get near the end of the current episode.
+  // Threshold: <= 30s remaining OR position >= 95% (whichever fires first).
+  // Auto-start if the user has autoNextEnabled.
+  useEffect(() => {
+    if (!nextEpisode || duration <= 0 || isResolvingNext()) return;
+    const remaining = duration - currentTime;
+    const pctPlayed = currentTime / duration;
+    const shouldShow = remaining <= 30 || pctPlayed >= 0.95;
+    if (shouldShow && !showNextEpisodeCard) {
+      setShowNextEpisodeCard(true);
+      if (autoNextEnabled && nextEpisode.hasAired) {
+        playNextRef.current?.();
+      }
+    } else if (!shouldShow && showNextEpisodeCard && remaining > 60) {
+      // User seeked back — hide the card again so it can re-trigger near the end.
+      setShowNextEpisodeCard(false);
+    }
+    function isResolvingNext() { return nextSearching || nextCountdown != null; }
+  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard, nextSearching, nextCountdown]);
+
+  // Show the card on `ended` even if the threshold didn't fire (e.g. user
+  // seeked past it). Auto-start respects the setting.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onEnded = () => {
+      if (!nextEpisode) return;
+      setShowNextEpisodeCard(true);
+      if (autoNextEnabled && nextEpisode.hasAired && !nextSearching && nextCountdown == null) {
+        playNextRef.current?.();
+      }
+    };
+    v.addEventListener("ended", onEnded);
+    return () => v.removeEventListener("ended", onEnded);
+  }, [nextEpisode, autoNextEnabled, nextSearching, nextCountdown]);
+
+  // Auto-start playback as soon as the player is ready. Browsers may block
+  // unmuted autoplay without prior user interaction; we fall back to muted
+  // playback in that case so the video still starts.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const tryPlay = async () => {
+      try {
+        if (typeof v.play === "function") {
+          const p = v.play();
+          if (p && typeof p.catch === "function") {
+            await p.catch(async () => {
+              // Autoplay rejected — retry muted.
+              try { v.muted = true; setIsMuted(true); v.play(); } catch (_) { /* ignore */ }
+            });
+          }
+        }
+      } catch (_) { /* ignore */ }
+    };
+    v.addEventListener("canplay", tryPlay);
+    v.addEventListener("loadedmetadata", tryPlay);
+    return () => {
+      v.removeEventListener("canplay", tryPlay);
+      v.removeEventListener("loadedmetadata", tryPlay);
+    };
+  }, [resolvedSrc]);
+
+  // Reflect playback rate on the player.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    try { v.playbackRate = playbackRate; } catch (_) { /* ignore */ }
+  }, [playbackRate, resolvedSrc]);
+
+  // Close any open menu when the controls auto-hide.
+  useEffect(() => {
+    if (!showControls && openMenu !== null) setOpenMenu(null);
+  }, [showControls, openMenu]);
+
+  // Track fullscreen state changes so the toggle button reflects the truth.
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  // Persist auto-next-episode preference.
+  useEffect(() => {
+    try { localStorage.setItem("nuvio.autoNextEpisode", String(autoNextEnabled)); } catch (_) { /* ignore */ }
+  }, [autoNextEnabled]);
+
   // Controls UI visibility
   const resetControlsTimeout = useCallback(() => {
     setShowControls(true);
@@ -569,6 +709,202 @@ export default function PlayerScreen() {
     if (video && typeof video.volume !== 'undefined') video.volume = val;
     if (video && typeof video.muted !== 'undefined') video.muted = (val === 0);
   };
+
+  // -- Next episode autoplay flow ---------------------------------------------
+  const playNextEpisode = useCallback(async () => {
+    if (!nextEpisode || !movieId || !mediaType) return;
+    if (!nextEpisode.hasAired) return;
+    if (nextSearching) return;
+
+    setNextSearching(true);
+    setNextCountdown(null);
+    try {
+      // Resolve IMDb id (most addons want ttXXXXXX)
+      let baseId = `tmdb:${movieId}`;
+      try {
+        const ids = await fetchExternalIds(parseInt(movieId), "tv");
+        if (ids?.imdb_id) baseId = ids.imdb_id;
+      } catch (_) { /* fall back to tmdb id */ }
+
+      const videoId = `${baseId}:${nextEpisode.season}:${nextEpisode.episode}`;
+      const stream = await autoResolveFirstStream("series", videoId, 12000);
+      setNextSearching(false);
+
+      if (!stream || !stream.url) {
+        // Couldn't auto-resolve — open the picker so the user can choose.
+        setShowStreamPicker(true);
+        setShowNextEpisodeCard(false);
+        return;
+      }
+
+      // 3-second countdown then navigate
+      for (let i = 3; i >= 1; i -= 1) {
+        setNextCountdown(i);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      setNextCountdown(null);
+      setShowNextEpisodeCard(false);
+
+      const u = encodeURIComponent(stream.url);
+      router.replace(
+        `/player?id=${movieId}&type=${mediaType}&url=${u}&s=${nextEpisode.season}&e=${nextEpisode.episode}`
+      );
+    } catch (err) {
+      console.error("playNextEpisode failed", err);
+      setNextSearching(false);
+      setNextCountdown(null);
+    }
+  }, [movieId, mediaType, nextEpisode, nextSearching, router]);
+
+  // Keep the ref used by the threshold/ended effects in sync.
+  useEffect(() => {
+    playNextRef.current = () => { void playNextEpisode(); };
+  }, [playNextEpisode]);
+
+  // Fullscreen toggle
+  const toggleFullscreen = useCallback(() => {
+    try {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.();
+      } else {
+        document.documentElement.requestFullscreen?.();
+      }
+    } catch (e) {
+      console.error("Fullscreen toggle failed", e);
+    }
+  }, []);
+
+  // Keyboard shortcuts (YouTube-style)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Ignore when the user is typing in an input
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable)) return;
+
+      const video = videoRef.current;
+      if (!video) return;
+
+      switch (e.key) {
+        case " ":
+        case "k":
+        case "K":
+          e.preventDefault();
+          togglePlay();
+          resetControlsTimeout();
+          break;
+        case "f":
+        case "F":
+          e.preventDefault();
+          toggleFullscreen();
+          break;
+        case "m":
+        case "M": {
+          e.preventDefault();
+          const next = !isMuted;
+          setIsMuted(next);
+          if (typeof video.muted !== "undefined") video.muted = next;
+          resetControlsTimeout();
+          break;
+        }
+        case "ArrowLeft": {
+          e.preventDefault();
+          if (typeof video.currentTime === "number") {
+            video.currentTime = Math.max(0, video.currentTime - 10);
+          }
+          resetControlsTimeout();
+          break;
+        }
+        case "ArrowRight": {
+          e.preventDefault();
+          if (typeof video.currentTime === "number" && duration > 0) {
+            video.currentTime = Math.min(duration, video.currentTime + 10);
+          }
+          resetControlsTimeout();
+          break;
+        }
+        case "ArrowUp": {
+          e.preventDefault();
+          const nv = Math.min(1, volume + 0.05);
+          setVolume(nv);
+          setIsMuted(nv === 0);
+          if (typeof video.volume !== "undefined") video.volume = nv;
+          if (typeof video.muted !== "undefined") video.muted = (nv === 0);
+          resetControlsTimeout();
+          break;
+        }
+        case "ArrowDown": {
+          e.preventDefault();
+          const nv = Math.max(0, volume - 0.05);
+          setVolume(nv);
+          setIsMuted(nv === 0);
+          if (typeof video.volume !== "undefined") video.volume = nv;
+          if (typeof video.muted !== "undefined") video.muted = (nv === 0);
+          resetControlsTimeout();
+          break;
+        }
+        case "0": case "1": case "2": case "3": case "4":
+        case "5": case "6": case "7": case "8": case "9": {
+          e.preventDefault();
+          if (duration > 0) {
+            const fraction = parseInt(e.key, 10) / 10;
+            video.currentTime = duration * fraction;
+          }
+          resetControlsTimeout();
+          break;
+        }
+        case "n":
+        case "N":
+          if (nextEpisode && !nextSearching) {
+            e.preventDefault();
+            playNextEpisode();
+          }
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [duration, isMuted, volume, togglePlay, toggleFullscreen, resetControlsTimeout, nextEpisode, nextSearching, playNextEpisode]);
+
+  // External player URL schemes. Web has no equivalent of NuvioDesktop's
+  // file-system detection, so we offer the well-known URL handlers that
+  // major external players register on each OS — the browser confirms with
+  // the user when it launches, so unsupported schemes degrade safely.
+  const externalPlayers = useMemo(() => {
+    if (typeof navigator === "undefined") return [];
+    const ua = navigator.userAgent.toLowerCase();
+    const isMac = ua.includes("mac");
+    const list: { id: string; name: string; build: (u: string) => string }[] = [
+      { id: "vlc", name: "VLC media player", build: (u) => `vlc://${u}` },
+      { id: "potplayer", name: "PotPlayer", build: (u) => `potplayer://${u}` },
+      { id: "mpv", name: "mpv", build: (u) => `mpv://${u}` },
+    ];
+    if (isMac) {
+      list.push({ id: "iina", name: "IINA", build: (u) => `iina://weblink?url=${encodeURIComponent(u)}` });
+    }
+    return list;
+  }, []);
+
+  const openInExternalPlayer = useCallback((id: string) => {
+    const target = externalPlayers.find((p) => p.id === id);
+    if (!target || !resolvedSrc) return;
+    try {
+      const handlerUrl = target.build(resolvedSrc);
+      window.open(handlerUrl, "_self");
+    } catch (e) {
+      console.error("External open failed", e);
+    }
+    setShowExternalPlayer(false);
+  }, [externalPlayers, resolvedSrc]);
+
+  const copyStreamUrl = useCallback(async () => {
+    if (!resolvedSrc) return;
+    try {
+      await navigator.clipboard.writeText(resolvedSrc);
+    } catch (_) { /* ignore */ }
+    setShowExternalPlayer(false);
+  }, [resolvedSrc]);
 
   const handleAudioChange = (id: number) => {
     setSelectedAudio(id);
@@ -772,14 +1108,58 @@ export default function PlayerScreen() {
         </div>
       )}
 
-      {/* Skip Button */}
+      {/* Skip Button (left) */}
       {activeSkip && (
         <button
           onClick={() => { if (videoRef.current) videoRef.current.currentTime = activeSkip.endTime; }}
-          className="absolute bottom-28 right-8 bg-black/80 hover:bg-black/95 border border-white/40 text-white font-semibold px-5 py-2.5 rounded-xl z-50 pointer-events-auto transition-all"
+          className="absolute bottom-28 left-8 bg-black/80 hover:bg-black/95 border border-white/40 text-white font-semibold px-5 py-2.5 rounded-xl z-50 pointer-events-auto transition-all"
         >
           Skip {activeSkip.type} →
         </button>
+      )}
+
+      {/* Next Episode card (right) */}
+      {nextEpisode && showNextEpisodeCard && (
+        <div className="absolute bottom-28 right-8 z-50 pointer-events-auto animate-[slide-in_260ms_ease-out] w-[292px] max-w-[80vw]">
+          <div className="bg-[#191919]/90 backdrop-blur-md border border-white/10 rounded-2xl p-2.5 flex items-center gap-2 shadow-2xl">
+            <button
+              onClick={() => nextEpisode.hasAired && playNextEpisode()}
+              disabled={!nextEpisode.hasAired || nextSearching}
+              className="w-[78px] h-[44px] rounded-lg overflow-hidden bg-black/60 flex-shrink-0 relative disabled:opacity-60"
+              title="Play next episode"
+            >
+              {nextEpisode.thumbnail ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={nextEpisode.thumbnail} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full bg-white/5" />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+            </button>
+            <div className="flex-1 min-w-0">
+              <p className="text-white/80 text-[10px] font-medium uppercase tracking-wide leading-tight">Next Episode</p>
+              <p className="text-white text-xs font-semibold mt-0.5 truncate">
+                S{nextEpisode.season}E{nextEpisode.episode} {nextEpisode.title}
+              </p>
+              <p className="text-white/70 text-[10px] mt-0.5 truncate">
+                {!nextEpisode.hasAired
+                  ? `Airs ${nextEpisode.airDate ?? "TBA"}`
+                  : nextSearching
+                    ? "Finding source…"
+                    : nextCountdown != null
+                      ? `Playing in ${nextCountdown}s`
+                      : "Click to play"}
+              </p>
+            </div>
+            <button
+              onClick={() => setShowNextEpisodeCard(false)}
+              className="text-white/50 hover:text-white text-xs px-1.5"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Overlay UI */}
@@ -1037,10 +1417,117 @@ export default function PlayerScreen() {
               <button onClick={() => setShowStreamPicker(true)} className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg ml-2" title="Switch Stream">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
               </button>
+
+              {/* Playback speed */}
+              <div className="relative">
+                <button
+                  onClick={() => setOpenMenu(openMenu === "speed" ? null : "speed")}
+                  className={`px-3 py-2 rounded-lg font-semibold text-sm transition-colors tabular-nums ${openMenu === "speed" ? "bg-white text-black" : "bg-white/10 text-white hover:bg-white/20"}`}
+                  title="Playback speed"
+                >
+                  {playbackRate}×
+                </button>
+                {openMenu === "speed" && (
+                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-32 z-50">
+                    {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => { setPlaybackRate(r); setOpenMenu(null); }}
+                        className={`block w-full text-left px-4 py-2.5 text-sm tabular-nums transition-colors ${playbackRate === r ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}
+                      >
+                        {r}×{r === 1 ? "  (Normal)" : ""}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Next Episode (series only) */}
+              {nextEpisode && (
+                <button
+                  onClick={playNextEpisode}
+                  disabled={!nextEpisode.hasAired || nextSearching}
+                  className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={nextEpisode.hasAired ? `Next: S${nextEpisode.season}E${nextEpisode.episode}` : `Airs ${nextEpisode.airDate ?? "TBA"}`}
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                    <path d="M5.25 5.25a.75.75 0 011.166-.624l11.5 6.75a.75.75 0 010 1.248l-11.5 6.75A.75.75 0 015.25 18.75V5.25z" />
+                    <path d="M19.5 5.25a.75.75 0 00-1.5 0v13.5a.75.75 0 001.5 0V5.25z" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Auto-next toggle */}
+              {nextEpisode && (
+                <button
+                  onClick={() => setAutoNextEnabled((v) => !v)}
+                  className={`px-3 py-2 rounded-lg font-semibold text-[11px] transition-colors uppercase tracking-wider ${autoNextEnabled ? "bg-white/20 text-white" : "bg-white/5 text-white/50 hover:bg-white/10"}`}
+                  title={autoNextEnabled ? "Auto-play next episode is ON" : "Auto-play next episode is OFF"}
+                >
+                  Auto
+                </button>
+              )}
+
+              {/* Open externally */}
+              <button
+                onClick={() => setShowExternalPlayer(true)}
+                disabled={!resolvedSrc}
+                className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg disabled:opacity-50"
+                title="Open in external player"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                </svg>
+              </button>
+
+              {/* Fullscreen */}
+              <button
+                onClick={toggleFullscreen}
+                className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg"
+                title="Fullscreen (F)"
+              >
+                {isFullscreen ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" /></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
+                )}
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* External Player Modal */}
+      {showExternalPlayer && (
+        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/70 p-6" onClick={() => setShowExternalPlayer(false)}>
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-white font-bold text-lg">Open in external player</h2>
+              <button onClick={() => setShowExternalPlayer(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <p className="text-[#888] text-xs mb-3">Your browser will ask to launch the selected app. Make sure the player is installed and its URL handler is registered.</p>
+            <div className="flex flex-col gap-2">
+              {externalPlayers.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => openInExternalPlayer(p.id)}
+                  className="w-full text-left px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white font-semibold text-sm transition-colors"
+                >
+                  {p.name}
+                </button>
+              ))}
+              <button
+                onClick={copyStreamUrl}
+                className="w-full text-left px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white font-semibold text-sm transition-colors mt-1"
+              >
+                Copy stream URL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Click outside menus to close */}
       {openMenu && <div className="absolute inset-0 z-10" onClick={() => setOpenMenu(null)} />}
