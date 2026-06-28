@@ -153,25 +153,60 @@ function buildSubtitleUrl(manifestUrl: string, type: string, videoId: string, ha
   return `${baseUrl}/subtitles/${encodeURIComponent(type)}/${encodeURIComponent(id)}.json${query}`;
 }
 
+// Cache of addon manifests (keyed by manifest URL) so we only fetch each once
+// per session. Used to decide which addons actually support which resources.
+const manifestCache = new Map<string, any | null>();
+
+/**
+ * Fetch and cache an addon's manifest. `manifestUrl` is the addon URL as stored
+ * (already pointing at /manifest.json). We never append custom query params —
+ * the URL is fetched exactly as-is so addon-specific tokens stay intact.
+ */
+async function fetchAddonManifest(manifestUrl: string): Promise<any | null> {
+  if (manifestCache.has(manifestUrl)) return manifestCache.get(manifestUrl)!;
+  try {
+    const res = await fetch(manifestUrl);
+    if (!res.ok) { manifestCache.set(manifestUrl, null); return null; }
+    const data = await res.json();
+    manifestCache.set(manifestUrl, data);
+    return data;
+  } catch {
+    manifestCache.set(manifestUrl, null);
+    return null;
+  }
+}
+
+/**
+ * True when an addon manifest declares support for a given resource. Stremio
+ * manifests list resources either as plain strings ("subtitles") or as objects
+ * ({ name: "subtitles", types: [...] }). Handles both shapes.
+ */
+function manifestDeclaresResource(manifest: any, resource: string): boolean {
+  const resources = manifest?.resources;
+  if (!Array.isArray(resources)) return false;
+  return resources.some((r: any) =>
+    typeof r === "string" ? r === resource : r?.name === resource,
+  );
+}
+
 export async function fetchAllSubtitles(type: string, videoId: string, streamHash?: string | null): Promise<SubtitleItem[]> {
   const addons = await fetchUserAddons();
 
-  // Known stream/catalog-only addons that never expose a subtitle endpoint.
-  // Hitting them produces guaranteed 404s, so we skip them proactively.
-  const SUBTITLE_BLACKLIST = [
-    "cinemeta.strem.io",
-    "torrentio.strem.fun",
-    "mediafusion"
-  ];
-
-  const subtitleAddons = addons.filter((addon) => {
-    try {
-      const host = new URL(addon.url).hostname;
-      return !SUBTITLE_BLACKLIST.some((b) => host.includes(b));
-    } catch {
-      return false;
-    }
-  });
+  // Generalised rule: only query addons whose MANIFEST declares the "subtitles"
+  // resource. Playback/stream-only addons (Comet, aiostreams, Torrentio,
+  // MediaFusion, etc.) don't declare it, so we never call their subtitle
+  // endpoint. If a manifest can't be fetched/parsed we conservatively skip the
+  // addon — we'd rather miss a subtitle than spam stream addons with subtitle
+  // requests they don't serve.
+  const manifestResults = await Promise.all(
+    addons.map(async (addon) => ({
+      addon,
+      manifest: await fetchAddonManifest(addon.url),
+    })),
+  );
+  const subtitleAddons = manifestResults
+    .filter(({ manifest }) => manifestDeclaresResource(manifest, "subtitles"))
+    .map(({ addon }) => addon);
 
   const promises = subtitleAddons.map(async (addon, addonIndex) => {
     try {

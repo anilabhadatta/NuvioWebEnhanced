@@ -659,11 +659,17 @@ export default function PlayerScreen() {
     if (!video || !resolvedSrc) return;
     if (video.getAttribute("src") !== resolvedSrc) return;
 
-    // The first valid time tick for the current src is genuinely fresh — clear
-    // the gate so the next-episode threshold may start considering it.
-    awaitingFreshTimeRef.current = false;
+    const t = video.currentTime ?? 0;
 
-    setCurrentTime(video.currentTime ?? 0);
+    // Clear the "awaiting fresh time" gate only when the NEW stream reports an
+    // early position. A navigated episode always starts near 0, so a low time
+    // means the new stream is genuinely live. A stale tick lingering from the
+    // previous episode (near its end, e.g. 21:37) must NOT clear the gate —
+    // otherwise the next-episode threshold fires immediately and shows the
+    // following episode's card while this one is still loading.
+    if (t < 60) awaitingFreshTimeRef.current = false;
+
+    setCurrentTime(t);
     setDuration(video.duration || 0);
   };
 
