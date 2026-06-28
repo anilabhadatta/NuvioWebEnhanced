@@ -4,8 +4,6 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Only apply these strict headers to the player route
-        // so we don't break TMDB images on the dashboard!
         source: '/player',
         headers: [
           {
@@ -14,7 +12,7 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Cross-Origin-Embedder-Policy',
-            value: 'require-corp',
+            value: 'credentialless',
           },
         ],
       },
