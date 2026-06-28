@@ -129,6 +129,38 @@ function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
   }, 0);
 }
 
+// Singleton promise that resolves once movi-player has been loaded into the
+// page. We bypass Next.js's bundler for this dependency because the SWC
+// minifier produces invalid JavaScript ("octal escape sequences are not
+// allowed in template strings") when it processes movi-player's prebuilt
+// bundle. Loading the upstream IIFE via a <script> tag from /public keeps
+// the original (valid) code intact.
+let moviPlayerLoadPromise: Promise<void> | null = null;
+function ensureMoviPlayerLoaded(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (moviPlayerLoadPromise) return moviPlayerLoadPromise;
+  if (customElements.get("movi-player")) return Promise.resolve();
+  moviPlayerLoadPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector('script[data-nuvio-movi-player]') as HTMLScriptElement | null;
+    if (existing) {
+      // Another mount started the load — just wait for the element to register.
+      customElements.whenDefined("movi-player").then(() => resolve());
+      return;
+    }
+    const s = document.createElement("script");
+    s.type = "module";
+    s.src = "/movi-player.js";
+    s.async = false;
+    s.dataset.nuvioMoviPlayer = "true";
+    s.onload = () => {
+      customElements.whenDefined("movi-player").then(() => resolve());
+    };
+    s.onerror = (e) => reject(new Error("Failed to load /movi-player.js"));
+    document.head.appendChild(s);
+  });
+  return moviPlayerLoadPromise;
+}
+
 const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: string, onInit: (p: any) => void }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
@@ -172,8 +204,7 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     // the browser upgrades our existing <movi-player> in-place.
     (async () => {
       try {
-        await import("movi-player");
-        await customElements.whenDefined("movi-player");
+        await ensureMoviPlayerLoaded();
         console.log("[MoviWrapper] movi-player module loaded and custom element defined");
       } catch (err) {
         console.error("[MoviWrapper] Failed to load movi-player", err);
