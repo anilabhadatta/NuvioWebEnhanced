@@ -288,7 +288,22 @@ export default function PlayerScreen() {
 
     async function resolveUrl() {
       try {
-        // Fetch HEAD exactly once to resolve CDN redirects so the player doesn't loop
+        // Prefer the extension's resolver: it follows the redirect chain from
+        // the user's IP (so TorBox's per-token IP check is preserved) and
+        // returns the FINAL CDN URL. Feeding the final URL to movi-player
+        // avoids the cross-origin redirect that would otherwise taint the
+        // request's Origin to "null" and make TorBox echo back ACAO: null.
+        const ext = (window as any).__nuvioCors;
+        if (ext && typeof ext.resolveUrl === "function") {
+          const result = await ext.resolveUrl(decoded);
+          if (result && result.ok && result.resolvedUrl) {
+            setResolvedSrc(result.resolvedUrl);
+            return;
+          }
+          // Fall through to client-side fetch if the extension errored.
+        }
+        // Fallback: in-browser HEAD (works for sources with proper CORS,
+        // e.g. localhost dev where Origin matches what the server echoes).
         const res = await fetch(decoded, { method: 'HEAD', redirect: 'follow' });
         setResolvedSrc(res.url || decoded);
       } catch (err) {
