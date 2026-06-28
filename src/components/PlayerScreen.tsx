@@ -3,9 +3,9 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { fetchExternalIds, fetchNextEpisode, NextEpisodeMeta } from "@/lib/tmdb";
+import { fetchExternalIds, fetchNextEpisode, fetchTvDetails, fetchTvSeason, NextEpisodeMeta } from "@/lib/tmdb";
 import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
-import { saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
+import { saveWatchProgress } from "@/lib/watchProgress";
 import { autoResolveFirstStream } from "@/lib/addonService";
 import StreamPickerModal from "./StreamPickerModal";
 
@@ -17,18 +17,6 @@ function formatTime(sec: number): string {
   if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
-
-const hexToRgba = (hex: string, alpha: number) => {
-  if (hex === "transparent") return "transparent";
-  let c = hex.substring(1);
-  if (c.length === 3) {
-    c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
-  }
-  const r = parseInt(c.substring(0, 2), 16);
-  const g = parseInt(c.substring(2, 4), 16);
-  const b = parseInt(c.substring(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
 
 // movi-player's built-in color palette (matches MoviElement.SUBTITLE_COLOR_PALETTE)
 const SUBTITLE_COLOR_SWATCHES = [
@@ -191,16 +179,10 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
       onInit(player);
     }
 
-    // Now load the module — this registers the custom element class and
-    // the browser upgrades our existing <movi-player> in-place.
-    (async () => {
-      try {
-        await ensureMoviPlayerLoaded();
-      } catch (err) {
-        console.error("[MoviPlayerWrapper] Failed to load movi-player", err);
-      }
+    ensureMoviPlayerLoaded().then(() => {
       if (!cancelled) setMoviReady(true);
-    })();
+    });
+
     return () => { cancelled = true; };
   }, [onInit]);
 
@@ -212,6 +194,10 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     if (!player || !moviReady) return;
 
     if (resolvedSrc && player.getAttribute("src") !== resolvedSrc) {
+      // Clean up Shaka player before loading a new source to prevent stalls
+      if (player.player && typeof player.player.unload === "function") {
+        try { player.player.unload(); } catch (_) {}
+      }
       player.setAttribute("src", resolvedSrc);
       player.style.display = "block";
     } else if (!resolvedSrc) {
@@ -300,6 +286,8 @@ export default function PlayerScreen() {
 
   // Modal & Overlays
   const [showStreamPicker, setShowStreamPicker] = useState(false);
+  const [streamPickerSeason, setStreamPickerSeason] = useState<number | null>(null);
+  const [streamPickerEpisode, setStreamPickerEpisode] = useState<number | null>(null);
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
 
   // Next-episode (series) + auto-play
@@ -322,6 +310,12 @@ export default function PlayerScreen() {
   // Fullscreen
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Episodes panel (TV shows only)
+  const [showEpisodesPanel, setShowEpisodesPanel] = useState(false);
+  const [episodesData, setEpisodesData] = useState<any[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [totalSeasons, setTotalSeasons] = useState<number>(1);
+
   // Extended menu union (audio | sub | speed)
   // Note: existing openMenu type only had "audio" | "sub" — we widen via local string.
 
@@ -332,6 +326,11 @@ export default function PlayerScreen() {
   const episode = searchParams.get("e");
   const streamHash = searchParams.get("hash");
 
+  const [episodesSeasonNum, setEpisodesSeasonNum] = useState<number>(() => {
+    const s = searchParams.get("s");
+    return s ? parseInt(s) : 1;
+  });
+
   // movi-player module loading is now handled inside MoviPlayerWrapper
   // to guarantee custom-element registration before element creation.
 
@@ -340,10 +339,17 @@ export default function PlayerScreen() {
   // --------------------------------------------------------------------------------
   const lastResolvedUrl = useRef<string | null>(null);
   useEffect(() => {
-    if (!streamUrl) return;
+    if (!streamUrl) {
+      setResolvedSrc("");
+      lastResolvedUrl.current = null;
+      return;
+    }
     const decoded = decodeURIComponent(streamUrl);
     if (lastResolvedUrl.current === decoded) return;
     lastResolvedUrl.current = decoded;
+
+    // Reset resolvedSrc immediately to show the loading screen during resolution
+    setResolvedSrc("");
 
     async function resolveUrl() {
       try {
@@ -417,6 +423,10 @@ export default function PlayerScreen() {
 
   // Load next-episode metadata from TMDB when on a TV show.
   const lastFetchedNextId = useRef<string | null>(null);
+  // Synchronous lock held from the moment playNextEpisode starts until the
+  // new episode's metadata loads. This strictly prevents chain-firing.
+  const autoNextLockRef = useRef(false);
+  
   useEffect(() => {
     if (!movieId) { setNextEpisode(null); return; }
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
@@ -425,6 +435,10 @@ export default function PlayerScreen() {
     const fetchId = `${movieId}:${season}:${episode}`;
     if (lastFetchedNextId.current === fetchId) return;
     lastFetchedNextId.current = fetchId;
+    
+    // Release the lock so this freshly loaded episode can fire its auto-next
+    autoNextLockRef.current = false;
+    
     setShowNextEpisodeCard(false);
     setNextSearching(false);
     setNextCountdown(null);
@@ -439,6 +453,36 @@ export default function PlayerScreen() {
       }
     })();
   }, [movieId, mediaType, season, episode]);
+
+  // Fetch total seasons count for the episodes panel
+  useEffect(() => {
+    if (!movieId) return;
+    const isSeries = mediaType === "series" || mediaType === "tv" || season;
+    if (!isSeries) return;
+    (async () => {
+      try {
+        const details = await fetchTvDetails(parseInt(movieId));
+        if (details?.number_of_seasons) setTotalSeasons(details.number_of_seasons);
+      } catch (_) { /* ignore */ }
+    })();
+  }, [movieId, mediaType, season]);
+
+  // Fetch episodes when the episodes panel is opened or season changes
+  useEffect(() => {
+    if (!showEpisodesPanel || !movieId) return;
+    setEpisodesLoading(true);
+    (async () => {
+      try {
+        const data = await fetchTvSeason(parseInt(movieId), episodesSeasonNum);
+        setEpisodesData(data?.episodes || []);
+      } catch (e) {
+        console.error("Failed to fetch season episodes", e);
+        setEpisodesData([]);
+      } finally {
+        setEpisodesLoading(false);
+      }
+    })();
+  }, [showEpisodesPanel, movieId, episodesSeasonNum]);
 
 
   // --------------------------------------------------------------------------------
@@ -455,16 +499,17 @@ export default function PlayerScreen() {
   // Assign refs DIRECTLY during render — no useEffect needed.
   // Refs don't trigger re-renders so this is safe and avoids infinite loops.
   onStateChangeRef.current = (e: any) => {
+    const video = videoRef.current;
+    if (!video || !resolvedSrc) return;
+    if (video.getAttribute("src") !== resolvedSrc) return;
+
     const state = e.detail;
     if (state === 'playing') {
       setIsBuffering(false);
       setIsPlaying(true);
-      // Synchronize volume and muted state when playback successfully starts/resumes
-      const video = videoRef.current;
-      if (video) {
-        if (typeof video.volume !== 'undefined') video.volume = volume;
-        if (typeof video.muted !== 'undefined') video.muted = isMuted;
-      }
+      // NOTE: Do NOT sync volume/muted here — doing so on every buffering→playing
+      // transition causes audio jitter. Volume is synced only on explicit user actions
+      // (togglePlay, handleVolumeChange, keyboard shortcuts).
     }
     else if (state === 'paused') { setIsPlaying(false); }
     else if (state === 'buffering' || state === 'seeking' || state === 'loading') { setIsBuffering(true); }
@@ -473,6 +518,10 @@ export default function PlayerScreen() {
   };
 
   onTracksChangeRef.current = (e: any) => {
+    const video = videoRef.current;
+    if (!video || !resolvedSrc) return;
+    if (video.getAttribute("src") !== resolvedSrc) return;
+
     const { audio, subtitle } = e.detail;
     if (audio?.length > 0) {
       const newAudios = audio.map((t: any, i: number) => {
@@ -509,7 +558,9 @@ export default function PlayerScreen() {
 
   onTimeUpdateRef.current = () => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !resolvedSrc) return;
+    if (video.getAttribute("src") !== resolvedSrc) return;
+
     setCurrentTime(video.currentTime ?? 0);
     setDuration(video.duration || 0);
   };
@@ -580,34 +631,44 @@ export default function PlayerScreen() {
 
   // Show next-episode card when we get near the end of the current episode.
   // Threshold: <= 30s remaining OR position >= 95% (whichever fires first).
-  // Auto-start if the user has autoNextEnabled.
+  // Auto-starts if autoNextEnabled is true.
   useEffect(() => {
-    if (!nextEpisode || duration <= 0 || isResolvingNext()) return;
+    if (autoNextLockRef.current) return;
+    if (!nextEpisode || duration <= 0) return;
+    
+    // CRITICAL GUARD: Do not process threshold during the first 60 seconds of ANY episode.
+    // This absolutely guarantees that stale currentTime/duration from the previous
+    // episode cannot trigger a chain-fire to the next-next episode before the
+    // player state has settled.
+    if (currentTime < 60) return;
+
     const remaining = duration - currentTime;
     const pctPlayed = currentTime / duration;
     const shouldShow = remaining <= 30 || pctPlayed >= 0.95;
+    
     if (shouldShow && !showNextEpisodeCard) {
       setShowNextEpisodeCard(true);
       if (autoNextEnabled && nextEpisode.hasAired) {
         playNextRef.current?.();
       }
     } else if (!shouldShow && showNextEpisodeCard && remaining > 60) {
-      // User seeked back — hide the card again so it can re-trigger near the end.
       setShowNextEpisodeCard(false);
     }
-    function isResolvingNext() { return nextSearching || nextCountdown != null; }
-  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard, nextSearching, nextCountdown]);
+  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard]);
 
-  // Show the card on `ended` even if the threshold didn't fire (e.g. user
-  // seeked past it). Auto-start respects the setting.
+  // Fallback: Show card (and auto-play) if the video ends but the threshold
+  // somehow didn't fire (e.g. user seeked past the threshold right to the end).
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const onEnded = () => {
+      if (autoNextLockRef.current) return;
       if (!nextEpisode) return;
+      if (nextSearching || nextCountdown != null) return;
+      
       setShowNextEpisodeCard(true);
-      if (autoNextEnabled && nextEpisode.hasAired && !nextSearching && nextCountdown == null) {
-        playNextRef.current?.();
+      if (autoNextEnabled && nextEpisode.hasAired) {
+        setTimeout(() => { playNextRef.current?.(); }, 300);
       }
     };
     v.addEventListener("ended", onEnded);
@@ -617,27 +678,57 @@ export default function PlayerScreen() {
   // Auto-start playback as soon as the player is ready. Browsers may block
   // unmuted autoplay without prior user interaction; we fall back to muted
   // playback in that case so the video still starts.
+  const volumeRef = useRef(volume);
+  const isMutedRef = useRef(isMuted);
+  useEffect(() => { volumeRef.current = volume; }, [volume]);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+
+  const hasStartedPlayingThisStream = useRef(false);
+  useEffect(() => {
+    hasStartedPlayingThisStream.current = false;
+  }, [resolvedSrc]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const tryPlay = async () => {
+      if (v.paused && hasStartedPlayingThisStream.current) {
+        // User paused the stream, don't force play on canplay
+        return;
+      }
       try {
         if (typeof v.play === "function") {
+          v.volume = volumeRef.current;
+          v.muted = isMutedRef.current;
           const p = v.play();
-          if (p && typeof p.catch === "function") {
-            await p.catch(async () => {
-              // Autoplay rejected — retry muted.
-              try { v.muted = true; setIsMuted(true); v.play(); } catch (_) { /* ignore */ }
+          if (p && typeof p.then === "function") {
+            p.then(() => {
+              hasStartedPlayingThisStream.current = true;
+            }).catch(async (err: any) => {
+              // ONLY fallback to muted autoplay if the browser strictly blocks it via NotAllowedError.
+              // Other errors (like AbortError when play is interrupted) should NOT mute the audio.
+              if (err && err.name === "NotAllowedError") {
+                try {
+                  v.muted = true;
+                  setIsMuted(true);
+                  const rp = v.play();
+                  if (rp && typeof rp.then === "function") {
+                    rp.then(() => { hasStartedPlayingThisStream.current = true; }).catch(()=>{});
+                  } else {
+                    hasStartedPlayingThisStream.current = true;
+                  }
+                } catch (_) { /* ignore */ }
+              }
             });
+          } else {
+            hasStartedPlayingThisStream.current = true;
           }
         }
       } catch (_) { /* ignore */ }
     };
     v.addEventListener("canplay", tryPlay);
-    v.addEventListener("loadedmetadata", tryPlay);
     return () => {
       v.removeEventListener("canplay", tryPlay);
-      v.removeEventListener("loadedmetadata", tryPlay);
     };
   }, [resolvedSrc]);
 
@@ -647,6 +738,16 @@ export default function PlayerScreen() {
     if (!v) return;
     try { v.playbackRate = playbackRate; } catch (_) { /* ignore */ }
   }, [playbackRate, resolvedSrc]);
+
+  // Clear stale state IMMEDIATELY when the requested stream URL changes.
+  // This prevents the threshold effect from accidentally chain-firing if the
+  // previous episode's currentTime lingers while the new metadata loads.
+  useEffect(() => {
+    setCurrentTime(0);
+    setDuration(0);
+    setIsPlaying(false);
+    setShowNextEpisodeCard(false);
+  }, [streamUrl]);
 
   // Close any open menu when the controls auto-hide.
   useEffect(() => {
@@ -680,10 +781,6 @@ export default function PlayerScreen() {
     const video = videoRef.current;
     if (!video) return;
 
-    // Explicitly sync volume and muted on user interaction to bypass autoplay policy restrictions
-    if (typeof video.volume !== 'undefined') video.volume = volume;
-    if (typeof video.muted !== 'undefined') video.muted = isMuted;
-
     if (isPlaying) {
       if (typeof video.pause === 'function') video.pause();
       setIsPlaying(false);
@@ -712,10 +809,14 @@ export default function PlayerScreen() {
 
   // -- Next episode autoplay flow ---------------------------------------------
   const playNextEpisode = useCallback(async () => {
+    if (autoNextLockRef.current) return;
     if (!nextEpisode || !movieId || !mediaType) return;
     if (!nextEpisode.hasAired) return;
-    if (nextSearching) return;
+    if (nextSearching || nextCountdown != null) return;
 
+    // Take the lock synchronously so the threshold/ended effects can't
+    // re-trigger us during the resolve + countdown + navigate window.
+    autoNextLockRef.current = true;
     setNextSearching(true);
     setNextCountdown(null);
     try {
@@ -728,22 +829,24 @@ export default function PlayerScreen() {
 
       const videoId = `${baseId}:${nextEpisode.season}:${nextEpisode.episode}`;
       const stream = await autoResolveFirstStream("series", videoId, 12000);
-      setNextSearching(false);
 
       if (!stream || !stream.url) {
-        // Couldn't auto-resolve — open the picker so the user can choose.
-        setShowStreamPicker(true);
+        // Auto-resolve failed — surface the picker. Release the lock so the
+        // user can still trigger manual playback later.
+        autoNextLockRef.current = false;
+        setNextSearching(false);
         setShowNextEpisodeCard(false);
+        setShowStreamPicker(true);
         return;
       }
 
-      // 3-second countdown then navigate
+      setNextSearching(false);
+
+      // 3-second countdown then navigate.
       for (let i = 3; i >= 1; i -= 1) {
         setNextCountdown(i);
         await new Promise((r) => setTimeout(r, 1000));
       }
-      setNextCountdown(null);
-      setShowNextEpisodeCard(false);
 
       const u = encodeURIComponent(stream.url);
       router.replace(
@@ -751,10 +854,26 @@ export default function PlayerScreen() {
       );
     } catch (err) {
       console.error("playNextEpisode failed", err);
+      autoNextLockRef.current = false;
       setNextSearching(false);
       setNextCountdown(null);
     }
-  }, [movieId, mediaType, nextEpisode, nextSearching, router]);
+  }, [movieId, mediaType, nextEpisode, nextSearching, nextCountdown, router]);
+
+  // Play a specific episode from the episodes panel
+  const playEpisode = useCallback(async (targetSeason: number, targetEpisode: number) => {
+    if (!movieId || !mediaType) return;
+    // Don't replay the current episode
+    if (season && episode && parseInt(season) === targetSeason && parseInt(episode) === targetEpisode) return;
+
+    setShowEpisodesPanel(false);
+    
+    // Instead of resolving immediately or changing the URL params (which breaks highlights
+    // if the user backs out), we set target season/episode in state and open the stream picker.
+    setStreamPickerSeason(targetSeason);
+    setStreamPickerEpisode(targetEpisode);
+    setShowStreamPicker(true);
+  }, [movieId, mediaType, season, episode]);
 
   // Keep the ref used by the threshold/ended effects in sync.
   useEffect(() => {
@@ -1109,7 +1228,7 @@ export default function PlayerScreen() {
       )}
 
       {/* Skip Button (left) */}
-      {activeSkip && (
+      {activeSkip && isPlaying && (
         <button
           onClick={() => { if (videoRef.current) videoRef.current.currentTime = activeSkip.endTime; }}
           className="absolute bottom-28 left-8 bg-black/80 hover:bg-black/95 border border-white/40 text-white font-semibold px-5 py-2.5 rounded-xl z-50 pointer-events-auto transition-all"
@@ -1413,6 +1532,17 @@ export default function PlayerScreen() {
                 )}
               </div>
 
+              {/* Episodes (TV shows only) */}
+              {(mediaType === "series" || mediaType === "tv" || season) && (
+                <button
+                  onClick={() => setShowEpisodesPanel(!showEpisodesPanel)}
+                  className={`px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${showEpisodesPanel ? "bg-white text-black" : "bg-white/10 text-white hover:bg-white/20"}`}
+                  title="Episodes"
+                >
+                  Episodes
+                </button>
+              )}
+
               {/* Switch Stream */}
               <button onClick={() => setShowStreamPicker(true)} className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg ml-2" title="Switch Stream">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
@@ -1497,6 +1627,73 @@ export default function PlayerScreen() {
         </div>
       </div>
 
+      {/* Episodes Panel */}
+      {showEpisodesPanel && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-end bg-black/50" onClick={() => setShowEpisodesPanel(false)}>
+          <div className="h-full w-full max-w-sm bg-[#141414]/95 backdrop-blur-md border-l border-white/10 flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-white/10">
+              <h2 className="text-white font-bold text-lg">Episodes</h2>
+              <button onClick={() => setShowEpisodesPanel(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            {/* Season Selector */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+              <button
+                disabled={episodesSeasonNum <= 1}
+                onClick={() => setEpisodesSeasonNum((n) => Math.max(1, n - 1))}
+                className="w-7 h-7 rounded bg-white/10 text-white hover:bg-white/20 disabled:opacity-30 flex items-center justify-center font-bold text-sm"
+              >‹</button>
+              <span className="text-white font-semibold text-sm flex-1 text-center">
+                Season {episodesSeasonNum} of {totalSeasons}
+              </span>
+              <button
+                disabled={episodesSeasonNum >= totalSeasons}
+                onClick={() => setEpisodesSeasonNum((n) => Math.min(totalSeasons, n + 1))}
+                className="w-7 h-7 rounded bg-white/10 text-white hover:bg-white/20 disabled:opacity-30 flex items-center justify-center font-bold text-sm"
+              >›</button>
+            </div>
+            {/* Episode List */}
+            <div className="flex-1 overflow-y-auto">
+              {episodesLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                </div>
+              ) : episodesData.length === 0 ? (
+                <p className="text-white/50 text-sm text-center py-8">No episodes found</p>
+              ) : (
+                episodesData.map((ep: any) => {
+                  const isCurrent = season && episode && parseInt(season) === episodesSeasonNum && parseInt(episode) === ep.episode_number;
+                  return (
+                    <button
+                      key={ep.episode_number}
+                      onClick={() => playEpisode(episodesSeasonNum, ep.episode_number)}
+                      className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors border-b border-white/5 ${isCurrent ? "bg-white/10" : "hover:bg-white/5"}`}
+                    >
+                      <span className={`text-xs font-bold mt-0.5 w-6 text-center flex-shrink-0 ${isCurrent ? "text-white" : "text-white/50"}`}>
+                        {ep.episode_number}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold truncate ${isCurrent ? "text-white" : "text-white/80"}`}>
+                          {ep.name || `Episode ${ep.episode_number}`}
+                        </p>
+                        {ep.overview && (
+                          <p className="text-white/40 text-xs mt-0.5 line-clamp-2">{ep.overview}</p>
+                        )}
+                      </div>
+                      {isCurrent && (
+                        <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.5 rounded font-bold uppercase flex-shrink-0 mt-0.5">Now</span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* External Player Modal */}
       {showExternalPlayer && (
         <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/70 p-6" onClick={() => setShowExternalPlayer(false)}>
@@ -1535,15 +1732,23 @@ export default function PlayerScreen() {
       {showStreamPicker && movieId && (
         <StreamPickerModal
           tmdbId={parseInt(movieId)} type={mediaType!}
-          season={season ? parseInt(season) : undefined}
-          episode={episode ? parseInt(episode) : undefined}
-          onClose={() => setShowStreamPicker(false)}
+          season={streamPickerSeason ?? (season ? parseInt(season) : undefined)}
+          episode={streamPickerEpisode ?? (episode ? parseInt(episode) : undefined)}
+          onClose={() => {
+            setShowStreamPicker(false);
+            setStreamPickerSeason(null);
+            setStreamPickerEpisode(null);
+          }}
           onPlayStream={(stream) => {
             const url = stream.url ? encodeURIComponent(stream.url) : "";
+            const activeSeason = streamPickerSeason ?? (season ? parseInt(season) : undefined);
+            const activeEpisode = streamPickerEpisode ?? (episode ? parseInt(episode) : undefined);
             let route = `/player?id=${movieId}&type=${mediaType}&url=${url}`;
-            if (season && episode) route += `&s=${season}&e=${episode}`;
+            if (activeSeason && activeEpisode) route += `&s=${activeSeason}&e=${activeEpisode}`;
             router.replace(route);
             setShowStreamPicker(false);
+            setStreamPickerSeason(null);
+            setStreamPickerEpisode(null);
           }}
         />
       )}
