@@ -133,8 +133,11 @@ function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
 // page. We bypass Next.js's bundler for this dependency because the SWC
 // minifier produces invalid JavaScript ("octal escape sequences are not
 // allowed in template strings") when it processes movi-player's prebuilt
-// bundle. Loading the upstream IIFE via a <script> tag from /public keeps
-// the original (valid) code intact.
+// bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
+// code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
+// cross-origin so it's compatible with our COEP: require-corp headers.
+const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.2/dist/element.js";
+
 let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
@@ -149,13 +152,14 @@ function ensureMoviPlayerLoaded(): Promise<void> {
     }
     const s = document.createElement("script");
     s.type = "module";
-    s.src = "/movi-player.js";
+    s.src = MOVI_PLAYER_CDN_URL;
     s.async = false;
+    s.crossOrigin = "anonymous";
     s.dataset.nuvioMoviPlayer = "true";
     s.onload = () => {
       customElements.whenDefined("movi-player").then(() => resolve());
     };
-    s.onerror = (e) => reject(new Error("Failed to load /movi-player.js"));
+    s.onerror = () => reject(new Error(`Failed to load ${MOVI_PLAYER_CDN_URL}`));
     document.head.appendChild(s);
   });
   return moviPlayerLoadPromise;
