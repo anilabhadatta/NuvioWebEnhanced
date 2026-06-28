@@ -1417,7 +1417,7 @@ export default function PlayerScreen() {
         <div className="bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 pointer-events-auto">
           {/* Progress / Seek */}
           <div className="w-full h-2 bg-white/20 rounded-full cursor-pointer mb-6 group relative" onClick={handleSeek}>
-            <div className="h-full bg-white rounded-full transition-all" style={{ width: `${progress}%` }} />
+            <div className="h-full bg-white rounded-full" style={{ width: `${progress}%` }} />
             <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${progress}% - 8px)` }} />
           </div>
 
