@@ -18,6 +18,47 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// --- Custom subtitle parser & renderer (player-agnostic) ---
+interface SubtitleCue { start: number; end: number; text: string; }
+
+function parseTimeToSec(t: string): number {
+  // Handles HH:MM:SS,mmm or HH:MM:SS.mmm or MM:SS.mmm
+  const clean = t.trim().replace(',', '.');
+  const parts = clean.split(':');
+  if (parts.length === 3) {
+    return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+  }
+  return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+}
+
+function parseSubtitleText(raw: string): SubtitleCue[] {
+  const text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const cues: SubtitleCue[] = [];
+  const isVtt = text.startsWith('WEBVTT');
+  // Split on double-newline blocks
+  const blocks = text.split(/\n\n+/);
+  for (const block of blocks) {
+    const lines = block.trim().split('\n');
+    if (lines.length < 2) continue;
+    // Find the timing line (contains '-->')
+    let timingIdx = lines.findIndex(l => l.includes('-->'));
+    if (timingIdx === -1) continue;
+    const timingLine = lines[timingIdx];
+    const match = timingLine.match(/([\d:,.]+)\s+-->\s+([\d:,.]+)/);
+    if (!match) continue;
+    const start = parseTimeToSec(match[1]);
+    const end = parseTimeToSec(match[2]);
+    // Everything after timing line is cue text
+    const cueLines = lines.slice(timingIdx + 1)
+      .filter(l => isVtt ? !l.startsWith('NOTE') && !l.startsWith('REGION') : true)
+      // Strip basic HTML/VTT tags like <i>, <b>, <c.white>
+      .map(l => l.replace(/<[^>]*>/g, ''));
+    const cueText = cueLines.join('\n').trim();
+    if (cueText) cues.push({ start, end, text: cueText });
+  }
+  return cues;
+}
+
 // movi-player's built-in color palette (matches MoviElement.SUBTITLE_COLOR_PALETTE)
 const SUBTITLE_COLOR_SWATCHES = [
   { label: "White",   value: "#FFFFFF" },
@@ -259,6 +300,9 @@ export default function PlayerScreen() {
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSub, setSelectedSub] = useState(-1);
 
+  // Tracks the last blob URL we created for an addon subtitle, so we can revoke it.
+  const lastAddonSubBlobUrl = useRef<string | null>(null);
+
   // Subtitle style — backed by movi-player's native attribute API.
   // We read movi-player's own localStorage key on mount so the UI
   // reflects whatever the player last persisted.
@@ -305,6 +349,8 @@ export default function PlayerScreen() {
   // External Subtitles
   const [addonSubtitles, setAddonSubtitles] = useState<any[]>([]);
   const [activeExternalSub, setActiveExternalSub] = useState<string | null>(null);
+  // Parsed cues for the custom overlay renderer
+  const [externalSubCues, setExternalSubCues] = useState<SubtitleCue[]>([]);
 
   // Modal & Overlays
   const [showStreamPicker, setShowStreamPicker] = useState(false);
@@ -697,57 +743,46 @@ export default function PlayerScreen() {
     return () => v.removeEventListener("ended", onEnded);
   }, [nextEpisode, autoNextEnabled, nextSearching, nextCountdown]);
 
-  // Auto-start playback as soon as the player is ready. Browsers may block
-  // unmuted autoplay without prior user interaction; we fall back to muted
-  // playback in that case so the video still starts.
-  const volumeRef = useRef(volume);
-  const isMutedRef = useRef(isMuted);
-  useEffect(() => { volumeRef.current = volume; }, [volume]);
-  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  // ─── SIMPLIFIED AUTOPLAY ────────────────────────────────────────────────
+  // Rule: always play unless the user explicitly paused. We just call play()
+  // on statechange===ready. If the browser blocks unmuted autoplay we show
+  // the play button (setUserPaused(true)). That's it — no hasStarted tracking.
+  const userPausedRef = useRef(false);
+  useEffect(() => { userPausedRef.current = userPaused; }, [userPaused]);
 
-  const hasStartedPlayingThisStream = useRef(false);
   useEffect(() => {
-    hasStartedPlayingThisStream.current = false;
+    // Reset on new stream
+    userPausedRef.current = false;
   }, [resolvedSrc]);
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const tryPlay = async () => {
-      if (v.paused && hasStartedPlayingThisStream.current) {
-        // User paused the stream, don't force play on canplay
-        return;
-      }
-      try {
-        if (typeof v.play === "function") {
-          v.volume = volumeRef.current;
-          v.muted = isMutedRef.current;
-          const p = v.play();
-          if (p && typeof p.then === "function") {
-            p.then(() => {
-              hasStartedPlayingThisStream.current = true;
-            }).catch(async (err: any) => {
-              // If the browser strictly blocks unmuted autoplay, do NOT fall back to muted playback.
-              // Instead, we accept that the video cannot auto-start and update the UI to show the Play button,
-              // requiring the user to explicitly click Play to begin the unmuted stream.
-              if (err && err.name === "NotAllowedError") {
-                setUserPaused(true);
-              }
-            });
-          } else {
-            hasStartedPlayingThisStream.current = true;
-          }
-        }
-      } catch (_) { /* ignore */ }
-    };
     const onStateChange = (e: any) => {
-      if (e.detail === 'ready') tryPlay();
+      if (e.detail === 'ready' && !userPausedRef.current) {
+        const p = typeof v.play === 'function' ? v.play() : null;
+        if (p && typeof p.catch === 'function') {
+          p.catch((err: any) => {
+            if (err?.name === 'NotAllowedError') setUserPaused(true);
+          });
+        }
+      }
     };
-    v.addEventListener("canplay", tryPlay);
-    v.addEventListener("statechange", onStateChange);
+    const onCanPlay = () => {
+      if (!userPausedRef.current && typeof v.play === 'function') {
+        const p = v.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch((err: any) => {
+            if (err?.name === 'NotAllowedError') setUserPaused(true);
+          });
+        }
+      }
+    };
+    v.addEventListener('statechange', onStateChange);
+    v.addEventListener('canplay', onCanPlay);
     return () => {
-      v.removeEventListener("canplay", tryPlay);
-      v.removeEventListener("statechange", onStateChange);
+      v.removeEventListener('statechange', onStateChange);
+      v.removeEventListener('canplay', onCanPlay);
     };
   }, [resolvedSrc]);
 
@@ -1082,58 +1117,40 @@ export default function PlayerScreen() {
 
   const handleSubtitleChange = (id: number) => {
     setSelectedSub(id);
-    const video = videoRef.current;
-    if (video) {
+    setActiveExternalSub(null); // Clear external subtitle selection
+    setExternalSubCues([]);     // Clear custom overlay cues
+    const moviEl = videoRef.current;
+    if (moviEl) {
+      // Clean any previously injected sidecar <track> children from <movi-player>
+      const existing = moviEl.querySelectorAll('track.addon-sub');
+      existing.forEach((t: any) => {
+        if (t.src && t.src.startsWith('blob:')) URL.revokeObjectURL(t.src);
+        t.remove();
+      });
+      // Deactivate external subtitle lang on the element
+      if (typeof moviEl.selectSubtitleLang === 'function') {
+        moviEl.selectSubtitleLang(null).catch(() => {});
+      }
+
       const numId = id === -1 ? null : Number(id);
       console.log("[handleSubtitleChange] Selected Subtitle ID:", numId);
       try {
-        const player = video.player;
-        if (player && typeof player.selectSubtitleTrack === 'function') {
-          player.selectSubtitleTrack(numId);
-          console.log("[handleSubtitleChange] Switched track via player.selectSubtitleTrack");
-        } else if (typeof video.selectSubtitleTrack === 'function') {
-          video.selectSubtitleTrack(numId);
-          console.log("[handleSubtitleChange] Switched track via video.selectSubtitleTrack");
-        }
-
-        // Enable text track visibility when selecting a subtitle
-        if (numId !== null) {
-          if (player && typeof player.setTextTrackVisibility === 'function') {
-            player.setTextTrackVisibility(true);
-          } else if (typeof video.setTextTrackVisibility === 'function') {
-            video.setTextTrackVisibility(true);
-          }
-          // Enable native tracks
-          const tracks = video.textTracks;
-          if (tracks) {
-            for (let i = 0; i < tracks.length; i++) {
-              if (i === numId) {
-                tracks[i].mode = 'showing';
-              } else {
-                tracks[i].mode = 'disabled';
-              }
-            }
+        const internalPlayer = moviEl.player;
+        if (numId === null) {
+          // Turn off built-in subs
+          if (internalPlayer && typeof internalPlayer.selectSubtitleTrack === 'function') {
+            internalPlayer.selectSubtitleTrack(null);
           }
         } else {
-          // Disable text track visibility when selecting "None" (-1)
-          if (player && typeof player.setTextTrackVisibility === 'function') {
-            player.setTextTrackVisibility(false);
-          } else if (typeof video.setTextTrackVisibility === 'function') {
-            video.setTextTrackVisibility(false);
-          }
-          // Disable native tracks
-          const tracks = video.textTracks;
-          if (tracks) {
-            for (let i = 0; i < tracks.length; i++) {
-              tracks[i].mode = 'disabled';
-            }
+          // Select built-in sub by numeric track id
+          if (internalPlayer && typeof internalPlayer.selectSubtitleTrack === 'function') {
+            internalPlayer.selectSubtitleTrack(numId);
+            console.log("[handleSubtitleChange] Switched via player.selectSubtitleTrack:", numId);
           }
         }
-
         // Corrective seek/flush to apply track changes immediately
-        if (typeof video.currentTime === 'number') {
-          const curr = video.currentTime;
-          video.currentTime = curr;
+        if (typeof moviEl.currentTime === 'number') {
+          moviEl.currentTime = moviEl.currentTime;
         }
       } catch (err) {
         console.error("[handleSubtitleChange] Failed to select subtitle track:", err);
@@ -1144,69 +1161,36 @@ export default function PlayerScreen() {
 
   const loadExternalSubtitle = async (id: string, url: string, name: string) => {
     try {
+      setOpenMenu(null);
+      // Disable any active built-in subtitle first
+      const moviEl = videoRef.current;
+      if (moviEl?.player && typeof moviEl.player.selectSubtitleTrack === 'function') {
+        try { moviEl.player.selectSubtitleTrack(null); } catch {}
+      }
       const res = await fetch(url);
-      let text = await res.text();
-      if (!text.includes("WEBVTT")) {
-        text = "WEBVTT\n\n" + text.replace(/\r\n|\r|\n/g, '\n').replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+      const text = await res.text();
+      const cues = parseSubtitleText(text);
+      if (cues.length === 0) {
+        console.warn('[loadExternalSubtitle] No cues parsed from', url);
       }
-
-      const video = videoRef.current;
-      if (!video) return;
-
-      const blob = new Blob([text], { type: 'text/vtt' });
-      const blobUrl = URL.createObjectURL(blob);
-
-      // Clean existing addon tracks
-      const existing = video.querySelectorAll('track.addon-sub');
-      existing.forEach((t: any) => {
-        if (t instanceof HTMLTrackElement && t.src.startsWith('blob:')) URL.revokeObjectURL(t.src);
-        t.remove();
-      });
-
-      const track = document.createElement("track");
-      track.className = "addon-sub";
-      track.kind = "subtitles";
-      track.label = name;
-      track.srclang = "en";
-      track.src = blobUrl;
-      track.default = true;
-
-      video.appendChild(track);
-      
-      // Ensure all other native text tracks are disabled
-      const tracks = video.textTracks;
-      if (tracks) {
-        for (let i = 0; i < tracks.length; i++) {
-          tracks[i].mode = 'disabled';
-        }
+      // Revoke previous blob if any
+      if (lastAddonSubBlobUrl.current) {
+        try { URL.revokeObjectURL(lastAddonSubBlobUrl.current); } catch {}
+        lastAddonSubBlobUrl.current = null;
       }
-      if (track.track) {
-        track.track.mode = 'showing';
-      } else {
-        (track as any).mode = 'showing';
-      }
-
-      const player = video.player;
-      if (player && typeof player.setTextTrackVisibility === 'function') {
-        player.setTextTrackVisibility(true);
-      } else if (typeof video.setTextTrackVisibility === 'function') {
-        video.setTextTrackVisibility(true);
-      }
-
-      // Perform a corrective seek to update display
-      if (typeof video.currentTime === 'number') {
-        video.currentTime = video.currentTime;
-      }
-
+      setSelectedSub(-1);       // Reset built-in selection to "Off"
+      setExternalSubCues(cues);
       setActiveExternalSub(id);
-      setSelectedSub(-2);
     } catch (e) {
-      console.error(e);
+      console.error('[loadExternalSubtitle] failed:', e);
     }
-    setOpenMenu(null);
   };
 
+
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  // Active cue for the external subtitle overlay
+  const activeSubCue = externalSubCues.find(c => currentTime >= c.start && currentTime <= c.end) ?? null;
 
   return (
     <div
@@ -1224,6 +1208,37 @@ export default function PlayerScreen() {
           applySubtitleStyleToPlayer(p, subtitleStyleRef.current);
         }, [])}
       />
+
+      {/* External subtitle overlay — rendered by our own parser, works with any player */}
+      {activeSubCue && (
+        <div
+          className="absolute bottom-[88px] left-0 right-0 flex justify-center z-30 pointer-events-none px-8"
+          style={{ userSelect: 'none' }}
+        >
+          <div
+            style={{
+              backgroundColor: subtitleStyle.bgPct > 0
+                ? `rgba(0,0,0,${subtitleStyle.bgPct / 100})`
+                : 'transparent',
+              color: subtitleStyle.color,
+              fontSize: `${subtitleStyle.sizePct}%`,
+              textShadow: subtitleStyle.edge === 'shadow' ? '1px 1px 4px #000, -1px -1px 4px #000' :
+                          subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
+                          subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none',
+              padding: subtitleStyle.bgPct > 0 ? '4px 10px' : '0',
+              borderRadius: 4,
+              fontFamily: 'Arial, sans-serif',
+              fontWeight: 600,
+              lineHeight: 1.4,
+              maxWidth: '80vw',
+              textAlign: 'center',
+              whiteSpace: 'pre-line',
+            }}
+          >
+            {activeSubCue.text}
+          </div>
+        </div>
+      )}
 
       {/* States */}
       {!resolvedSrc && (
@@ -1529,22 +1544,54 @@ export default function PlayerScreen() {
                       </div>
                     ) : (
                       <div className="flex flex-col flex-1 overflow-hidden">
-                        <div className="p-3 bg-black/40 border-b border-white/10 font-bold text-white text-xs uppercase tracking-wider sticky top-0">Built-in</div>
-                        <div className="overflow-y-auto max-h-[140px]">
-                          {subtitles.map(s => (
-                            <button key={s.id} onClick={() => handleSubtitleChange(s.id)} className={`block w-full text-left px-4 py-3 text-sm transition-colors ${selectedSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
-                              {s.name}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="p-3 bg-black/40 border-y border-white/10 font-bold text-white text-xs uppercase tracking-wider sticky top-0">Addons</div>
-                        <div className="overflow-y-auto flex-1 max-h-[140px]">
-                          {addonSubtitles.map(s => (
-                            <button key={s.id} onClick={() => loadExternalSubtitle(s.id, s.url, s.name)} className={`block w-full text-left px-4 py-3 text-sm truncate transition-colors ${activeExternalSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
-                              {s.name}
-                            </button>
-                          ))}
-                          {addonSubtitles.length === 0 && <div className="px-4 py-4 text-xs text-[#888] text-center">No addons found</div>}
+                        {/* Unified subtitle list: None → Built-in → Addon */}
+                        <div className="overflow-y-auto flex-1">
+                          {/* OFF */}
+                          <button
+                            onClick={() => handleSubtitleChange(-1)}
+                            className={`flex items-center gap-3 w-full text-left px-4 py-3 text-sm transition-colors border-b border-white/5 ${selectedSub === -1 && !activeExternalSub ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}
+                          >
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${selectedSub === -1 && !activeExternalSub ? "bg-white" : "bg-white/20"}`} />
+                            Off
+                          </button>
+
+                          {/* Built-in tracks */}
+                          {subtitles.filter(s => s.id !== -1).length > 0 && (
+                            <>
+                              <div className="px-4 py-1.5 text-[10px] font-bold text-white/40 uppercase tracking-widest border-b border-white/5">Built-in</div>
+                              {subtitles.filter(s => s.id !== -1).map(s => (
+                                <button
+                                  key={s.id}
+                                  onClick={() => handleSubtitleChange(s.id)}
+                                  className={`flex items-center gap-3 w-full text-left px-4 py-3 text-sm transition-colors border-b border-white/5 ${selectedSub === s.id && !activeExternalSub ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}
+                                >
+                                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${selectedSub === s.id && !activeExternalSub ? "bg-white" : "bg-white/20"}`} />
+                                  {s.name}
+                                </button>
+                              ))}
+                            </>
+                          )}
+
+                          {/* Addon tracks */}
+                          {addonSubtitles.length > 0 && (
+                            <>
+                              <div className="px-4 py-1.5 text-[10px] font-bold text-white/40 uppercase tracking-widest border-b border-white/5">Addons</div>
+                              {addonSubtitles.map(s => (
+                                <button
+                                  key={s.id}
+                                  onClick={() => loadExternalSubtitle(s.id, s.url, s.name)}
+                                  className={`flex items-center gap-3 w-full text-left px-4 py-3 text-sm truncate transition-colors border-b border-white/5 ${activeExternalSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}
+                                >
+                                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${activeExternalSub === s.id ? "bg-[#a78bfa]" : "bg-white/20"}`} />
+                                  <span className="truncate">{s.name}</span>
+                                </button>
+                              ))}
+                            </>
+                          )}
+
+                          {addonSubtitles.length === 0 && subtitles.filter(s => s.id !== -1).length === 0 && (
+                            <div className="px-4 py-6 text-xs text-[#888] text-center">No subtitles available</div>
+                          )}
                         </div>
                       </div>
                     )}

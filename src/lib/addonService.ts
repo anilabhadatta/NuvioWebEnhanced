@@ -186,7 +186,8 @@ export async function fetchAllSubtitles(type: string, videoId: string, streamHas
   });
 
   const results = await Promise.all(promises);
-  return results.flat();
+  const flattened = results.flat();
+  return flattened.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
 /**
