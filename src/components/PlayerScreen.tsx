@@ -337,6 +337,20 @@ export default function PlayerScreen() {
 
   const resetSubtitleStyle = () => updateSubtitleStyle(DEFAULT_SUBTITLE_STYLE);
 
+  // Subtitle timing offset (seconds). Positive = subtitles appear later.
+  // Applies to BOTH the custom external-subtitle overlay (via activeSubCue, which
+  // reads subtitleDelay state) and movi-player's own renderer for built-in/muxed
+  // tracks (via its subtitleDelay setter).
+  const applySubtitleDelay = useCallback((value: number) => {
+    const clamped = Math.round(Math.max(-60, Math.min(60, value)) * 10) / 10; // 0.1s grid
+    subtitleDelayRef.current = clamped;
+    setSubtitleDelayState(clamped);
+    const v = videoRef.current;
+    if (v) {
+      try { v.subtitleDelay = clamped; } catch { /* ok */ }
+    }
+  }, []);
+
   // Re-apply subtitle style whenever it changes or when the player is first initialised.
   // Uses movi-player's native setAttribute API — the element translates these into
   // CSS variables (--movi-sub-color, --movi-sub-size-mult, etc.) consumed by its
@@ -349,6 +363,10 @@ export default function PlayerScreen() {
   // External Subtitles
   const [addonSubtitles, setAddonSubtitles] = useState<any[]>([]);
   const [activeExternalSub, setActiveExternalSub] = useState<string | null>(null);
+  // Subtitle timing offset in seconds. Positive = show subtitles LATER (mpv/VLC
+  // convention), which fixes subtitles that appear ahead of the audio.
+  const [subtitleDelay, setSubtitleDelayState] = useState(0);
+  const subtitleDelayRef = useRef(0);
   // Parsed cues for the custom overlay renderer
   const [externalSubCues, setExternalSubCues] = useState<SubtitleCue[]>([]);
 
@@ -850,6 +868,9 @@ export default function PlayerScreen() {
     setIsPlaying(false);
     setUserPaused(false);
     setShowNextEpisodeCard(false);
+    // Reset subtitle timing offset — a new episode/file has its own sync.
+    setSubtitleDelayState(0);
+    subtitleDelayRef.current = 0;
   }, [streamUrl]);
 
   // Close any open menu when the controls auto-hide.
@@ -1248,8 +1269,11 @@ export default function PlayerScreen() {
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
-  // Active cue for the external subtitle overlay
-  const activeSubCue = externalSubCues.find(c => currentTime >= c.start && currentTime <= c.end) ?? null;
+  // Active cue for the external subtitle overlay. Apply the user's timing offset:
+  // a positive delay shows each cue LATER (mpv/VLC convention), fixing subtitles
+  // that run ahead of the audio.
+  const adjustedSubTime = currentTime - subtitleDelay;
+  const activeSubCue = externalSubCues.find(c => adjustedSubTime >= c.start && adjustedSubTime <= c.end) ?? null;
 
   return (
     <div
@@ -1590,6 +1614,40 @@ export default function PlayerScreen() {
                               }}
                               className="w-6 h-6 rounded bg-white/10 text-white hover:bg-white/20 active:scale-95 flex items-center justify-center font-bold"
                             >+</button>
+                          </div>
+                        </div>
+
+                        {/* Subtitle Delay / Timing Shift */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex flex-col">
+                            <span className="text-white/80 font-medium">Subtitle Delay</span>
+                            <span className="text-white/40 text-[10px] mt-0.5">
+                              {subtitleDelay === 0
+                                ? "In sync"
+                                : subtitleDelay > 0
+                                  ? "Subtitles shown later"
+                                  : "Subtitles shown earlier"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => applySubtitleDelay(subtitleDelay - 0.1)}
+                              className="w-6 h-6 rounded bg-white/10 text-white hover:bg-white/20 active:scale-95 flex items-center justify-center font-bold"
+                              title="Subtitles earlier (-0.1s)"
+                            >-</button>
+                            <span className="font-bold w-14 text-center tabular-nums">
+                              {subtitleDelay > 0 ? "+" : ""}{subtitleDelay.toFixed(1)}s
+                            </span>
+                            <button
+                              onClick={() => applySubtitleDelay(subtitleDelay + 0.1)}
+                              className="w-6 h-6 rounded bg-white/10 text-white hover:bg-white/20 active:scale-95 flex items-center justify-center font-bold"
+                              title="Subtitles later (+0.1s)"
+                            >+</button>
+                            <button
+                              onClick={() => applySubtitleDelay(0)}
+                              className="ml-1 px-2 h-6 rounded bg-white/10 text-white/70 hover:bg-white/20 active:scale-95 flex items-center justify-center text-[10px] font-bold uppercase"
+                              title="Reset subtitle delay"
+                            >Reset</button>
                           </div>
                         </div>
 
