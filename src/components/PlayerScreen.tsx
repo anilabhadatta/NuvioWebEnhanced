@@ -143,6 +143,8 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     if (!wrapperRef.current) return;
     let cancelled = false;
 
+    console.log("[MoviWrapper] mount, crossOriginIsolated=", (window as any).crossOriginIsolated);
+
     // Create immediately as a plain, unregistered element
     let player = wrapperRef.current.querySelector("movi-player") as any;
     if (!player) {
@@ -154,14 +156,27 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
       onInit(player);
     }
 
+    // Attach diagnostic listeners so we can see what movi-player is doing.
+    const logEvent = (label: string) => (ev: any) => {
+      console.log(`[MoviWrapper] event '${label}'`, ev?.detail ?? ev);
+    };
+    player.addEventListener("error", logEvent("error"));
+    player.addEventListener("loadstart", logEvent("loadstart"));
+    player.addEventListener("loadedmetadata", logEvent("loadedmetadata"));
+    player.addEventListener("canplay", logEvent("canplay"));
+    player.addEventListener("waiting", logEvent("waiting"));
+    player.addEventListener("stalled", logEvent("stalled"));
+    player.addEventListener("playing", logEvent("playing"));
+
     // Now load the module — this registers the custom element class and
     // the browser upgrades our existing <movi-player> in-place.
     (async () => {
       try {
         await import("movi-player");
         await customElements.whenDefined("movi-player");
+        console.log("[MoviWrapper] movi-player module loaded and custom element defined");
       } catch (err) {
-        console.error("[MoviPlayerWrapper] Failed to load movi-player", err);
+        console.error("[MoviWrapper] Failed to load movi-player", err);
       }
       if (!cancelled) setMoviReady(true);
     })();
@@ -173,9 +188,13 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
   // and starts its internal Shaka player.
   useEffect(() => {
     const player = playerRef.current ?? wrapperRef.current?.querySelector("movi-player");
-    if (!player || !moviReady) return;
+    if (!player || !moviReady) {
+      console.log("[MoviWrapper] src update skipped — player:", !!player, "moviReady:", moviReady, "resolvedSrc:", resolvedSrc);
+      return;
+    }
 
     if (resolvedSrc && player.getAttribute("src") !== resolvedSrc) {
+      console.log("[MoviWrapper] setting src=", resolvedSrc);
       player.setAttribute("src", resolvedSrc);
       player.style.display = "block";
     } else if (!resolvedSrc) {
@@ -294,20 +313,23 @@ export default function PlayerScreen() {
         // avoids the cross-origin redirect that would otherwise taint the
         // request's Origin to "null" and make TorBox echo back ACAO: null.
         const ext = (window as any).__nuvioCors;
+        console.log("[NuvioPlayer] resolveUrl start, extension present:", !!ext, "url:", decoded);
         if (ext && typeof ext.resolveUrl === "function") {
           const result = await ext.resolveUrl(decoded);
+          console.log("[NuvioPlayer] extension resolveUrl result:", result);
           if (result && result.ok && result.resolvedUrl) {
             setResolvedSrc(result.resolvedUrl);
             return;
           }
-          // Fall through to client-side fetch if the extension errored.
+          console.warn("[NuvioPlayer] extension resolve failed, falling back to client HEAD");
         }
         // Fallback: in-browser HEAD (works for sources with proper CORS,
         // e.g. localhost dev where Origin matches what the server echoes).
         const res = await fetch(decoded, { method: 'HEAD', redirect: 'follow' });
+        console.log("[NuvioPlayer] client HEAD resolved to:", res.url);
         setResolvedSrc(res.url || decoded);
       } catch (err) {
-        console.error("Failed HEAD pre-resolve", err);
+        console.error("[NuvioPlayer] Failed HEAD pre-resolve", err);
         setResolvedSrc(decoded);
       }
     }
