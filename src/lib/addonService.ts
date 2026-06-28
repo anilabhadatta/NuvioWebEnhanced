@@ -90,7 +90,8 @@ export interface StreamItem {
 // Streams the browser can't realistically play smoothly. REMUX files are huge
 // (often 40-80GB) and AV1 falls back to software decode in most browsers, which
 // can't sustain realtime 1080p/4K. We hide these from the web player entirely.
-const UNSUPPORTED_STREAM_PATTERN = /\b(remux|av1|av01)\b/i;
+// We also hide AVI/XviD/DivX as they force inefficient software decoding over HTTP.
+const UNSUPPORTED_STREAM_PATTERN = /\b(remux|av1|av01|avi|xvid|divx)\b/i;
 
 /**
  * True when a stream is light enough for in-browser playback. Filters out
