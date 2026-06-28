@@ -17,6 +17,118 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+const hexToRgba = (hex: string, alpha: number) => {
+  if (hex === "transparent") return "transparent";
+  let c = hex.substring(1);
+  if (c.length === 3) {
+    c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+  }
+  const r = parseInt(c.substring(0, 2), 16);
+  const g = parseInt(c.substring(2, 4), 16);
+  const b = parseInt(c.substring(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+// movi-player's built-in color palette (matches MoviElement.SUBTITLE_COLOR_PALETTE)
+const SUBTITLE_COLOR_SWATCHES = [
+  { label: "White",   value: "#FFFFFF" },
+  { label: "Yellow",  value: "#FFEB3B" },
+  { label: "Green",   value: "#69F0AE" },
+  { label: "Cyan",    value: "#80DEEA" },
+  { label: "Blue",    value: "#82B1FF" },
+  { label: "Magenta", value: "#FF80AB" },
+  { label: "Red",     value: "#FF5252" },
+  { label: "Black",   value: "#000000" },
+];
+
+const SUBTITLE_EDGE_OPTIONS = [
+  { label: "None",    value: "none" },
+  { label: "Shadow",  value: "shadow" },
+  { label: "Outline", value: "outline" },
+  { label: "Raised",  value: "raised" },
+] as const;
+
+const SUBTITLE_BG_COLOR_SWATCHES = [
+  { label: "Transparent", value: "transparent" },
+  { label: "Black",   value: "#000000" },
+  { label: "Dark",    value: "#1a1a2e" },
+  { label: "Navy",    value: "#0d1b2a" },
+  { label: "Maroon",  value: "#4a0000" },
+  { label: "White",   value: "#FFFFFF" },
+];
+
+type SubtitleEdge = "none" | "shadow" | "outline" | "raised";
+
+interface SubtitleStyle {
+  color: string;    // hex e.g. "#FFFFFF"
+  bgColor: string;  // hex or "auto" (auto = movi-player picks contrast color)
+  sizePct: number;  // 50–200
+  bgPct: number;    // 0–100
+  edge: SubtitleEdge;
+}
+
+const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
+  color: "#FFFFFF",
+  bgColor: "transparent",
+  sizePct: 100,
+  bgPct: 0,
+  edge: "outline",
+};
+
+// Hex color string to "r, g, b" format for --movi-sub-bg-rgb
+function hexToRgbStr(hex: string): string {
+  let c = hex.replace("#", "");
+  if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return `${r}, ${g}, ${b}`;
+}
+
+// Push style onto the live movi-player element via its native attribute API.
+// movi-player handles persistence to localStorage["movi.subtitleSettings"] internally.
+//
+// NOTE: Each setAttribute call triggers movi-player's attributeChangedCallback which
+// synchronously calls applySubtitleSettings(), resetting --movi-sub-bg-rgb to its
+// auto-contrast value. We must set our override in a deferred microtask so it wins.
+function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
+  if (!player) return;
+  player.setAttribute("subtitlecolor", style.color);
+  player.setAttribute("subtitlesize",  String(style.sizePct));
+  player.setAttribute("subtitlebg",    String(style.bgPct));
+  player.setAttribute("subtitleedge",  style.edge);
+  // Defer so we run AFTER movi-player's synchronous applySubtitleSettings() resets the var
+  setTimeout(() => {
+    if (!player.isConnected) return;
+    if (style.bgColor !== "auto" && style.bgColor !== "transparent") {
+      player.style.setProperty("--movi-sub-bg-rgb", hexToRgbStr(style.bgColor));
+    } else {
+      player.style.removeProperty("--movi-sub-bg-rgb");
+    }
+
+    // Force movi-player to ALWAYS apply the background, even on non-VTT (SRT/embedded) tracks.
+    // By default movi-player only applies it to .movi-subtitle-format-vtt.
+    const shadow = player.shadowRoot;
+    if (shadow) {
+      let override = shadow.querySelector("style.nuvio-bg-override");
+      if (!override) {
+        override = document.createElement("style");
+        override.className = "nuvio-bg-override";
+        shadow.appendChild(override);
+      }
+      if (style.bgPct > 0) {
+        override.textContent = `
+          .movi-subtitle-block, video::cue {
+            background-color: rgba(var(--movi-sub-bg-rgb, 8,8,8), var(--movi-sub-bg-alpha, 0.75)) !important;
+          }
+        `;
+      } else {
+        override.textContent = "";
+      }
+    }
+  }, 0);
+}
+
 const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: string, onInit: (p: any) => void }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -66,10 +178,54 @@ export default function PlayerScreen() {
 
   // Menus
   const [openMenu, setOpenMenu] = useState<"sub" | "audio" | null>(null);
+  const [subActiveTab, setSubActiveTab] = useState<"tracks" | "style">("tracks");
   const [audios, setAudios] = useState<{ id: number; name: string }[]>([{ id: 0, name: "Default" }]);
   const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSub, setSelectedSub] = useState(-1);
+
+  // Subtitle style — backed by movi-player's native attribute API.
+  // We read movi-player's own localStorage key on mount so the UI
+  // reflects whatever the player last persisted.
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(() => {
+    try {
+      const raw = localStorage.getItem("movi.subtitleSettings");
+      const bgColorSaved = localStorage.getItem("nuvio.subBgColor") ?? DEFAULT_SUBTITLE_STYLE.bgColor;
+      if (raw) {
+        const p = JSON.parse(raw);
+        return {
+          color:   typeof p.color   === "string" ? p.color : DEFAULT_SUBTITLE_STYLE.color,
+          bgColor: bgColorSaved,
+          sizePct: typeof p.sizeMult === "number" ? Math.round(p.sizeMult * 100) : DEFAULT_SUBTITLE_STYLE.sizePct,
+          bgPct:   typeof p.bgAlpha  === "number" ? Math.round(p.bgAlpha  * 100) : DEFAULT_SUBTITLE_STYLE.bgPct,
+          edge:    (["none","shadow","outline","raised"] as SubtitleEdge[]).includes(p.edge) ? p.edge : DEFAULT_SUBTITLE_STYLE.edge,
+        };
+      }
+      return { ...DEFAULT_SUBTITLE_STYLE, bgColor: bgColorSaved };
+    } catch { /* fall through */ }
+    return DEFAULT_SUBTITLE_STYLE;
+  });
+
+  const subtitleStyleRef = useRef(subtitleStyle);
+
+  const updateSubtitleStyle = (newStyle: SubtitleStyle) => {
+    subtitleStyleRef.current = newStyle;
+    setSubtitleStyle(newStyle);
+    applySubtitleStyleToPlayer(videoRef.current, newStyle);
+    // Persist bgColor separately — movi-player's own save would overwrite our field
+    try { localStorage.setItem("nuvio.subBgColor", newStyle.bgColor); } catch { /* ok */ }
+  };
+
+  const resetSubtitleStyle = () => updateSubtitleStyle(DEFAULT_SUBTITLE_STYLE);
+
+  // Re-apply subtitle style whenever it changes or when the player is first initialised.
+  // Uses movi-player's native setAttribute API — the element translates these into
+  // CSS variables (--movi-sub-color, --movi-sub-size-mult, etc.) consumed by its
+  // own shadow-DOM subtitle renderer.
+  useEffect(() => {
+    subtitleStyleRef.current = subtitleStyle;
+    applySubtitleStyleToPlayer(videoRef.current, subtitleStyle);
+  }, [subtitleStyle]);
 
   // External Subtitles
   const [addonSubtitles, setAddonSubtitles] = useState<any[]>([]);
@@ -399,6 +555,40 @@ export default function PlayerScreen() {
           console.log("[handleSubtitleChange] Switched track via video.selectSubtitleTrack");
         }
 
+        // Enable text track visibility when selecting a subtitle
+        if (numId !== null) {
+          if (player && typeof player.setTextTrackVisibility === 'function') {
+            player.setTextTrackVisibility(true);
+          } else if (typeof video.setTextTrackVisibility === 'function') {
+            video.setTextTrackVisibility(true);
+          }
+          // Enable native tracks
+          const tracks = video.textTracks;
+          if (tracks) {
+            for (let i = 0; i < tracks.length; i++) {
+              if (i === numId) {
+                tracks[i].mode = 'showing';
+              } else {
+                tracks[i].mode = 'disabled';
+              }
+            }
+          }
+        } else {
+          // Disable text track visibility when selecting "None" (-1)
+          if (player && typeof player.setTextTrackVisibility === 'function') {
+            player.setTextTrackVisibility(false);
+          } else if (typeof video.setTextTrackVisibility === 'function') {
+            video.setTextTrackVisibility(false);
+          }
+          // Disable native tracks
+          const tracks = video.textTracks;
+          if (tracks) {
+            for (let i = 0; i < tracks.length; i++) {
+              tracks[i].mode = 'disabled';
+            }
+          }
+        }
+
         // Corrective seek/flush to apply track changes immediately
         if (typeof video.currentTime === 'number') {
           const curr = video.currentTime;
@@ -441,6 +631,32 @@ export default function PlayerScreen() {
       track.default = true;
 
       video.appendChild(track);
+      
+      // Ensure all other native text tracks are disabled
+      const tracks = video.textTracks;
+      if (tracks) {
+        for (let i = 0; i < tracks.length; i++) {
+          tracks[i].mode = 'disabled';
+        }
+      }
+      if (track.track) {
+        track.track.mode = 'showing';
+      } else {
+        (track as any).mode = 'showing';
+      }
+
+      const player = video.player;
+      if (player && typeof player.setTextTrackVisibility === 'function') {
+        player.setTextTrackVisibility(true);
+      } else if (typeof video.setTextTrackVisibility === 'function') {
+        video.setTextTrackVisibility(true);
+      }
+
+      // Perform a corrective seek to update display
+      if (typeof video.currentTime === 'number') {
+        video.currentTime = video.currentTime;
+      }
+
       setActiveExternalSub(id);
       setSelectedSub(-2);
     } catch (e) {
@@ -461,7 +677,11 @@ export default function PlayerScreen() {
       <MoviPlayerWrapper
         key="movi-wrapper"
         resolvedSrc={resolvedSrc}
-        onInit={useCallback((p: any) => { videoRef.current = p; }, [])}
+        onInit={useCallback((p: any) => {
+          videoRef.current = p;
+          // Apply persisted subtitle style immediately after player element is created
+          applySubtitleStyleToPlayer(p, subtitleStyleRef.current);
+        }, [])}
       />
 
       {/* States */}
@@ -562,24 +782,187 @@ export default function PlayerScreen() {
                   Subtitles
                 </button>
                 {openMenu === "sub" && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-64 max-h-80 flex flex-col z-50">
-                    <div className="p-3 bg-black/40 border-b border-white/10 font-bold text-white text-xs uppercase tracking-wider sticky top-0">Built-in</div>
-                    <div className="overflow-y-auto">
-                      {subtitles.map(s => (
-                        <button key={s.id} onClick={() => handleSubtitleChange(s.id)} className={`block w-full text-left px-4 py-3 text-sm transition-colors ${selectedSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
-                          {s.name}
-                        </button>
-                      ))}
+                  <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-[280px] max-h-[420px] flex flex-col z-50">
+                    {/* Tab Selector */}
+                    <div className="flex border-b border-white/10 bg-black/20">
+                      <button
+                        onClick={() => setSubActiveTab("tracks")}
+                        className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${subActiveTab === "tracks" ? "text-white bg-white/5 border-b-2 border-white" : "text-white/60 hover:text-white"}`}
+                      >
+                        Tracks
+                      </button>
+                      <button
+                        onClick={() => setSubActiveTab("style")}
+                        className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${subActiveTab === "style" ? "text-white bg-white/5 border-b-2 border-white" : "text-white/60 hover:text-white"}`}
+                      >
+                        Style
+                      </button>
                     </div>
-                    <div className="p-3 bg-black/40 border-y border-white/10 font-bold text-white text-xs uppercase tracking-wider sticky top-0 mt-2">Addons</div>
-                    <div className="overflow-y-auto flex-1">
-                      {addonSubtitles.map(s => (
-                        <button key={s.id} onClick={() => loadExternalSubtitle(s.id, s.url, s.name)} className={`block w-full text-left px-4 py-3 text-sm truncate transition-colors ${activeExternalSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
-                          {s.name}
+
+                    {subActiveTab === "style" ? (
+                      <div className="p-4 flex flex-col gap-4 overflow-y-auto max-h-[380px] text-white text-xs select-none">
+
+                        {/* Text Color */}
+                        <div className="flex flex-col gap-2">
+                          <span className="text-white/80 font-medium">Text Color</span>
+                          <div className="flex flex-wrap gap-2">
+                            {SUBTITLE_COLOR_SWATCHES.map(({ label, value }) => (
+                              <button
+                                key={value}
+                                title={label}
+                                onClick={() => updateSubtitleStyle({ ...subtitleStyle, color: value })}
+                                className={`w-6 h-6 rounded-full border-2 transition-all ${
+                                  subtitleStyle.color === value
+                                    ? "border-white scale-110 shadow-lg"
+                                    : "border-transparent opacity-75 hover:opacity-100 hover:scale-105"
+                                }`}
+                                style={{ backgroundColor: value }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Font Size */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-white/80 font-medium">Font Size</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => updateSubtitleStyle({ ...subtitleStyle, sizePct: Math.max(50, subtitleStyle.sizePct - 25) })}
+                              className="w-6 h-6 rounded bg-white/10 text-white hover:bg-white/20 active:scale-95 flex items-center justify-center font-bold"
+                            >-</button>
+                            <span className="font-bold w-10 text-center">{subtitleStyle.sizePct}%</span>
+                            <button
+                              onClick={() => updateSubtitleStyle({ ...subtitleStyle, sizePct: Math.min(200, subtitleStyle.sizePct + 25) })}
+                              className="w-6 h-6 rounded bg-white/10 text-white hover:bg-white/20 active:scale-95 flex items-center justify-center font-bold"
+                            >+</button>
+                          </div>
+                        </div>
+
+                        {/* Edge Style */}
+                        <div className="flex flex-col gap-2">
+                          <span className="text-white/80 font-medium">Edge Style</span>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {SUBTITLE_EDGE_OPTIONS.map(({ label, value }) => (
+                              <button
+                                key={value}
+                                onClick={() => updateSubtitleStyle({
+                                  ...subtitleStyle,
+                                  edge: value,
+                                  // selecting an edge style clears background
+                                  ...(value !== "none" ? { bgColor: "transparent", bgPct: 0 } : {}),
+                                })}
+                                className={`py-1.5 px-2 rounded text-xs font-bold transition-colors ${
+                                  subtitleStyle.edge === value
+                                    ? "bg-white text-black"
+                                    : "bg-white/10 text-white hover:bg-white/20"
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Background Color */}
+                        <div className="flex flex-col gap-2">
+                          <span className="text-white/80 font-medium">Background Color</span>
+                          <div className="flex flex-wrap gap-2">
+                            {SUBTITLE_BG_COLOR_SWATCHES.map(({ label, value }) => (
+                              <button
+                                key={value}
+                                title={label}
+                                onClick={() => {
+                                  if (value === "transparent") {
+                                    updateSubtitleStyle({
+                                      ...subtitleStyle,
+                                      bgColor: value,
+                                      bgPct: 0,
+                                      ...(subtitleStyle.edge === "none" ? { edge: "shadow" } : {})
+                                    });
+                                  } else {
+                                    updateSubtitleStyle({
+                                      ...subtitleStyle,
+                                      bgColor: value,
+                                      bgPct: subtitleStyle.bgPct === 0 ? 75 : subtitleStyle.bgPct,
+                                      edge: "none",
+                                    });
+                                  }
+                                }}
+                                className={`w-6 h-6 rounded-full border-2 transition-all ${
+                                  subtitleStyle.bgColor === value || (value === "transparent" && subtitleStyle.bgPct === 0)
+                                    ? "border-white scale-110 shadow-lg"
+                                    : "border-white/30 opacity-75 hover:opacity-100 hover:scale-105"
+                                }`}
+                                style={{
+                                  backgroundColor: value === "transparent" ? "transparent" : value,
+                                  backgroundImage: value === "transparent" ? "linear-gradient(135deg, #555 25%, transparent 25%, transparent 75%, #555 75%), linear-gradient(135deg, #555 25%, transparent 25%, transparent 75%, #555 75%)" : undefined,
+                                  backgroundSize: value === "transparent" ? "6px 6px" : undefined,
+                                  backgroundPosition: value === "transparent" ? "0 0, 3px 3px" : undefined,
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Background Opacity */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-white/80 font-medium">Background Opacity</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                const newPct = Math.max(0, subtitleStyle.bgPct - 25);
+                                updateSubtitleStyle({
+                                  ...subtitleStyle,
+                                  bgPct: newPct,
+                                  ...(newPct > 0 ? { edge: "none" } : {})
+                                });
+                              }}
+                              className="w-6 h-6 rounded bg-white/10 text-white hover:bg-white/20 active:scale-95 flex items-center justify-center font-bold"
+                            >-</button>
+                            <span className="font-bold w-10 text-center">{subtitleStyle.bgPct}%</span>
+                            <button
+                              onClick={() => {
+                                const newPct = Math.min(100, subtitleStyle.bgPct + 25);
+                                updateSubtitleStyle({
+                                  ...subtitleStyle,
+                                  bgPct: newPct,
+                                  ...(newPct > 0 ? { edge: "none" } : {})
+                                });
+                              }}
+                              className="w-6 h-6 rounded bg-white/10 text-white hover:bg-white/20 active:scale-95 flex items-center justify-center font-bold"
+                            >+</button>
+                          </div>
+                        </div>
+
+                        {/* Reset */}
+                        <button
+                          onClick={resetSubtitleStyle}
+                          className="mt-2 w-full py-2 bg-white/10 hover:bg-white/25 active:scale-[0.98] transition-all text-white font-bold rounded-lg"
+                        >
+                          Reset Defaults
                         </button>
-                      ))}
-                      {addonSubtitles.length === 0 && <div className="px-4 py-4 text-xs text-[#888] text-center">No addons found</div>}
-                    </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col flex-1 overflow-hidden">
+                        <div className="p-3 bg-black/40 border-b border-white/10 font-bold text-white text-xs uppercase tracking-wider sticky top-0">Built-in</div>
+                        <div className="overflow-y-auto max-h-[140px]">
+                          {subtitles.map(s => (
+                            <button key={s.id} onClick={() => handleSubtitleChange(s.id)} className={`block w-full text-left px-4 py-3 text-sm transition-colors ${selectedSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
+                              {s.name}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="p-3 bg-black/40 border-y border-white/10 font-bold text-white text-xs uppercase tracking-wider sticky top-0">Addons</div>
+                        <div className="overflow-y-auto flex-1 max-h-[140px]">
+                          {addonSubtitles.map(s => (
+                            <button key={s.id} onClick={() => loadExternalSubtitle(s.id, s.url, s.name)} className={`block w-full text-left px-4 py-3 text-sm truncate transition-colors ${activeExternalSub === s.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
+                              {s.name}
+                            </button>
+                          ))}
+                          {addonSubtitles.length === 0 && <div className="px-4 py-4 text-xs text-[#888] text-center">No addons found</div>}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
