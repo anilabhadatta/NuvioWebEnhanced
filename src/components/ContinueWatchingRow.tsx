@@ -38,7 +38,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
     if (item.season && item.episode) {
       route += `&s=${item.season}&e=${item.episode}`;
     }
-    router.push(route);
+    window.location.href = route;
   };
 
   return (

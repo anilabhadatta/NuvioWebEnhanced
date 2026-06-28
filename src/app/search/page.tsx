@@ -123,7 +123,7 @@ export default function SearchPage() {
             if (season && episode) {
               route += `&s=${season}&e=${episode}`;
             }
-            router.push(route);
+            window.location.href = route;
           }}
         />
       )}
