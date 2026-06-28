@@ -189,15 +189,27 @@ function manifestDeclaresResource(manifest: any, resource: string): boolean {
   );
 }
 
+/**
+ * Decide whether to query an addon for subtitles.
+ *  - Valid manifest that declares "subtitles"      → yes
+ *  - Valid manifest that does NOT declare subtitles → no (it's a playback/stream
+ *    addon like Comet/aiostreams; we must not hit its subtitle endpoint)
+ *  - Manifest unavailable/unparseable               → yes (be permissive so a
+ *    transient manifest fetch failure doesn't hide a real subtitle addon)
+ */
+function shouldQuerySubtitles(manifest: any): boolean {
+  if (!manifest || !Array.isArray(manifest.resources)) return true;
+  return manifestDeclaresResource(manifest, "subtitles");
+}
+
 export async function fetchAllSubtitles(type: string, videoId: string, streamHash?: string | null): Promise<SubtitleItem[]> {
   const addons = await fetchUserAddons();
 
-  // Generalised rule: only query addons whose MANIFEST declares the "subtitles"
-  // resource. Playback/stream-only addons (Comet, aiostreams, Torrentio,
-  // MediaFusion, etc.) don't declare it, so we never call their subtitle
-  // endpoint. If a manifest can't be fetched/parsed we conservatively skip the
-  // addon — we'd rather miss a subtitle than spam stream addons with subtitle
-  // requests they don't serve.
+  // Generalised rule: skip addons whose manifest positively declares they are
+  // playback/stream-only (no "subtitles" resource) — e.g. Comet, aiostreams,
+  // Torrentio, MediaFusion. We never call their subtitle endpoint. Addons whose
+  // manifest can't be fetched stay eligible so a transient failure doesn't hide
+  // a legitimate subtitle addon (e.g. OpenSubtitles).
   const manifestResults = await Promise.all(
     addons.map(async (addon) => ({
       addon,
@@ -205,7 +217,7 @@ export async function fetchAllSubtitles(type: string, videoId: string, streamHas
     })),
   );
   const subtitleAddons = manifestResults
-    .filter(({ manifest }) => manifestDeclaresResource(manifest, "subtitles"))
+    .filter(({ manifest }) => shouldQuerySubtitles(manifest))
     .map(({ addon }) => addon);
 
   const promises = subtitleAddons.map(async (addon, addonIndex) => {

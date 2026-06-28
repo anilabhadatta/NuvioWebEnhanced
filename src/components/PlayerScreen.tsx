@@ -431,6 +431,7 @@ export default function PlayerScreen() {
 
     // Reset resolvedSrc immediately to show the loading screen during resolution
     setResolvedSrc("");
+    setPlayerError(null);
 
     async function resolveUrl() {
       // Resolve CDN redirects to the final URL so movi-player doesn't loop on
@@ -605,13 +606,14 @@ export default function PlayerScreen() {
     if (state === 'playing') {
       setIsBuffering(false);
       setIsPlaying(true);
+      setPlayerError(null);
       // NOTE: Do NOT sync volume/muted here — doing so on every buffering→playing
       // transition causes audio jitter. Volume is synced only on explicit user actions
       // (togglePlay, handleVolumeChange, keyboard shortcuts).
     }
     else if (state === 'paused') { setIsPlaying(false); }
     else if (state === 'buffering' || state === 'seeking' || state === 'loading') { setIsBuffering(true); }
-    else if (state === 'ready') { setIsBuffering(false); }
+    else if (state === 'ready') { setIsBuffering(false); setPlayerError(null); }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
 
