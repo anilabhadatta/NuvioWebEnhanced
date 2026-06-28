@@ -84,6 +84,21 @@ export interface StreamItem {
   infoHash?: string;
   externalUrl?: string;
   addonName?: string;
+  addonUrl?: string;
+}
+
+// Streams the browser can't realistically play smoothly. REMUX files are huge
+// (often 40-80GB) and AV1 falls back to software decode in most browsers, which
+// can't sustain realtime 1080p/4K. We hide these from the web player entirely.
+const UNSUPPORTED_STREAM_PATTERN = /\b(remux|av1|av01)\b/i;
+
+/**
+ * True when a stream is light enough for in-browser playback. Filters out
+ * REMUX and AV1 sources, which are too heavy for the WASM/WebCodecs pipeline.
+ */
+export function isSupportedStream(s: StreamItem): boolean {
+  const text = `${s.name || ""} ${s.title || ""} ${s.description || ""}`;
+  return !UNSUPPORTED_STREAM_PATTERN.test(text);
 }
 
 export async function fetchStreamsFromAddon(addon: NuvioAddon, type: string, videoId: string): Promise<StreamItem[]> {
@@ -112,8 +127,9 @@ export async function fetchStreamsFromAddon(addon: NuvioAddon, type: string, vid
         infoHash: s.infoHash,
         externalUrl: s.externalUrl,
         addonName: prettyName,
+        addonUrl: addon.url,
       };
-    });
+    }).filter(isSupportedStream);
   } catch (err) {
     console.error("Error fetching from addon", addon.url, err);
     return [];
@@ -191,23 +207,46 @@ export async function fetchAllSubtitles(type: string, videoId: string, streamHas
 }
 
 /**
- * Auto-resolve a playable stream URL for a video. Races all enabled addons
- * in parallel and returns the first stream that comes back. Used for
- * auto-next-episode flow where we want to start the next episode quickly
- * without surfacing the stream picker.
+ * Auto-resolve a playable stream URL for a video. Used for the auto-next-episode
+ * flow where we want to start the next episode quickly without surfacing the
+ * stream picker.
+ *
+ * When `preferredAddonUrl` is provided (the addon the user is currently watching
+ * from), that addon is tried FIRST so the next episode comes from the same
+ * source. If it yields nothing playable, we fall back to racing the remaining
+ * enabled addons in parallel and return the first stream that comes back.
  */
 export async function autoResolveFirstStream(
   type: string,
   videoId: string,
   timeoutMs: number = 10000,
+  preferredAddonUrl?: string | null,
 ): Promise<StreamItem | null> {
   const addons = await fetchUserAddons();
   const enabled = addons.filter((a) => a.enabled !== false);
   if (enabled.length === 0) return null;
 
+  // 1. Try the preferred addon first (same source as the current episode).
+  if (preferredAddonUrl) {
+    const preferred = enabled.find((a) => a.url === preferredAddonUrl);
+    if (preferred) {
+      try {
+        const streams = await fetchStreamsFromAddon(preferred, type, videoId);
+        const playable = streams.find((s) => s.url && s.url.startsWith("http"));
+        if (playable) return playable;
+      } catch { /* fall through to racing the rest */ }
+    }
+  }
+
+  // 2. Race the remaining addons and take the first playable stream.
+  const pool = preferredAddonUrl
+    ? enabled.filter((a) => a.url !== preferredAddonUrl)
+    : enabled;
+  if (pool.length === 0) return null;
+
   return new Promise<StreamItem | null>((resolve) => {
     let settled = false;
-    let pending = enabled.length;
+    let pending = pool.length;
 
     const finish = (stream: StreamItem | null) => {
       if (settled) return;
@@ -217,7 +256,7 @@ export async function autoResolveFirstStream(
 
     const timeout = setTimeout(() => finish(null), timeoutMs);
 
-    enabled.forEach((addon) => {
+    pool.forEach((addon) => {
       fetchStreamsFromAddon(addon, type, videoId)
         .then((streams) => {
           if (settled) return;

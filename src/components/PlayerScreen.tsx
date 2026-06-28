@@ -394,6 +394,19 @@ export default function PlayerScreen() {
   const episode = searchParams.get("e");
   const streamHash = searchParams.get("hash");
 
+  // Gate to ignore stale currentTime/duration from the PREVIOUS episode until the
+  // newly-loaded stream reports its own fresh time. Without this, the old episode's
+  // near-end time (e.g. 21:37/21:58) briefly satisfies the next-episode threshold on
+  // the render right after navigation, prematurely showing the following episode's
+  // card (e.g. E4 while E3 is still loading). Reset synchronously during render the
+  // moment the stream URL changes — before any effect runs.
+  const prevStreamUrlRef = useRef(streamUrl);
+  const awaitingFreshTimeRef = useRef(false);
+  if (prevStreamUrlRef.current !== streamUrl) {
+    prevStreamUrlRef.current = streamUrl;
+    awaitingFreshTimeRef.current = true;
+  }
+
   const [episodesSeasonNum, setEpisodesSeasonNum] = useState<number>(() => {
     const s = searchParams.get("s");
     return s ? parseInt(s) : 1;
@@ -420,12 +433,29 @@ export default function PlayerScreen() {
     setResolvedSrc("");
 
     async function resolveUrl() {
+      // Resolve CDN redirects to the final URL so movi-player doesn't loop on
+      // a redirecting URL. We use a ranged GET (first byte only) instead of a
+      // HEAD request: many addon/debrid endpoints (e.g. Comet) reject HEAD with
+      // 405 Method Not Allowed, but accept GET. We read only the resolved URL
+      // from the response headers and abort before downloading the body.
+      const controller = new AbortController();
       try {
-        // Fetch HEAD exactly once to resolve CDN redirects so the player doesn't loop
-        const res = await fetch(decoded, { method: 'HEAD', redirect: 'follow' });
+        const res = await fetch(decoded, {
+          method: "GET",
+          headers: { Range: "bytes=0-0" },
+          redirect: "follow",
+          signal: controller.signal,
+        });
+        // res.url reflects the final URL after any redirects; fall back to the
+        // original on opaque/empty responses.
         setResolvedSrc(res.url || decoded);
+        // We only needed the headers/resolved URL — cancel the body stream so we
+        // don't download the file twice.
+        controller.abort();
       } catch (err) {
-        console.error("Failed HEAD pre-resolve", err);
+        // Network/CORS failure — hand the raw URL to the player and let its own
+        // GET range requests follow redirects.
+        console.warn("Stream pre-resolve failed, using raw URL", err);
         setResolvedSrc(decoded);
       }
     }
@@ -629,6 +659,10 @@ export default function PlayerScreen() {
     if (!video || !resolvedSrc) return;
     if (video.getAttribute("src") !== resolvedSrc) return;
 
+    // The first valid time tick for the current src is genuinely fresh — clear
+    // the gate so the next-episode threshold may start considering it.
+    awaitingFreshTimeRef.current = false;
+
     setCurrentTime(video.currentTime ?? 0);
     setDuration(video.duration || 0);
   };
@@ -703,7 +737,12 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (autoNextLockRef.current) return;
     if (!nextEpisode || duration <= 0) return;
-    
+
+    // Ignore stale time from the previous episode until the new stream reports
+    // its own fresh time (cleared in onTimeUpdate). This prevents the following
+    // episode's card from flashing while the just-started episode is still loading.
+    if (awaitingFreshTimeRef.current) return;
+
     // CRITICAL GUARD: Do not process threshold during the first 60 seconds of ANY episode.
     // This absolutely guarantees that stale currentTime/duration from the previous
     // episode cannot trigger a chain-fire to the next-next episode before the
@@ -731,6 +770,7 @@ export default function PlayerScreen() {
     if (!v) return;
     const onEnded = () => {
       if (autoNextLockRef.current) return;
+      if (awaitingFreshTimeRef.current) return; // ignore until the new stream is live
       if (!nextEpisode) return;
       if (nextSearching || nextCountdown != null) return;
       
@@ -883,7 +923,13 @@ export default function PlayerScreen() {
       } catch (_) { /* fall back to tmdb id */ }
 
       const videoId = `${baseId}:${nextEpisode.season}:${nextEpisode.episode}`;
-      const stream = await autoResolveFirstStream("series", videoId, 12000);
+      // Prefer the same addon the current episode is playing from. The addon
+      // manifest URL is tracked in sessionStorage (not the route) so we never
+      // pollute the addon URL with custom query params.
+      const preferredAddon = typeof window !== "undefined"
+        ? sessionStorage.getItem("nuvio.currentAddonUrl")
+        : null;
+      const stream = await autoResolveFirstStream("series", videoId, 12000, preferredAddon);
 
       if (!stream || !stream.url) {
         // Auto-resolve failed — surface the picker. Release the lock so the
@@ -896,6 +942,11 @@ export default function PlayerScreen() {
       }
 
       setNextSearching(false);
+
+      // Remember the addon the next episode resolved from for the episode after.
+      if (typeof window !== "undefined" && stream.addonUrl) {
+        try { sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl); } catch { /* ok */ }
+      }
 
       // 3-second countdown then navigate.
       for (let i = 3; i >= 1; i -= 1) {
@@ -1812,6 +1863,13 @@ export default function PlayerScreen() {
             const activeEpisode = streamPickerEpisode ?? (episode ? parseInt(episode) : undefined);
             let route = `/player?id=${movieId}&type=${mediaType}&url=${url}`;
             if (activeSeason && activeEpisode) route += `&s=${activeSeason}&e=${activeEpisode}`;
+            // Remember which addon this stream came from (in sessionStorage, NOT the
+            // route) so the next episode resolves from the same source without
+            // polluting the addon URL with query params.
+            try {
+              if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
+              else sessionStorage.removeItem("nuvio.currentAddonUrl");
+            } catch { /* ok */ }
             router.replace(route);
             setShowStreamPicker(false);
             setStreamPickerSeason(null);

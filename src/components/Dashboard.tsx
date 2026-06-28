@@ -84,6 +84,10 @@ export default function Dashboard() {
               if (season && episode) {
                 route += `&s=${season}&e=${episode}`;
               }
+              try {
+                if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
+                else sessionStorage.removeItem("nuvio.currentAddonUrl");
+              } catch { /* ok */ }
               window.location.href = route;
             }}
           />
