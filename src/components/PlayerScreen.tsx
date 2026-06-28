@@ -131,18 +131,49 @@ function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
 
 const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: string, onInit: (p: any) => void }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<any>(null);
+  const [moviReady, setMoviReady] = useState(false);
 
+  // Phase 1: Create the element as a plain HTMLElement (before the custom
+  // element class is registered), then import the module. The import triggers
+  // customElements.define() which makes the browser "upgrade" our already-in-
+  // DOM element — the upgrade path is allowed to set attributes in the
+  // constructor, unlike document.createElement() after registration.
   useEffect(() => {
     if (!wrapperRef.current) return;
+    let cancelled = false;
 
+    // Create immediately as a plain, unregistered element
     let player = wrapperRef.current.querySelector("movi-player") as any;
     if (!player) {
       player = document.createElement("movi-player");
       player.className = "w-full h-full object-contain";
       player.setAttribute("playsinline", "true");
       wrapperRef.current.appendChild(player);
+      playerRef.current = player;
       onInit(player);
     }
+
+    // Now load the module — this registers the custom element class and
+    // the browser upgrades our existing <movi-player> in-place.
+    (async () => {
+      try {
+        await import("movi-player");
+        await customElements.whenDefined("movi-player");
+      } catch (err) {
+        console.error("[MoviPlayerWrapper] Failed to load movi-player", err);
+      }
+      if (!cancelled) setMoviReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [onInit]);
+
+  // Phase 2: Set/update src only AFTER the custom element is fully upgraded.
+  // This guarantees movi-player's attributeChangedCallback processes the src
+  // and starts its internal Shaka player.
+  useEffect(() => {
+    const player = playerRef.current ?? wrapperRef.current?.querySelector("movi-player");
+    if (!player || !moviReady) return;
 
     if (resolvedSrc && player.getAttribute("src") !== resolvedSrc) {
       player.setAttribute("src", resolvedSrc);
@@ -150,7 +181,7 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     } else if (!resolvedSrc) {
       player.style.display = "none";
     }
-  }, [resolvedSrc, onInit]);
+  }, [resolvedSrc, moviReady]);
 
   return (
     <div
@@ -242,8 +273,8 @@ export default function PlayerScreen() {
   const episode = searchParams.get("e");
   const streamHash = searchParams.get("hash");
 
-  // Load movi-player module globally once
-  useEffect(() => { import("movi-player").catch(console.error); }, []);
+  // movi-player module loading is now handled inside MoviPlayerWrapper
+  // to guarantee custom-element registration before element creation.
 
   // --------------------------------------------------------------------------------
   // 1. STRICT API CALL LIMITERS (Exactly 1 call per stream)
