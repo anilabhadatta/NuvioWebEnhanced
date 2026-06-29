@@ -909,9 +909,10 @@ export default function PlayerScreen() {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) setShowControls(false);
+      // Don't auto-hide while a menu (subtitle/audio/speed) is open
+      if (isPlaying && !openMenu) setShowControls(false);
     }, 3000);
-  }, [isPlaying]);
+  }, [isPlaying, openMenu]);
 
   useEffect(() => { if (!isPlaying) setShowControls(true); }, [isPlaying]);
 
