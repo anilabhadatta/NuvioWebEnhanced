@@ -452,11 +452,14 @@ export default function PlayerScreen() {
     setPlayerError(null);
 
     async function resolveUrl() {
-      // Resolve CDN redirects to the final URL so movi-player doesn't loop on
-      // a redirecting URL. We use a ranged GET (first byte only) instead of a
-      // HEAD request: many addon/debrid endpoints (e.g. Comet) reject HEAD with
-      // 405 Method Not Allowed, but accept GET. We read only the resolved URL
-      // from the response headers and abort before downloading the body.
+      // Strategy:
+      // 1. Direct fetch with redirect: "follow" — works for CORS-clean streams.
+      // 2. If CORS-blocked (debrid redirect chains like TorBox), fall back to
+      //    /api/resolve which follows redirects server-side and returns the final
+      //    CDN URL. The CDN itself is CORS-clean so movi-player plays directly.
+      // 3. Last resort: hand the raw URL to the player.
+
+      // Step 1: direct (covers most streams — no server call, zero latency overhead)
       const controller = new AbortController();
       try {
         const res = await fetch(decoded, {
@@ -465,18 +468,29 @@ export default function PlayerScreen() {
           redirect: "follow",
           signal: controller.signal,
         });
-        // res.url reflects the final URL after any redirects; fall back to the
-        // original on opaque/empty responses.
         setResolvedSrc(res.url || decoded);
-        // We only needed the headers/resolved URL — cancel the body stream so we
-        // don't download the file twice.
         controller.abort();
-      } catch (err) {
-        // Network/CORS failure — hand the raw URL to the player and let its own
-        // GET range requests follow redirects.
-        console.warn("Stream pre-resolve failed, using raw URL", err);
-        setResolvedSrc(decoded);
+        return;
+      } catch (_directErr) {
+        // CORS blocked — fall through to server-side resolver
       }
+
+      // Step 2: server-side resolve (handles TorBox/debrid CORS blocks)
+      try {
+        const resolverRes = await fetch(`/api/resolve?url=${encodeURIComponent(decoded)}`);
+        if (resolverRes.ok) {
+          const data = await resolverRes.json();
+          if (data.url && typeof data.url === "string" && data.url.startsWith("http")) {
+            setResolvedSrc(data.url);
+            return;
+          }
+        }
+      } catch (_resolverErr) {
+        // Resolver unavailable — fall through
+      }
+
+      // Step 3: last resort — hand raw URL to player
+      setResolvedSrc(decoded);
     }
     resolveUrl();
   }, [streamUrl]);
