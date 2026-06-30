@@ -35,6 +35,19 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    // Unregister any lingering Service Workers (like coi-serviceworker) 
+    // that might be intercepting image requests and causing them to fail on refresh.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const registration of registrations) {
+          // Unregister old global service workers, but preserve the new /player scoped one
+          if (!registration.scope.endsWith('/player') && !registration.scope.endsWith('/player/')) {
+            registration.unregister();
+          }
+        }
+      });
+    }
+
     const check = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       const anon = localStorage.getItem("nuvio_anon");
