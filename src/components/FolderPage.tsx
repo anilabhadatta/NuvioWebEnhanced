@@ -488,7 +488,7 @@ export default function FolderPage() {
 
       {/* ── Content grid ─────────────────────────────────────────────────── */}
       <div className="flex-1 px-5 py-6">
-        {currentLoading ? (
+        {(currentLoading || (currentLoadingMore && currentMetas.length === 0)) ? (
           /* Skeleton grid */
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4">
             {Array.from({ length: 24 }).map((_, i) => (
@@ -557,7 +557,7 @@ export default function FolderPage() {
         {/* Infinite scroll sentinel + loading indicator */}
         <div ref={sentinelRef} className="h-px w-full mt-4" />
 
-        {currentLoadingMore && (
+        {currentLoadingMore && currentMetas.length > 0 && (
           <div className="flex justify-center py-8">
             <div className="w-8 h-8 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
           </div>
