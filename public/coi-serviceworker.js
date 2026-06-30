@@ -61,14 +61,18 @@ if (typeof window === "undefined") {
   (async () => {
     if (!navigator.serviceWorker) return;
 
-    // Detect Safari (iOS, iPadOS, macOS)
-    const isSafari =
-      /^((?!chrome|android).)*safari/i.test(navigator.userAgent) ||
+    // Detect iOS/iPadOS (all browsers use WebKit on iOS and need the SW)
+    const isIOS =
       /iPad|iPhone|iPod/.test(navigator.userAgent) ||
       (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(navigator.userAgent));
 
-    if (!isSafari) {
-      // Clean up the service worker if it was registered on non-Safari browsers (Chrome, Firefox, etc.)
+    // Detect desktop Safari (macOS)
+    const isDesktopSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    const needsSW = isIOS || isDesktopSafari;
+
+    if (!needsSW) {
+      // Clean up the service worker if it was registered on non-WebKit desktop/Android browsers (Chrome, Firefox, etc.)
       // since they natively support COEP: credentialless from next.config.ts and don't need the SW.
       try {
         const registrations = await navigator.serviceWorker.getRegistrations();
@@ -79,13 +83,14 @@ if (typeof window === "undefined") {
       return;
     }
 
-    // On Safari, if already isolated, skip registration
+    // On iOS/Safari, if already isolated, skip registration
     if (window.crossOriginIsolated) return;
     if (!window.isSecureContext) return;
 
     try {
+      const scriptSrc = document.currentScript ? document.currentScript.src : "/coi-serviceworker.js";
       const reg = await navigator.serviceWorker.register(
-        document.currentScript.src,
+        scriptSrc,
         { scope: "/" }
       );
 
