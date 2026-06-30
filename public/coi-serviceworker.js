@@ -1,2 +1,84 @@
-/*! coi-serviceworker v0.1.7 - Guido Zuidhof and contributors, licensed under MIT */
-let coepCredentialless=!1;"undefined"==typeof window?(self.addEventListener("install",(()=>self.skipWaiting())),self.addEventListener("activate",(e=>e.waitUntil(self.clients.claim()))),self.addEventListener("message",(e=>{e.data&&("deregister"===e.data.type?self.registration.unregister().then((()=>self.clients.matchAll())).then((e=>{e.forEach((e=>e.navigate(e.url)))})):"coepCredentialless"===e.data.type&&(coepCredentialless=e.data.value))})),self.addEventListener("fetch",(function(e){const r=e.request;if("only-if-cached"===r.cache&&"same-origin"!==r.mode)return;const s=coepCredentialless&&"no-cors"===r.mode?new Request(r,{credentials:"omit"}):r;e.respondWith(fetch(s).then((e=>{if(0===e.status)return e;const r=new Headers(e.headers);return r.set("Cross-Origin-Embedder-Policy",coepCredentialless?"credentialless":"require-corp"),coepCredentialless||r.set("Cross-Origin-Resource-Policy","cross-origin"),r.set("Cross-Origin-Opener-Policy","same-origin"),new Response(e.body,{status:e.status,statusText:e.statusText,headers:r})})).catch((e=>console.error(e))))}))):(()=>{const e={shouldRegister:()=>!0,shouldDeregister:()=>!1,coepCredentialless:()=>!(window.chrome||window.netscape),doReload:()=>window.location.reload(),quiet:!1,...window.coi},r=navigator;r.serviceWorker&&r.serviceWorker.controller&&(r.serviceWorker.controller.postMessage({type:"coepCredentialless",value:e.coepCredentialless()}),e.shouldDeregister()&&r.serviceWorker.controller.postMessage({type:"deregister"})),!1===window.crossOriginIsolated&&e.shouldRegister()&&(window.isSecureContext?r.serviceWorker&&r.serviceWorker.register(window.document.currentScript.src, {scope: "/player"}).then((s=>{!e.quiet&&console.log("COOP/COEP Service Worker registered",s.scope),s.addEventListener("updatefound",(()=>{!e.quiet&&console.log("Reloading page to make use of updated COOP/COEP Service Worker."),e.doReload()})),s.active&&!r.serviceWorker.controller&&(!e.quiet&&console.log("Reloading page to make use of COOP/COEP Service Worker."),e.doReload())}),(r=>{!e.quiet&&console.error("COOP/COEP Service Worker failed to register:",r)})):!e.quiet&&console.log("COOP/COEP Service Worker not registered, a secure context is required."))})();
+/*! coi-serviceworker - custom build for NuvioWeb
+ *  Purpose: Inject COOP/COEP headers ONLY on same-origin requests so that
+ *  SharedArrayBuffer is available in the player on Safari/iOS.
+ *  Cross-origin requests (e.g. TMDB images) are passed through completely
+ *  untouched to avoid breaking thumbnails.
+ */
+
+if (typeof window === "undefined") {
+  // ── SERVICE WORKER CONTEXT ─────────────────────────────────────────────────
+
+  self.addEventListener("install", () => self.skipWaiting());
+  self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+
+  self.addEventListener("fetch", (e) => {
+    const req = e.request;
+    const url = new URL(req.url);
+
+    // Only intercept same-origin requests. Let all cross-origin requests
+    // (TMDB images, external APIs, etc.) pass through without any modification.
+    if (url.origin !== self.location.origin) {
+      return; // do NOT call e.respondWith — browser handles it natively
+    }
+
+    // For same-origin requests, fetch normally and inject the required headers.
+    e.respondWith(
+      fetch(req).then((res) => {
+        // Don't modify opaque or error responses
+        if (res.status === 0 || res.type === "opaque") return res;
+
+        const headers = new Headers(res.headers);
+        headers.set("Cross-Origin-Opener-Policy", "same-origin");
+        headers.set("Cross-Origin-Embedder-Policy", "credentialless");
+
+        return new Response(res.body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers,
+        });
+      }).catch(() => fetch(req)) // fallback: just do a plain fetch on error
+    );
+  });
+
+} else {
+  // ── PAGE CONTEXT ────────────────────────────────────────────────────────────
+  // Register the service worker if the page is not yet cross-origin isolated.
+  // This is needed on Safari (iOS/iPadOS) which doesn't support the HTTP headers
+  // approach on certain deployments.
+
+  (async () => {
+    if (!navigator.serviceWorker) return;
+
+    // If already isolated (e.g. via Next.js headers on desktop Chrome), skip.
+    if (window.crossOriginIsolated) {
+      console.log("[coi-sw] already cross-origin isolated, skipping SW registration");
+      return;
+    }
+
+    if (!window.isSecureContext) {
+      console.log("[coi-sw] not a secure context, cannot register SW");
+      return;
+    }
+
+    try {
+      const reg = await navigator.serviceWorker.register(
+        document.currentScript.src,
+        { scope: "/" } // global scope so it covers /player navigation
+      );
+      console.log("[coi-sw] registered, scope:", reg.scope);
+
+      // If the SW just became active for the first time, reload to get headers.
+      if (reg.active && !navigator.serviceWorker.controller) {
+        console.log("[coi-sw] reloading to activate SW headers");
+        window.location.reload();
+      }
+
+      reg.addEventListener("updatefound", () => {
+        console.log("[coi-sw] update found, reloading");
+        window.location.reload();
+      });
+    } catch (err) {
+      console.warn("[coi-sw] registration failed:", err);
+    }
+  })();
+}
