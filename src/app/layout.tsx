@@ -14,7 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full">
-      <body className="min-h-full bg-[#111111] text-[#f5f5f5]">
+      <body className="min-h-full bg-[#111111] text-[#f5f5f5]" suppressHydrationWarning>
         {/*
           Load the COI service worker on every page.
           The SW itself is smart: it only injects security headers on same-origin

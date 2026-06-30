@@ -70,12 +70,15 @@ export default function Home() {
         </p>
 
         <div className="flex flex-col sm:flex-row items-center gap-3">
-          <Link
-            href="/dashboard"
+          <button
+            onClick={() => {
+              try { localStorage.setItem("nuvio_anon", "1"); } catch { /* ignore */ }
+              router.push("/dashboard");
+            }}
             className="px-8 py-3.5 rounded-xl bg-white hover:bg-gray-100 text-black font-bold text-base transition-all shadow-lg"
           >
             Launch Dashboard
-          </Link>
+          </button>
           {!loading && !isAuthenticated && (
             <Link
               href="/login"
