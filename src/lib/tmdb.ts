@@ -214,3 +214,109 @@ export const GENRE_MAP: Record<number, string> = {
 export function getGenreNames(ids: number[]): string[] {
   return ids.slice(0, 3).map((id) => GENRE_MAP[id]).filter(Boolean);
 }
+
+/** Build a TMDB url for a given source (without a page param). Returns the URL string + the resolved media type. */
+export function buildTmdbSourceUrl(source: any): { url: string; type: string } | null {
+  if (source.provider === "trakt") return null;
+
+  const { tmdbSourceType, mediaType, sortBy, tmdbId, filters = {} } = source;
+  const rawType = (mediaType || "MOVIE").toLowerCase();
+  const type = rawType === "tv" ? "tv" : "movie";
+
+  const filterParams: string[] = [];
+  if (filters.withGenres) filterParams.push(`with_genres=${filters.withGenres}`);
+  if (filters.voteCountGte) filterParams.push(`vote_count.gte=${filters.voteCountGte}`);
+  if (filters.withOriginalLanguage) filterParams.push(`with_original_language=${filters.withOriginalLanguage}`);
+  if (filters.year) {
+    if (type === "tv") filterParams.push(`first_air_date_year=${filters.year}`);
+    else filterParams.push(`primary_release_year=${filters.year}`);
+  }
+  const filterStr = filterParams.length > 0 ? `&${filterParams.join("&")}` : "";
+
+  let url = "";
+  // Some source types don't support pagination — mark them
+  let isPaginatable = true;
+  switch ((tmdbSourceType || "DISCOVER").toUpperCase()) {
+    case "TRENDING":
+      url = `/trending/${type}/week?api_key=${TMDB_API_KEY}&language=en-US${filterStr}`;
+      break;
+    case "TOP_RATED":
+    case "TOPRATED":
+      url = `/${type}/top_rated?api_key=${TMDB_API_KEY}&language=en-US${filterStr}`;
+      break;
+    case "POPULAR":
+      url = `/${type}/popular?api_key=${TMDB_API_KEY}&language=en-US${filterStr}`;
+      break;
+    case "UPCOMING":
+      url = `/movie/upcoming?api_key=${TMDB_API_KEY}&language=en-US${filterStr}`;
+      break;
+    case "NOW_PLAYING":
+    case "NOWPLAYING":
+      url = `/movie/now_playing?api_key=${TMDB_API_KEY}&language=en-US${filterStr}`;
+      break;
+    case "LIST":
+      if (!tmdbId) return null;
+      url = `/list/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
+      break;
+    case "MOVIECOLLECTION":
+      if (!tmdbId) return null;
+      url = `/collection/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
+      isPaginatable = false;
+      break;
+    case "COMPANY":
+      url = `/discover/${type}?api_key=${TMDB_API_KEY}&with_companies=${tmdbId}&sort_by=${sortBy || "popularity.desc"}${filterStr}`;
+      break;
+    case "NETWORK":
+      url = `/discover/tv?api_key=${TMDB_API_KEY}&with_networks=${tmdbId}&sort_by=${sortBy || "popularity.desc"}${filterStr}`;
+      break;
+    case "PERSON":
+      url = `/discover/${type}?api_key=${TMDB_API_KEY}&with_cast=${tmdbId}&sort_by=${sortBy || "popularity.desc"}${filterStr}`;
+      break;
+    case "DISCOVER":
+    default:
+      url = `/discover/${type}?api_key=${TMDB_API_KEY}&language=en-US&sort_by=${sortBy || "popularity.desc"}${filterStr}`;
+      break;
+  }
+
+  return { url, type, isPaginatable } as any;
+}
+
+function normalizeTmdbResults(results: any[], type: string): any[] {
+  return results.map((m: any) => ({
+    id: `tmdb:${m.id}`,
+    type: m.media_type || type,
+    name: m.title || m.name || "",
+    poster: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : undefined,
+    posterShape: "poster",
+    background: m.backdrop_path ? `https://image.tmdb.org/t/p/original${m.backdrop_path}` : undefined,
+    description: m.overview,
+  }));
+}
+
+/** Fetch a single page of results for a TMDB source. Returns { items, totalPages }. */
+export const fetchTmdbCollectionSourcePage = async (
+  source: any,
+  page: number = 1,
+): Promise<{ items: any[]; totalPages: number }> => {
+  try {
+    const built = buildTmdbSourceUrl(source);
+    if (!built) return { items: [], totalPages: 0 };
+    const { url, type, isPaginatable } = built as any;
+
+    const pageUrl = isPaginatable !== false ? `${url}&page=${page}` : url;
+    const res = await tmdb.get(pageUrl);
+    const results = res.data?.results || res.data?.parts || res.data?.items || [];
+    const totalPages = isPaginatable !== false ? (res.data?.total_pages ?? 1) : 1;
+
+    return { items: normalizeTmdbResults(results, type), totalPages };
+  } catch (err) {
+    console.error("TMDB paginated fetch error for source", source?.title, err);
+    return { items: [], totalPages: 0 };
+  }
+};
+
+/** Legacy: fetch page 1 only (used by FolderDetailModal and other callers). */
+export const fetchTmdbCollectionSource = async (source: any): Promise<any[]> => {
+  const { items } = await fetchTmdbCollectionSourcePage(source, 1);
+  return items;
+};

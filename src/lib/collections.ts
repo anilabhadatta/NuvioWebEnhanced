@@ -37,6 +37,12 @@ export interface CollectionFolder {
   hideTitle?: boolean;
   sources?: CollectionSource[];
   catalogSources?: { addonId: string; type: string; catalogId: string; genre?: string }[];
+  // Kaptain Collection extended fields
+  heroBackdropUrl?: string;
+  titleLogoUrl?: string;
+  focusGifUrl?: string;
+  focusGifEnabled?: boolean;
+  heroVideoUrl?: string;
 }
 
 export interface Collection {
