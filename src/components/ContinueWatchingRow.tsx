@@ -232,7 +232,13 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
               >
                 <div className="w-full h-full rounded-xl overflow-hidden relative">
                   {imgSrc ? (
-                    <img src={imgSrc} alt={title_} className="w-full h-full object-cover" loading="lazy" />
+                    <img
+                      src={imgSrc}
+                      alt={title_}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      crossOrigin="anonymous"
+                    />
                   ) : isTorbox ? (
                     <div className="w-full h-full bg-gradient-to-br from-[#0f172a] to-[#020617] flex flex-col items-center justify-center text-white border border-white/5">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-8 h-8 text-blue-500 mb-2">

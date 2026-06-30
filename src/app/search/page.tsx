@@ -89,7 +89,12 @@ export default function SearchPage() {
                     className="cursor-pointer group rounded-xl overflow-hidden bg-[#1a1a1a] hover:scale-105 transition-transform duration-200"
                   >
                     {imgSrc ? (
-                      <img src={imgSrc} alt={movie.title || movie.name} className="w-full aspect-[2/3] object-cover" />
+                      <img
+                        src={imgSrc}
+                        alt={movie.title || movie.name}
+                        className="w-full aspect-[2/3] object-cover"
+                        crossOrigin="anonymous"
+                      />
                     ) : (
                       <div className="w-full aspect-[2/3] bg-[#222] flex items-center justify-center text-[#555] text-xs text-center p-2">
                         {movie.title || movie.name}

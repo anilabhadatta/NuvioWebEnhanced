@@ -111,16 +111,14 @@ export default function HeroBanner() {
   return (
     <>
       <div className="relative h-[70vh] overflow-hidden">
-        {/* Background image */}
         {movie.backdrop_path && (
-          <div
+          <img
             key={movie.id}
-            className="absolute inset-0 transition-all duration-1000"
-            style={{
-              backgroundImage: `url(${TMDB_IMAGE_BASE}${movie.backdrop_path})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center 20%",
-            }}
+            src={`${TMDB_IMAGE_BASE}${movie.backdrop_path}`}
+            alt={title}
+            className="absolute inset-0 w-full h-full object-cover transition-all duration-1000"
+            style={{ objectPosition: "center 20%" }}
+            crossOrigin="anonymous"
           />
         )}
 

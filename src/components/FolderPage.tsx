@@ -531,6 +531,7 @@ export default function FolderPage() {
                       className="w-full h-full object-cover"
                       loading="lazy"
                       decoding="async"
+                      crossOrigin="anonymous"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center p-3 text-center">

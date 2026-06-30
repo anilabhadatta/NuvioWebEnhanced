@@ -159,6 +159,7 @@ function CollectionRow({
                       alt={folder.title}
                       className="absolute inset-0 w-full h-full object-cover"
                       loading="lazy"
+                      crossOrigin="anonymous"
                     />
                   ) : null}
 
@@ -335,6 +336,7 @@ function FolderAsMovieRow({
                       alt={meta.name}
                       className="w-full h-full object-cover"
                       loading="lazy"
+                      crossOrigin="anonymous"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-[#555] text-xs px-2 text-center">
