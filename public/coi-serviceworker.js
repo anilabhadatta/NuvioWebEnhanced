@@ -1,13 +1,9 @@
 /*! coi-serviceworker - custom build for NuvioWeb
  *
- *  Injects COOP/COEP headers on same-origin requests only, so that
- *  SharedArrayBuffer is available for the video player on Safari/iOS.
+ *  Injects COOP/COEP headers on same-origin requests, and CORP headers on
+ *  cross-origin requests so that SharedArrayBuffer works in Safari (iOS/iPadOS/macOS).
  *
- *  Cross-origin requests (TMDB images, external APIs) are intentionally
- *  skipped — the browser handles them natively with no interference.
- *
- *  Reload loop prevention: we only ever do ONE reload using a sessionStorage
- *  flag, so the activation handshake cannot loop.
+ *  Bypasses HMR/hot-reload and opaque responses (like TMDB images) to prevent loops and breaks.
  */
 
 if (typeof window === "undefined") {
@@ -20,22 +16,34 @@ if (typeof window === "undefined") {
     const req = e.request;
     const url = new URL(req.url);
 
-    // ✅ Only intercept same-origin requests.
-    // Cross-origin requests (image.tmdb.org, etc.) are completely ignored —
-    // returning without calling e.respondWith() hands them back to the browser.
-    if (url.origin !== self.location.origin) {
+    // 1. Bypass Next.js hot-reloading / HMR / EventSource connections to prevent request loops
+    if (
+      url.pathname.includes("/_next/webpack-hmr") ||
+      url.pathname.includes("/__nextjs_original-stack-frame") ||
+      req.headers.get("Accept") === "text/event-stream"
+    ) {
       return;
     }
 
-    // For same-origin requests, fetch and inject the required isolation headers.
     e.respondWith(
       fetch(req)
         .then((res) => {
-          if (res.status === 0 || res.type === "opaque") return res;
+          // 2. If the response is opaque (status 0), we cannot modify its headers.
+          // Return it directly to prevent breaking cross-origin images (like TMDB).
+          if (res.status === 0 || res.type === "opaque") {
+            return res;
+          }
 
           const headers = new Headers(res.headers);
-          headers.set("Cross-Origin-Opener-Policy", "same-origin");
-          headers.set("Cross-Origin-Embedder-Policy", "credentialless");
+
+          if (url.origin === self.location.origin) {
+            // Same-origin resources need COOP/COEP to enable isolation
+            headers.set("Cross-Origin-Opener-Policy", "same-origin");
+            headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+          } else {
+            // Cross-origin resources (like Torbox stream segments) must permit being loaded under require-corp
+            headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+          }
 
           return new Response(res.body, {
             status: res.status,
@@ -53,18 +61,27 @@ if (typeof window === "undefined") {
   (async () => {
     if (!navigator.serviceWorker) return;
 
-    // If already cross-origin isolated (e.g. desktop Chrome via Next.js headers),
-    // we don't need the service worker at all — skip registration entirely.
-    if (window.crossOriginIsolated) return;
-
-    if (!window.isSecureContext) return;
-
-    // Only register on Safari/WebKit. Chrome and Firefox receive the isolation
-    // headers directly from Next.js (next.config.ts) and don't need the SW.
+    // Detect Safari (iOS, iPadOS, macOS)
     const isSafari =
       /^((?!chrome|android).)*safari/i.test(navigator.userAgent) ||
-      /iPad|iPhone|iPod/.test(navigator.userAgent);
-    if (!isSafari) return;
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(navigator.userAgent));
+
+    if (!isSafari) {
+      // Clean up the service worker if it was registered on non-Safari browsers (Chrome, Firefox, etc.)
+      // since they natively support COEP: credentialless from next.config.ts and don't need the SW.
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.unregister();
+        }
+      } catch (e) {}
+      return;
+    }
+
+    // On Safari, if already isolated, skip registration
+    if (window.crossOriginIsolated) return;
+    if (!window.isSecureContext) return;
 
     try {
       const reg = await navigator.serviceWorker.register(
@@ -72,19 +89,10 @@ if (typeof window === "undefined") {
         { scope: "/" }
       );
 
-      // ✅ Reload-once guard: only reload if we haven't already done so.
-      // This prevents the infinite reload loop caused by repeated activations.
-      const reloadKey = "coi_sw_reloaded";
+      // Force reload once when service worker becomes active to apply COOP/COEP headers to the document
       if (reg.active && !navigator.serviceWorker.controller) {
-        if (!sessionStorage.getItem(reloadKey)) {
-          sessionStorage.setItem(reloadKey, "1");
-          window.location.reload();
-        }
-      } else {
-        // SW is in control — clear the flag so future hard refreshes work.
-        sessionStorage.removeItem(reloadKey);
+        window.location.reload();
       }
-
     } catch (err) {
       console.warn("[coi-sw] registration failed:", err);
     }
