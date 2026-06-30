@@ -140,6 +140,38 @@ const fetchTmdbAsMovie = async (tmdbId: number, type: "movie" | "tv"): Promise<T
   }
 };
 
+export const searchTmdb = async (query: string, year?: string, type: "movie" | "tv" = "movie"): Promise<TMDBMovie | null> => {
+  try {
+    let url = `/search/${type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=en-US`;
+    if (year) {
+      if (type === "movie") url += `&primary_release_year=${year}`;
+      if (type === "tv") url += `&first_air_date_year=${year}`;
+    }
+    const res = await tmdb.get(url);
+    const results = res.data?.results || [];
+    if (results.length > 0) {
+      const d = results[0];
+      return {
+        id: d.id,
+        title: d.title,
+        name: d.name,
+        overview: d.overview,
+        backdrop_path: d.backdrop_path,
+        poster_path: d.poster_path,
+        vote_average: d.vote_average,
+        release_date: d.release_date,
+        first_air_date: d.first_air_date,
+        genre_ids: d.genre_ids || [],
+        media_type: type,
+        original_language: d.original_language,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 
 export const TMDB_URLS = {
   trending: `/trending/all/week?api_key=${TMDB_API_KEY}&language=en-US`,

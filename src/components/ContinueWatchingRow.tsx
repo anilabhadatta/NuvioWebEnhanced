@@ -70,6 +70,47 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
       // Fetch details from TMDB to get images
       Promise.all(uniqueProgress.map(async (p) => {
         try {
+          if (String(p.id).startsWith("torbox_")) {
+            const parts = String(p.id).split("_");
+            const torrentId = parseInt(parts[1]);
+            
+            // Dynamically import to avoid breaking components that don't need torbox.ts
+            const { getTorboxApiKey, getTorboxTorrent } = await import("@/lib/torbox");
+            const key = getTorboxApiKey();
+            if (key) {
+              const tboxItem = await getTorboxTorrent(key, torrentId);
+              if (tboxItem && tboxItem.name) {
+                const name = tboxItem.name;
+                let cleanTitle = "";
+                let year = "";
+                let isTv = false;
+                
+                // Try parsing TV show format (e.g. S01E01)
+                const tvMatch = name.match(/^(.+?)(?:\b[sS]\d{1,2}[eE]\d{1,2}\b)/i);
+                if (tvMatch) {
+                   cleanTitle = tvMatch[1].replace(/[\.\_]/g, " ").trim();
+                   isTv = true;
+                } else {
+                   // Fallback to movie format with Year
+                   const movieMatch = name.match(/^(.+?)(?:\b(19\d{2}|20\d{2})\b)/i);
+                   if (movieMatch) {
+                      cleanTitle = movieMatch[1].replace(/[\.\_]/g, " ").trim();
+                      year = movieMatch[2];
+                   }
+                }
+                
+                let tmdbData = null;
+                if (cleanTitle) {
+                   const { searchTmdb } = await import("@/lib/tmdb");
+                   tmdbData = await searchTmdb(cleanTitle, year || undefined, isTv ? "tv" : "movie");
+                }
+                
+                return { ...p, tmdbData, title: tmdbData ? (tmdbData.title || tmdbData.name) : tboxItem.name };
+              }
+            }
+            return { ...p, tmdbData: null };
+          }
+
           const tmdbType = p.type === "series" ? "tv" : p.type;
           const rawId = String(p.id).startsWith("tt") ? String(p.id) : `tmdb:${p.id}`;
           const movie = await resolveStremioIdToMovie(rawId, tmdbType);
@@ -177,7 +218,10 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
               : null;
               
             const isTorbox = String(item.id).startsWith("torbox_");
-            const title_ = isTorbox ? "TorBox Media" : (data?.title || data?.name || item.title || "Unknown");
+            // If it's TorBox, use the dynamically fetched name (item.title) or fallback to TorBox Media
+            const title_ = isTorbox 
+              ? (item.title !== "Stream" ? item.title : "TorBox Media")
+              : (data?.title || data?.name || item.title || "Unknown");
             const percent = item.duration > 0 ? (item.currentTime / item.duration) * 100 : 0;
 
             return (

@@ -1,5 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr";
-import { fetchAddons } from "./addons";
+import { fetchAddons, fetchAddonManifest } from "./addons";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://dpyhjjcoabcglfmgecug.supabase.co";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRweWhqamNvYWJjZ2xmbWdlY3VnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3ODYyNDcsImV4cCI6MjA4NjM2MjI0N30.U-3QSNDdpsnvRk_7ZL419AFTOtggHJJcmkodxeXjbkg";
@@ -64,8 +64,28 @@ export function isSupportedStream(s: StreamItem): boolean {
   return !UNSUPPORTED_STREAM_PATTERN.test(text);
 }
 
+
+function isLikelySubtitleAddon(addon: NuvioAddon): boolean {
+  const str = (addon.name + " " + addon.url).toLowerCase();
+  return str.includes("subtitle") || str.includes("opensubtitles");
+}
+
+function isLikelyMetaAddon(addon: NuvioAddon): boolean {
+  const str = (addon.name + " " + addon.url).toLowerCase();
+  return str.includes("cinemeta") || str.includes("tmdb") || str.includes("cyberflix") || str.includes("seriesgraph") || str.includes("rpdb") || str.includes("mdblist");
+}
+
+function isLikelyStreamAddon(addon: NuvioAddon): boolean {
+  const str = (addon.name + " " + addon.url).toLowerCase();
+  return str.includes("torrentio") || str.includes("comet") || str.includes("jacketio") || str.includes("mediafusion") || str.includes("aiostreams") || str.includes("annatar") || str.includes("knightcrawler") || str.includes("stremify") || str.includes("peerflix");
+}
+
 export async function fetchStreamsFromAddon(addon: NuvioAddon, type: string, videoId: string): Promise<StreamItem[]> {
   try {
+    if (isLikelySubtitleAddon(addon) || isLikelyMetaAddon(addon)) {
+      return []; // Skip meta/catalog and subtitle addons
+    }
+
     const streamUrl = buildStreamUrl(addon.url, type, videoId);
     console.log("Fetching streams from:", streamUrl);
     const res = await fetch(streamUrl);
@@ -116,72 +136,14 @@ function buildSubtitleUrl(manifestUrl: string, type: string, videoId: string, ha
   return `${baseUrl}/subtitles/${encodeURIComponent(type)}/${encodeURIComponent(id)}.json${query}`;
 }
 
-// Cache of addon manifests (keyed by manifest URL) so we only fetch each once
-// per session. Used to decide which addons actually support which resources.
-const manifestCache = new Map<string, any | null>();
-
-/**
- * Fetch and cache an addon's manifest. `manifestUrl` is the addon URL as stored
- * (already pointing at /manifest.json). We never append custom query params —
- * the URL is fetched exactly as-is so addon-specific tokens stay intact.
- */
-async function fetchAddonManifest(manifestUrl: string): Promise<any | null> {
-  if (manifestCache.has(manifestUrl)) return manifestCache.get(manifestUrl)!;
-  try {
-    const res = await fetch(manifestUrl);
-    if (!res.ok) { manifestCache.set(manifestUrl, null); return null; }
-    const data = await res.json();
-    manifestCache.set(manifestUrl, data);
-    return data;
-  } catch {
-    manifestCache.set(manifestUrl, null);
-    return null;
-  }
-}
-
-/**
- * True when an addon manifest declares support for a given resource. Stremio
- * manifests list resources either as plain strings ("subtitles") or as objects
- * ({ name: "subtitles", types: [...] }). Handles both shapes.
- */
-function manifestDeclaresResource(manifest: any, resource: string): boolean {
-  const resources = manifest?.resources;
-  if (!Array.isArray(resources)) return false;
-  return resources.some((r: any) =>
-    typeof r === "string" ? r === resource : r?.name === resource,
-  );
-}
-
-/**
- * Decide whether to query an addon for subtitles.
- *  - Valid manifest that declares "subtitles"      → yes
- *  - Valid manifest that does NOT declare subtitles → no (it's a playback/stream
- *    addon like Comet/aiostreams; we must not hit its subtitle endpoint)
- *  - Manifest unavailable/unparseable               → yes (be permissive so a
- *    transient manifest fetch failure doesn't hide a real subtitle addon)
- */
-function shouldQuerySubtitles(manifest: any): boolean {
-  if (!manifest || !Array.isArray(manifest.resources)) return true;
-  return manifestDeclaresResource(manifest, "subtitles");
-}
 
 export async function fetchAllSubtitles(type: string, videoId: string, streamHash?: string | null): Promise<SubtitleItem[]> {
   const addons = await fetchUserAddons();
 
-  // Generalised rule: skip addons whose manifest positively declares they are
-  // playback/stream-only (no "subtitles" resource) — e.g. Comet, aiostreams,
-  // Torrentio, MediaFusion. We never call their subtitle endpoint. Addons whose
-  // manifest can't be fetched stay eligible so a transient failure doesn't hide
-  // a legitimate subtitle addon (e.g. OpenSubtitles).
-  const manifestResults = await Promise.all(
-    addons.map(async (addon) => ({
-      addon,
-      manifest: await fetchAddonManifest(addon.url),
-    })),
+  // Filter out stream and meta addons from subtitle queries
+  const subtitleAddons = addons.filter((addon) => 
+    !isLikelyMetaAddon(addon) && !isLikelyStreamAddon(addon)
   );
-  const subtitleAddons = manifestResults
-    .filter(({ manifest }) => shouldQuerySubtitles(manifest))
-    .map(({ addon }) => addon);
 
   const promises = subtitleAddons.map(async (addon, addonIndex) => {
     try {
