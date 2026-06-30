@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { pullCollections, CollectionFolder, CollectionSource } from "@/lib/collections";
+import { pullCollections, loadLocalCollections, Collection, CollectionFolder, CollectionSource } from "@/lib/collections";
 import { fetchTmdbCollectionSourcePage, fetchTmdbCollectionSource, resolveStremioIdToMovie, TMDBMovie } from "@/lib/tmdb";
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
@@ -110,41 +110,54 @@ export default function FolderPage() {
   useEffect(() => {
     let active = true;
     const findFolder = async () => {
-      const collections = await pullCollections();
-      for (const col of collections) {
-        for (const f of col.folders || []) {
-          if (f.id === folderId) {
-            if (!active) return;
-            setFolder(f);
-            setCollectionTitle(col.title);
-
-            const needsAddon = (f.sources || []).some(
-              (s) => !s.provider || (s.provider as string) === "addon",
-            );
-            if (needsAddon) {
-              const addons = await fetchAddons();
-              const map = new Map<string, string>();
-              await Promise.all(
-                addons.map(async (a) => {
-                  const manifest = a.manifest || (await fetchAddonManifest(a.url));
-                  if (manifest?.id) map.set(manifest.id, a.url);
-                }),
+      const processCollections = async (collections: Collection[]) => {
+        for (const col of collections) {
+          for (const f of col.folders || []) {
+            if (f.id === folderId) {
+              if (!active) return true;
+              setFolder(f);
+              setCollectionTitle(col.title);
+  
+              const needsAddon = (f.sources || []).some(
+                (s) => !s.provider || (s.provider as string) === "addon",
               );
-              if (active) setIdToUrl(map);
+              if (needsAddon && idToUrl.size === 0) {
+                const addons = await fetchAddons();
+                const map = new Map<string, string>();
+                await Promise.all(
+                  addons.map(async (a) => {
+                    const manifest = a.manifest || (await fetchAddonManifest(a.url));
+                    if (manifest?.id) map.set(manifest.id, a.url);
+                  }),
+                );
+                if (active) setIdToUrl(map);
+              }
+  
+              // Restore tab state from session storage
+              const savedTabs = sessionStorage.getItem(`nuvio_folder_tabs_${folderId}`);
+              if (savedTabs) {
+                try { setTabStates((prev) => Object.keys(prev).length > 0 ? prev : JSON.parse(savedTabs)); } catch(e) {}
+              }
+              const savedActiveTab = sessionStorage.getItem(`nuvio_folder_activeTab_${folderId}`);
+              if (savedActiveTab) {
+                setActiveTabIdx(parseInt(savedActiveTab, 10));
+              }
+              return true;
             }
-
-            // Restore tab state from session storage
-            const savedTabs = sessionStorage.getItem(`nuvio_folder_tabs_${folderId}`);
-            if (savedTabs) {
-              try { setTabStates(JSON.parse(savedTabs)); } catch(e) {}
-            }
-            const savedActiveTab = sessionStorage.getItem(`nuvio_folder_activeTab_${folderId}`);
-            if (savedActiveTab) {
-              setActiveTabIdx(parseInt(savedActiveTab, 10));
-            }
-            return;
           }
         }
+        return false;
+      };
+
+      const localCollections = loadLocalCollections();
+      if (localCollections.length > 0) {
+        await processCollections(localCollections);
+      }
+
+      // Fetch fresh in background
+      const freshCollections = await pullCollections();
+      if (active) {
+        await processCollections(freshCollections);
       }
     };
     findFolder();

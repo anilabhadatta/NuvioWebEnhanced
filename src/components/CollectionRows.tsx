@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Collection, CollectionFolder, pullCollections } from "@/lib/collections";
+import { Collection, CollectionFolder, pullCollections, loadLocalCollections } from "@/lib/collections";
 import { TMDBMovie } from "@/lib/tmdb";
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
@@ -14,9 +14,17 @@ export default function CollectionRows({ onSelectMovie }: { onSelectMovie: (m: T
 
   useEffect(() => {
     let cancelled = false;
+
+    // 1. Instantly load local collections after hydration
+    const local = loadLocalCollections();
+    if (local.length > 0) {
+      setCollections([...local].sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop)));
+    }
+
+    // 2. Fetch fresh collections from server in background
     (async () => {
       const data = await pullCollections();
-      if (!cancelled) {
+      if (!cancelled && data && data.length > 0) {
         // Pinned collections first, preserving order otherwise.
         const ordered = [...data].sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop));
         setCollections(ordered);

@@ -101,7 +101,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  return (
+  const modalContent = (
     <div
       className="modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.85)" }}
@@ -211,4 +211,10 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
       </div>
     </div>
   );
+
+  if (typeof window !== "undefined") {
+    const { createPortal } = require("react-dom");
+    return createPortal(modalContent, document.body);
+  }
+  return null;
 }
