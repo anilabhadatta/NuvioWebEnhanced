@@ -8,11 +8,22 @@ import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
 import { fetchTmdbCollectionSource, resolveStremioIdToMovie } from "@/lib/tmdb";
 import { useRouter } from "next/navigation";
 
+let isHydrated = false;
+
 export default function CollectionRows({ onSelectMovie }: { onSelectMovie: (m: TMDBMovie) => void }) {
-  const [collections, setCollections] = useState<Collection[]>([]);
+  const [collections, setCollections] = useState<Collection[]>(() => {
+    if (typeof window !== "undefined" && isHydrated) {
+      const local = loadLocalCollections();
+      if (local.length > 0) {
+        return [...local].sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop));
+      }
+    }
+    return [];
+  });
   const router = useRouter();
 
   useEffect(() => {
+    isHydrated = true;
     let cancelled = false;
 
     // 1. Instantly load local collections after hydration

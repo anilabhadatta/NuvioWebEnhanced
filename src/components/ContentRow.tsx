@@ -13,17 +13,71 @@ interface RowProps {
   onSelectMovie?: (m: TMDBMovie) => void;
 }
 
+let isHydrated = false;
+
 export default function ContentRow({ title, url, large, first, onSelectMovie }: RowProps) {
   const router = useRouter();
-  const [movies, setMovies] = useState<TMDBMovie[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const [movies, setMovies] = useState<TMDBMovie[]>(() => {
+    if (typeof window !== "undefined" && isHydrated) {
+      const cached = sessionStorage.getItem(`nuvio_row_${url}`);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.length > 0) return parsed;
+        } catch(e) {}
+      }
+    }
+    return [];
+  });
+
+  const [loading, setLoading] = useState(() => {
+    if (typeof window !== "undefined" && isHydrated) {
+      const cached = sessionStorage.getItem(`nuvio_row_${url}`);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.length > 0) return false;
+        } catch(e) {}
+      }
+    }
+    return true;
+  });
+
   const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    isHydrated = true;
+    let cancelled = false;
+    let hasCache = false;
+
+    // 1. Instantly load from session storage cache
+    const cached = sessionStorage.getItem(`nuvio_row_${url}`);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.length > 0) {
+          setMovies(parsed);
+          setLoading(false);
+          hasCache = true;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Fetch fresh in background
     tmdb.get(url).then((res) => {
-      setMovies(res.data.results || []);
+      if (cancelled) return;
+      const results = res.data.results || [];
+      if (results.length > 0) {
+        try { sessionStorage.setItem(`nuvio_row_${url}`, JSON.stringify(results)); } catch(e) {}
+      }
+      setMovies(results);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => {
+      if (!cancelled && !hasCache) setLoading(false);
+    });
+
+    return () => { cancelled = true; };
   }, [url]);
 
   const scrollLeft = () => rowRef.current?.scrollBy({ left: -600, behavior: "smooth" });

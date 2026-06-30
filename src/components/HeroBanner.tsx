@@ -5,19 +5,72 @@ import { tmdb, TMDB_IMAGE_BASE, TMDB_IMAGE_W500, TMDBMovie, TMDB_URLS, getGenreN
 import { useRouter } from "next/navigation";
 import MovieModal from "./MovieModal";
 
+let isHydrated = false;
+
 export default function HeroBanner() {
   const router = useRouter();
-  const [movies, setMovies] = useState<TMDBMovie[]>([]);
+
+  const [movies, setMovies] = useState<TMDBMovie[]>(() => {
+    if (typeof window !== "undefined" && isHydrated) {
+      const cached = sessionStorage.getItem("nuvio_hero_banner");
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.length > 0) return parsed;
+        } catch(e) {}
+      }
+    }
+    return [];
+  });
+
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
+
+  const [loading, setLoading] = useState(() => {
+    if (typeof window !== "undefined" && isHydrated) {
+      const cached = sessionStorage.getItem("nuvio_hero_banner");
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.length > 0) return false;
+        } catch(e) {}
+      }
+    }
+    return true;
+  });
+
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
 
   useEffect(() => {
+    isHydrated = true;
+    let cancelled = false;
+    let hasCache = false;
+
+    const cached = sessionStorage.getItem("nuvio_hero_banner");
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.length > 0) {
+          setMovies(parsed);
+          setLoading(false);
+          hasCache = true;
+        }
+      } catch (e) {}
+    }
+
     tmdb.get(TMDB_URLS.trending).then((res) => {
+      if (cancelled) return;
       const results: TMDBMovie[] = res.data.results || [];
-      setMovies(results.slice(0, 8));
+      const sliced = results.slice(0, 8);
+      if (sliced.length > 0) {
+        try { sessionStorage.setItem("nuvio_hero_banner", JSON.stringify(sliced)); } catch(e) {}
+      }
+      setMovies(sliced);
       setLoading(false);
+    }).catch(() => {
+      if (!cancelled && !hasCache) setLoading(false);
     });
+
+    return () => { cancelled = true; };
   }, []);
 
   // Auto-rotate hero every 8s
