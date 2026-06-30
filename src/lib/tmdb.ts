@@ -83,6 +83,63 @@ export const fetchExternalIds = async (id: number | string, type: "movie" | "tv"
   return res.data;
 };
 
+/**
+ * Resolve a Stremio catalog meta id (imdb ttXXXX, or tmdb:NNN) to a TMDBMovie so
+ * it can be opened in the existing MovieModal. Returns null if it can't resolve.
+ */
+export const resolveStremioIdToMovie = async (
+  rawId: string,
+  fallbackType?: string,
+): Promise<TMDBMovie | null> => {
+  try {
+    const id = rawId.trim();
+    // Direct TMDB id form: tmdb:12345 or movie:12345 / series:12345
+    const tmdbMatch = id.match(/(?:tmdb|movie|series):(\d+)/i);
+    if (tmdbMatch) {
+      const tmdbId = parseInt(tmdbMatch[1]);
+      const type = fallbackType === "series" || fallbackType === "tv" ? "tv" : "movie";
+      return await fetchTmdbAsMovie(tmdbId, type);
+    }
+
+    // IMDb id form: ttXXXXX → /find
+    const imdbMatch = id.match(/tt\d+/);
+    if (imdbMatch) {
+      const res = await tmdb.get(`/find/${imdbMatch[0]}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
+      const movie = res.data?.movie_results?.[0];
+      const tv = res.data?.tv_results?.[0];
+      const chosen = (fallbackType === "series" || fallbackType === "tv") ? (tv || movie) : (movie || tv);
+      if (!chosen) return null;
+      return { ...chosen, media_type: chosen === tv ? "tv" : "movie" } as TMDBMovie;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const fetchTmdbAsMovie = async (tmdbId: number, type: "movie" | "tv"): Promise<TMDBMovie | null> => {
+  try {
+    const res = await tmdb.get(`/${type}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`);
+    const d = res.data;
+    return {
+      id: d.id,
+      title: d.title,
+      name: d.name,
+      overview: d.overview,
+      backdrop_path: d.backdrop_path,
+      poster_path: d.poster_path,
+      vote_average: d.vote_average,
+      release_date: d.release_date,
+      first_air_date: d.first_air_date,
+      genre_ids: (d.genres || []).map((g: any) => g.id),
+      media_type: type,
+      original_language: d.original_language,
+    };
+  } catch {
+    return null;
+  }
+};
+
 
 export const TMDB_URLS = {
   trending: `/trending/all/week?api_key=${TMDB_API_KEY}&language=en-US`,

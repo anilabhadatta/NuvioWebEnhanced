@@ -1,30 +1,103 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { getWatchProgress, WatchProgress } from "@/lib/watchProgress";
-import { tmdb, TMDB_IMAGE_W500 } from "@/lib/tmdb";
+import { TMDB_IMAGE_W500, TMDB_API_KEY, resolveStremioIdToMovie } from "@/lib/tmdb";
+import StreamPickerModal from "./StreamPickerModal";
+import { StreamItem } from "@/lib/addonService";
 
 export default function ContinueWatchingRow({ first }: { first?: boolean }) {
-  const router = useRouter();
   const [items, setItems] = useState<WatchProgress[]>([]);
   const [enrichedItems, setEnrichedItems] = useState<any[]>([]);
+  const [picker, setPicker] = useState<WatchProgress | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const progress = getWatchProgress();
-    if (progress.length > 0) {
-      setItems(progress);
+    // 1. Get local progress
+    const local = getWatchProgress();
+    
+    // 2. Get cloud progress
+    let cloudData: any[] = [];
+    try {
+      const cloudStr = localStorage.getItem("nuvio_cloud_progress");
+      if (cloudStr) cloudData = JSON.parse(cloudStr);
+    } catch (e) {}
+
+    const cloudProgress: WatchProgress[] = cloudData.map((c: any) => ({
+      id: c.content_id,
+      type: c.content_type === "series" ? "tv" : c.content_type,
+      title: "Stream",
+      poster: "",
+      season: c.season || undefined,
+      episode: c.episode || undefined,
+      currentTime: c.position / 1000,
+      duration: c.duration / 1000,
+      updatedAt: c.last_watched
+    }));
+
+    // Merge and sort by most recently watched (default fallback)
+    const allProgress = [...local, ...cloudProgress];
+    
+    // Helper to get sort weight for an item (prefers higher season/episode)
+    const getWeight = (p: any) => {
+      if (p.season !== undefined && p.episode !== undefined) {
+        return p.season * 10000 + p.episode;
+      }
+      return p.updatedAt; // For movies, fallback to timestamp
+    };
+
+    // First pass deduplication: group by raw ID and pick the one with max weight
+    const uniqueMap = new Map<string, WatchProgress>();
+    for (const p of allProgress) {
+      const idStr = String(p.id);
+      if (!uniqueMap.has(idStr)) {
+        uniqueMap.set(idStr, p);
+      } else {
+        const existing = uniqueMap.get(idStr)!;
+        if (getWeight(p) > getWeight(existing)) {
+          uniqueMap.set(idStr, p);
+        }
+      }
+    }
+    
+    const uniqueProgress = Array.from(uniqueMap.values());
+    // Sort unique progress by updatedAt so recently watched shows remain at the front of the row
+    uniqueProgress.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    if (uniqueProgress.length > 0) {
+      setItems(uniqueProgress);
       
       // Fetch details from TMDB to get images
-      Promise.all(progress.map(async (p) => {
+      Promise.all(uniqueProgress.map(async (p) => {
         try {
-          const res = await tmdb.get(`/${p.type}/${p.id}`);
-          return { ...p, tmdbData: res.data };
+          const tmdbType = p.type === "series" ? "tv" : p.type;
+          const rawId = String(p.id).startsWith("tt") ? String(p.id) : `tmdb:${p.id}`;
+          const movie = await resolveStremioIdToMovie(rawId, tmdbType);
+          return { ...p, tmdbData: movie, tmdbId: movie?.id };
         } catch (e) {
           return { ...p, tmdbData: null };
         }
-      })).then(setEnrichedItems);
+      })).then((enriched) => {
+        // Second pass deduplication: cloud uses IMDb IDs, local uses TMDB IDs.
+        // Group by resolved TMDB ID and again pick max weight.
+        const finalMap = new Map<string, any>();
+        
+        for (const item of enriched) {
+          const resolvedId = String(item.tmdbData?.id || item.id);
+          if (!finalMap.has(resolvedId)) {
+            finalMap.set(resolvedId, item);
+          } else {
+            const existing = finalMap.get(resolvedId)!;
+            if (getWeight(item) > getWeight(existing)) {
+              finalMap.set(resolvedId, item);
+            }
+          }
+        }
+        
+        const finalItems = Array.from(finalMap.values());
+        finalItems.sort((a, b) => b.updatedAt - a.updatedAt);
+        setEnrichedItems(finalItems);
+      });
     }
   }, []);
 
@@ -33,16 +106,45 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
   const scrollLeft = () => rowRef.current?.scrollBy({ left: -600, behavior: "smooth" });
   const scrollRight = () => rowRef.current?.scrollBy({ left: 600, behavior: "smooth" });
 
-  const handlePlay = (item: any) => {
-    let route = `/player?id=${item.id}&type=${item.type}&url=`;
-    if (item.season && item.episode) {
-      route += `&s=${item.season}&e=${item.episode}`;
+  const handlePlay = async (item: WatchProgress) => {
+    if (String(item.id).startsWith("torbox_")) {
+      const parts = String(item.id).split("_");
+      if (parts.length >= 3) {
+        const torrentId = parseInt(parts[1]);
+        const fileId = parseInt(parts[2]);
+        
+        import("@/lib/torbox").then(async ({ getTorboxApiKey, requestTorboxLink }) => {
+          const key = getTorboxApiKey();
+          if (key) {
+            const link = await requestTorboxLink(key, torrentId, fileId);
+            if (link) {
+              window.location.href = `/player?id=${item.id}&type=${item.type}&url=${encodeURIComponent(link)}`;
+              return;
+            }
+          }
+          alert("Could not resolve TorBox stream. Ensure your API key is configured.");
+        });
+        return;
+      }
     }
+    setPicker(item);
+  };
+
+  const handleStreamSelected = (stream: StreamItem) => {
+    if (!picker) return;
+    const url = stream.url ? encodeURIComponent(stream.url) : "";
+    let route = `/player?id=${picker.id}&type=${picker.type}&url=${url}`;
+    if (picker.season && picker.episode) route += `&s=${picker.season}&e=${picker.episode}`;
+    if (stream.addonUrl) {
+      try { sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl); } catch { /* ignore */ }
+    }
+    setPicker(null);
     window.location.href = route;
   };
 
   return (
-    <div className="mb-8 relative group" style={{ marginTop: first ? "-6rem" : "" }}>
+    <>
+    <div className="mb-8 relative group">
       <h2 className="text-white font-semibold text-[17px] mb-3 ml-1">Continue Watching</h2>
 
       <div className="relative">
@@ -73,7 +175,9 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
             const imgSrc = data?.backdrop_path || data?.poster_path
               ? `${TMDB_IMAGE_W500}${data.backdrop_path || data.poster_path}`
               : null;
-            const title_ = data?.title || data?.name || item.title || "Unknown";
+              
+            const isTorbox = String(item.id).startsWith("torbox_");
+            const title_ = isTorbox ? "TorBox Media" : (data?.title || data?.name || item.title || "Unknown");
             const percent = item.duration > 0 ? (item.currentTime / item.duration) * 100 : 0;
 
             return (
@@ -85,6 +189,14 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
                 <div className="w-full h-full rounded-xl overflow-hidden relative">
                   {imgSrc ? (
                     <img src={imgSrc} alt={title_} className="w-full h-full object-cover" loading="lazy" />
+                  ) : isTorbox ? (
+                    <div className="w-full h-full bg-gradient-to-br from-[#0f172a] to-[#020617] flex flex-col items-center justify-center text-white border border-white/5">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-8 h-8 text-blue-500 mb-2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                      </svg>
+                      <span className="font-bold text-sm tracking-wide text-blue-100">TorBox</span>
+                      <span className="text-[10px] text-blue-400/80">Cloud Storage</span>
+                    </div>
                   ) : (
                     <div className="w-full h-full bg-[#222] flex items-center justify-center text-[#555] text-xs">
                       No Image
@@ -116,5 +228,17 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
         </div>
       </div>
     </div>
+
+    {picker && (
+      <StreamPickerModal
+        tmdbId={parseInt(String(picker.id))}
+        type={picker.type}
+        season={picker.season}
+        episode={picker.episode}
+        onClose={() => setPicker(null)}
+        onPlayStream={handleStreamSelected}
+      />
+    )}
+    </>
   );
 }

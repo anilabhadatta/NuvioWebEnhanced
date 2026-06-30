@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { TMDBMovie, fetchExternalIds } from "@/lib/tmdb";
+import { TMDBMovie, fetchExternalIds, resolveStremioIdToMovie } from "@/lib/tmdb";
 import { NuvioAddon, StreamItem, fetchUserAddons, fetchStreamsFromAddon } from "@/lib/addonService";
 
 interface StreamPickerModalProps {
@@ -19,6 +19,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedAddonFilter, setSelectedAddonFilter] = useState<string>("All");
+  const [movieData, setMovieData] = useState<TMDBMovie | null>(null);
 
   const isSeries = mediaType === "tv" || mediaType === "series" || !!season;
   
@@ -33,6 +34,13 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
 
     async function loadStreams() {
       try {
+        const type = isSeries ? "tv" : "movie";
+        
+        // Fetch metadata so we can display the title in the header
+        resolveStremioIdToMovie(`tmdb:${tmdbId}`, type).then((meta) => {
+          if (isMounted && meta) setMovieData(meta);
+        }).catch(() => {});
+
         const addons = await fetchUserAddons();
         if (!addons || addons.length === 0) {
           if (isMounted) setError("No addons installed.");
@@ -40,7 +48,6 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
         }
 
         // Fetch IMDB ID for proper addon compatibility (many addons only support ttXXXXXX)
-        const type = isSeries ? "tv" : "movie";
         let imdbId = null;
         try {
           const externalIds = await fetchExternalIds(tmdbId, type);
@@ -53,10 +60,10 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
 
         const baseId = imdbId ? imdbId : "tmdb:" + tmdbId;
         const videoId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
-        const mediaType = isSeries ? "series" : "movie";
+        const addonMediaType = isSeries ? "series" : "movie";
 
         const promises = addons.map((addon) =>
-          fetchStreamsFromAddon(addon, mediaType, videoId)
+          fetchStreamsFromAddon(addon, addonMediaType, videoId)
             .then((res) => {
               if (isMounted && res && res.length > 0) {
                 setStreams((prev) => [...prev, ...res]);
@@ -105,9 +112,11 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
         {/* Header */}
         <div className="p-5 border-b border-white/10 flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-bold text-white">Select Stream</h2>
+            <h2 className="text-xl font-bold text-white line-clamp-1">{movieData ? movieData.title || movieData.name : "Select Stream"}</h2>
             <p className="text-[#888] text-sm mt-1">
-              Stream Selection {isSeries && season && episode ? `- S${season} E${episode}` : ""}
+              {movieData 
+                ? (isSeries && season && episode ? `S${season} E${episode}` : (movieData.release_date || movieData.first_air_date || "").split("-")[0]) 
+                : "Stream Selection" + (isSeries && season && episode ? ` - S${season} E${episode}` : "")}
             </p>
           </div>
           <button

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { config } from "@/lib/config";
+import { useAuth } from "@/lib/useAuth";
+import { useProfiles } from "@/lib/useProfiles";
 
 const NAV_ITEMS = [
   {
@@ -49,6 +51,9 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { isAuthenticated, displayName } = useAuth();
+  const { profiles, activeProfile, activeProfileId, switchProfile } = useProfiles();
+  const [profileMenuOpen, setProfileMenuOpen] = React.useState(false);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -56,16 +61,66 @@ export default function Sidebar() {
     router.push("/");
   };
 
+  // Prefer the active profile's name when profiles exist; otherwise the account name.
+  const shownName = activeProfile?.name || displayName;
+  const avatarInitial = (shownName?.trim()?.[0] || "A").toUpperCase();
+  const avatarColor = activeProfile?.avatar_color_hex;
+
   return (
     <aside className="fixed left-0 top-0 h-full w-[220px] bg-[#111111] border-r border-white/5 flex flex-col z-40">
-      {/* User profile at top - matches screenshot */}
-      <div className="flex items-center gap-3 p-5 pb-4 border-b border-white/5">
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white font-bold text-sm shrink-0 cursor-pointer overflow-hidden" onClick={() => router.push("/settings")}>
-          {config.avatarPublicBaseUrl ? (
-            <img src={`${config.avatarPublicBaseUrl}/default_avatar.png`} alt="Avatar" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.innerText = 'A'; }} />
-          ) : "A"}
+      {/* User profile at top - with profile quick-switcher */}
+      <div className="relative border-b border-white/5">
+        <div className="flex items-center gap-3 p-5 pb-4">
+          <div
+            className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 cursor-pointer overflow-hidden"
+            style={{ background: avatarColor || "linear-gradient(to bottom right, #fb923c, #ec4899)" }}
+            onClick={() => router.push(isAuthenticated ? "/settings" : "/login")}
+          >
+            {avatarInitial}
+          </div>
+          <button
+            className="flex-1 flex items-center justify-between min-w-0 group"
+            onClick={() => { if (isAuthenticated && profiles.length > 0) setProfileMenuOpen((o) => !o); else router.push(isAuthenticated ? "/settings" : "/login"); }}
+          >
+            <span className="text-[15px] font-semibold text-white truncate">{shownName}</span>
+            {isAuthenticated && profiles.length > 1 && (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-4 h-4 text-[#888] transition-transform ${profileMenuOpen ? "rotate-180" : ""}`}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
+            )}
+          </button>
         </div>
-        <span className="text-[15px] font-semibold text-white">Anilabha</span>
+
+        {profileMenuOpen && profiles.length > 0 && (
+          <div className="absolute left-3 right-3 top-[68px] z-50 bg-[#1d1d1d] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
+            {profiles.map((p) => (
+              <button
+                key={p.profile_index}
+                onClick={() => { switchProfile(p.profile_index); setProfileMenuOpen(false); }}
+                className={`flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-white/5 transition-colors ${p.profile_index === activeProfileId ? "bg-white/5" : ""}`}
+              >
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0" style={{ background: p.avatar_color_hex }}>
+                  {(p.name?.trim()?.[0] || "?").toUpperCase()}
+                </div>
+                <span className="text-sm text-white truncate flex-1">{p.name || `Profile ${p.profile_index}`}</span>
+                {p.profile_index === activeProfileId && (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-green-400 shrink-0">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                )}
+              </button>
+            ))}
+            <button
+              onClick={() => { setProfileMenuOpen(false); router.push("/settings"); }}
+              className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-white/5 transition-colors border-t border-white/5 mt-1"
+            >
+              <span className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-[#888] shrink-0">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              </span>
+              <span className="text-sm text-[#aaa]">Manage profiles</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Nav items */}
@@ -91,17 +146,29 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Sign out at bottom */}
+      {/* Sign in / out at bottom */}
       <div className="p-3 border-t border-white/5">
-        <button
-          onClick={handleSignOut}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium text-[#888] hover:text-white hover:bg-white/5 w-full transition-all duration-150"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-5 h-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-          </svg>
-          Sign Out
-        </button>
+        {isAuthenticated ? (
+          <button
+            onClick={handleSignOut}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium text-[#888] hover:text-white hover:bg-white/5 w-full transition-all duration-150"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+            </svg>
+            Sign Out
+          </button>
+        ) : (
+          <Link
+            href="/login"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium text-[#888] hover:text-white hover:bg-white/5 w-full transition-all duration-150"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+            </svg>
+            Sign In
+          </Link>
+        )}
       </div>
     </aside>
   );

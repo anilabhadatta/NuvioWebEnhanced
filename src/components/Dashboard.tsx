@@ -7,6 +7,7 @@ import Sidebar from "./Sidebar";
 import HeroBanner from "./HeroBanner";
 import ContentRow from "./ContentRow";
 import ContinueWatchingRow from "./ContinueWatchingRow";
+import CollectionRows from "./CollectionRows";
 import { TMDB_URLS, TMDBMovie } from "@/lib/tmdb";
 import MovieModal from "./MovieModal";
 import { syncWatchProgressFromCloud } from "@/lib/watchProgress";
@@ -58,6 +59,7 @@ export default function Dashboard() {
         {/* Content rows - exactly like Netflix clone structure */}
         <div className="px-6 pb-12 -mt-2">
           <ContinueWatchingRow first />
+          <CollectionRows onSelectMovie={handleSelectMovie} />
           <ContentRow title="Trending Now" url={TMDB_URLS.trending} onSelectMovie={handleSelectMovie} />
           <ContentRow title="Trending Movies" url={TMDB_URLS.trendingMovies} onSelectMovie={handleSelectMovie} />
           <ContentRow title="Trending Series" url={TMDB_URLS.trendingSeries} onSelectMovie={handleSelectMovie} />

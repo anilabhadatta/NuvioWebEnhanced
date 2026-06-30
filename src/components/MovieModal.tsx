@@ -5,6 +5,7 @@ import { TMDB_IMAGE_BASE, TMDB_IMAGE_W500, TMDBMovie, getGenreNames, fetchTvDeta
 import StreamPickerModal from "./StreamPickerModal";
 import { StreamItem } from "@/lib/addonService";
 import { config } from "@/lib/config";
+import { fetchExternalRatings, ExternalRating } from "@/lib/mdblist";
 
 interface MovieModalProps {
   movie: TMDBMovie;
@@ -21,6 +22,7 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
   
   const [imdbRating, setImdbRating] = useState<string | null>(null);
   const [parentalGuide, setParentalGuide] = useState<string | null>(null);
+  const [externalRatings, setExternalRatings] = useState<ExternalRating[]>([]);
   
   const [showStreamPicker, setShowStreamPicker] = useState(false);
   const [targetSeason, setTargetSeason] = useState<number | undefined>();
@@ -60,6 +62,11 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
     fetchExternalIds(movie.id, type).then(externalIds => {
       const imdbId = externalIds?.imdb_id;
       if (!imdbId) return;
+
+      // MDBList external ratings (IMDb, TMDB, Rotten Tomatoes, Metacritic).
+      fetchExternalRatings(imdbId, type === "tv" ? "tv" : "movie")
+        .then((ratings) => { if (ratings.length > 0) setExternalRatings(ratings); })
+        .catch(() => {});
 
       if (config.imdbRatingsApiBaseUrl) {
         fetch(`${config.imdbRatingsApiBaseUrl}rating?id=${imdbId}`)
@@ -220,6 +227,17 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
                 <span key={g} className="text-xs text-white bg-white/10 px-2.5 py-1 rounded-full border border-white/5">
                   {g}
                 </span>
+              ))}
+            </div>
+          )}
+
+          {externalRatings.length > 0 && (
+            <div className="flex flex-wrap items-center gap-4 mb-5">
+              {externalRatings.map((r) => (
+                <div key={r.source} className="flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-wider text-[#888] font-bold">{r.source}</span>
+                  <span className="text-white font-semibold text-sm">{r.value}</span>
+                </div>
               ))}
             </div>
           )}

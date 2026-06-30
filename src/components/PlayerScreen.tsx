@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { fetchExternalIds, fetchNextEpisode, fetchTvDetails, fetchTvSeason, NextEpisodeMeta } from "@/lib/tmdb";
 import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
 import { saveWatchProgress } from "@/lib/watchProgress";
+import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
 import StreamPickerModal from "./StreamPickerModal";
 
@@ -61,30 +62,30 @@ function parseSubtitleText(raw: string): SubtitleCue[] {
 
 // movi-player's built-in color palette (matches MoviElement.SUBTITLE_COLOR_PALETTE)
 const SUBTITLE_COLOR_SWATCHES = [
-  { label: "White",   value: "#FFFFFF" },
-  { label: "Yellow",  value: "#FFEB3B" },
-  { label: "Green",   value: "#69F0AE" },
-  { label: "Cyan",    value: "#80DEEA" },
-  { label: "Blue",    value: "#82B1FF" },
+  { label: "White", value: "#FFFFFF" },
+  { label: "Yellow", value: "#FFEB3B" },
+  { label: "Green", value: "#69F0AE" },
+  { label: "Cyan", value: "#80DEEA" },
+  { label: "Blue", value: "#82B1FF" },
   { label: "Magenta", value: "#FF80AB" },
-  { label: "Red",     value: "#FF5252" },
-  { label: "Black",   value: "#000000" },
+  { label: "Red", value: "#FF5252" },
+  { label: "Black", value: "#000000" },
 ];
 
 const SUBTITLE_EDGE_OPTIONS = [
-  { label: "None",    value: "none" },
-  { label: "Shadow",  value: "shadow" },
+  { label: "None", value: "none" },
+  { label: "Shadow", value: "shadow" },
   { label: "Outline", value: "outline" },
-  { label: "Raised",  value: "raised" },
+  { label: "Raised", value: "raised" },
 ] as const;
 
 const SUBTITLE_BG_COLOR_SWATCHES = [
   { label: "Transparent", value: "transparent" },
-  { label: "Black",   value: "#000000" },
-  { label: "Dark",    value: "#1a1a2e" },
-  { label: "Navy",    value: "#0d1b2a" },
-  { label: "Maroon",  value: "#4a0000" },
-  { label: "White",   value: "#FFFFFF" },
+  { label: "Black", value: "#000000" },
+  { label: "Dark", value: "#1a1a2e" },
+  { label: "Navy", value: "#0d1b2a" },
+  { label: "Maroon", value: "#4a0000" },
+  { label: "White", value: "#FFFFFF" },
 ];
 
 type SubtitleEdge = "none" | "shadow" | "outline" | "raised";
@@ -108,7 +109,7 @@ const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
 // Hex color string to "r, g, b" format for --movi-sub-bg-rgb
 function hexToRgbStr(hex: string): string {
   let c = hex.replace("#", "");
-  if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+  if (c.length === 3) c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
   const r = parseInt(c.slice(0, 2), 16);
   const g = parseInt(c.slice(2, 4), 16);
   const b = parseInt(c.slice(4, 6), 16);
@@ -124,9 +125,9 @@ function hexToRgbStr(hex: string): string {
 function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
   if (!player) return;
   player.setAttribute("subtitlecolor", style.color);
-  player.setAttribute("subtitlesize",  String(style.sizePct));
-  player.setAttribute("subtitlebg",    String(style.bgPct));
-  player.setAttribute("subtitleedge",  style.edge);
+  player.setAttribute("subtitlesize", String(style.sizePct));
+  player.setAttribute("subtitlebg", String(style.bgPct));
+  player.setAttribute("subtitleedge", style.edge);
   // Defer so we run AFTER movi-player's synchronous applySubtitleSettings() resets the var
   setTimeout(() => {
     if (!player.isConnected) return;
@@ -258,7 +259,7 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
           if (typeof player.player.unload === "function") {
             player.player.unload(); // Frees VideoFrames
           }
-        } catch (_) {}
+        } catch (_) { }
       }
       player.setAttribute("src", resolvedSrc);
       player.style.display = "block";
@@ -313,11 +314,11 @@ export default function PlayerScreen() {
       if (raw) {
         const p = JSON.parse(raw);
         return {
-          color:   typeof p.color   === "string" ? p.color : DEFAULT_SUBTITLE_STYLE.color,
+          color: typeof p.color === "string" ? p.color : DEFAULT_SUBTITLE_STYLE.color,
           bgColor: bgColorSaved,
           sizePct: typeof p.sizeMult === "number" ? Math.round(p.sizeMult * 100) : DEFAULT_SUBTITLE_STYLE.sizePct,
-          bgPct:   typeof p.bgAlpha  === "number" ? Math.round(p.bgAlpha  * 100) : DEFAULT_SUBTITLE_STYLE.bgPct,
-          edge:    (["none","shadow","outline","raised"] as SubtitleEdge[]).includes(p.edge) ? p.edge : DEFAULT_SUBTITLE_STYLE.edge,
+          bgPct: typeof p.bgAlpha === "number" ? Math.round(p.bgAlpha * 100) : DEFAULT_SUBTITLE_STYLE.bgPct,
+          edge: (["none", "shadow", "outline", "raised"] as SubtitleEdge[]).includes(p.edge) ? p.edge : DEFAULT_SUBTITLE_STYLE.edge,
         };
       }
       return { ...DEFAULT_SUBTITLE_STYLE, bgColor: bgColorSaved };
@@ -557,7 +558,7 @@ export default function PlayerScreen() {
   // Synchronous lock held from the moment playNextEpisode starts until the
   // new episode's metadata loads. This strictly prevents chain-firing.
   const autoNextLockRef = useRef(false);
-  
+
   useEffect(() => {
     if (!movieId) { setNextEpisode(null); return; }
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
@@ -566,10 +567,10 @@ export default function PlayerScreen() {
     const fetchId = `${movieId}:${season}:${episode}`;
     if (lastFetchedNextId.current === fetchId) return;
     lastFetchedNextId.current = fetchId;
-    
+
     // Release the lock so this freshly loaded episode can fire its auto-next
     autoNextLockRef.current = false;
-    
+
     setShowNextEpisodeCard(false);
     setNextSearching(false);
     setNextCountdown(null);
@@ -764,6 +765,43 @@ export default function PlayerScreen() {
     return () => clearInterval(interval);
   }, [movieId, mediaType, season, episode]);
 
+  // Trakt scrobbling — start when playback begins, stop on pause/unmount. Mirrors
+  // NuvioMobile's scrobble flow. Uses the TMDB id (movieId) which Trakt accepts.
+  const traktStartedRef = useRef(false);
+  useEffect(() => {
+    if (!movieId || !mediaType) return;
+    if (!isTraktConnected()) return;
+
+    const buildPayload = (progress: number) => {
+      const tmdbId = parseInt(movieId);
+      if (!Number.isFinite(tmdbId)) return null;
+      const isSeries = mediaType === "tv" || mediaType === "series" || !!season;
+      return {
+        type: isSeries ? ("episode" as const) : ("movie" as const),
+        ids: { tmdb: tmdbId },
+        season: season ? parseInt(season) : undefined,
+        episode: episode ? parseInt(episode) : undefined,
+        progress,
+      };
+    };
+
+    if (isPlaying && !traktStartedRef.current) {
+      const pct = durationRef.current > 0 ? (currentTimeRef.current / durationRef.current) * 100 : 0;
+      const payload = buildPayload(pct);
+      if (payload) {
+        traktStartedRef.current = true;
+        traktScrobble("start", payload);
+      }
+    } else if (!isPlaying && traktStartedRef.current) {
+      const pct = durationRef.current > 0 ? (currentTimeRef.current / durationRef.current) * 100 : 0;
+      const payload = buildPayload(pct);
+      if (payload) {
+        traktStartedRef.current = false;
+        traktScrobble("pause", payload);
+      }
+    }
+  }, [isPlaying, movieId, mediaType, season, episode]);
+
   // Skip segment — derived value, no setState needed
   const activeSkip = skipIntervals.find(i => currentTime >= i.startTime && currentTime <= i.endTime) || null;
 
@@ -792,7 +830,7 @@ export default function PlayerScreen() {
     const remaining = duration - currentTime;
     const pctPlayed = currentTime / duration;
     const shouldShow = remaining <= 30 || pctPlayed >= 0.95;
-    
+
     if (shouldShow && !showNextEpisodeCard) {
       setShowNextEpisodeCard(true);
       if (autoNextEnabled && nextEpisode.hasAired) {
@@ -813,7 +851,7 @@ export default function PlayerScreen() {
       if (awaitingFreshTimeRef.current) return; // ignore until the new stream is live
       if (!nextEpisode) return;
       if (nextSearching || nextCountdown != null) return;
-      
+
       setShowNextEpisodeCard(true);
       if (autoNextEnabled && nextEpisode.hasAired) {
         setTimeout(() => { playNextRef.current?.(); }, 300);
@@ -1017,7 +1055,7 @@ export default function PlayerScreen() {
     if (season && episode && parseInt(season) === targetSeason && parseInt(episode) === targetEpisode) return;
 
     setShowEpisodesPanel(false);
-    
+
     // Instead of resolving immediately or changing the URL params (which breaks highlights
     // if the user backs out), we set target season/episode in state and open the stream picker.
     setStreamPickerSeason(targetSeason);
@@ -1224,7 +1262,7 @@ export default function PlayerScreen() {
       });
       // Deactivate external subtitle lang on the element
       if (typeof moviEl.selectSubtitleLang === 'function') {
-        moviEl.selectSubtitleLang(null).catch(() => {});
+        moviEl.selectSubtitleLang(null).catch(() => { });
       }
 
       const numId = id === -1 ? null : Number(id);
@@ -1260,7 +1298,7 @@ export default function PlayerScreen() {
       // Disable any active built-in subtitle first
       const moviEl = videoRef.current;
       if (moviEl?.player && typeof moviEl.player.selectSubtitleTrack === 'function') {
-        try { moviEl.player.selectSubtitleTrack(null); } catch {}
+        try { moviEl.player.selectSubtitleTrack(null); } catch { }
       }
       const res = await fetch(url);
       const text = await res.text();
@@ -1270,7 +1308,7 @@ export default function PlayerScreen() {
       }
       // Revoke previous blob if any
       if (lastAddonSubBlobUrl.current) {
-        try { URL.revokeObjectURL(lastAddonSubBlobUrl.current); } catch {}
+        try { URL.revokeObjectURL(lastAddonSubBlobUrl.current); } catch { }
         lastAddonSubBlobUrl.current = null;
       }
       setSelectedSub(-1);       // Reset built-in selection to "Off"
@@ -1321,8 +1359,8 @@ export default function PlayerScreen() {
               color: subtitleStyle.color,
               fontSize: `${subtitleStyle.sizePct}%`,
               textShadow: subtitleStyle.edge === 'shadow' ? '1px 1px 4px #000, -1px -1px 4px #000' :
-                          subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
-                          subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none',
+                subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
+                  subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none',
               padding: subtitleStyle.bgPct > 0 ? '4px 10px' : '0',
               borderRadius: 4,
               fontFamily: 'Arial, sans-serif',
@@ -1509,11 +1547,10 @@ export default function PlayerScreen() {
                                 key={value}
                                 title={label}
                                 onClick={() => updateSubtitleStyle({ ...subtitleStyle, color: value })}
-                                className={`w-6 h-6 rounded-full border-2 transition-all ${
-                                  subtitleStyle.color === value
+                                className={`w-6 h-6 rounded-full border-2 transition-all ${subtitleStyle.color === value
                                     ? "border-white scale-110 shadow-lg"
                                     : "border-transparent opacity-75 hover:opacity-100 hover:scale-105"
-                                }`}
+                                  }`}
                                 style={{ backgroundColor: value }}
                               />
                             ))}
@@ -1549,11 +1586,10 @@ export default function PlayerScreen() {
                                   // selecting an edge style clears background
                                   ...(value !== "none" ? { bgColor: "transparent", bgPct: 0 } : {}),
                                 })}
-                                className={`py-1.5 px-2 rounded text-xs font-bold transition-colors ${
-                                  subtitleStyle.edge === value
+                                className={`py-1.5 px-2 rounded text-xs font-bold transition-colors ${subtitleStyle.edge === value
                                     ? "bg-white text-black"
                                     : "bg-white/10 text-white hover:bg-white/20"
-                                }`}
+                                  }`}
                               >
                                 {label}
                               </button>
@@ -1586,11 +1622,10 @@ export default function PlayerScreen() {
                                     });
                                   }
                                 }}
-                                className={`w-6 h-6 rounded-full border-2 transition-all ${
-                                  subtitleStyle.bgColor === value || (value === "transparent" && subtitleStyle.bgPct === 0)
+                                className={`w-6 h-6 rounded-full border-2 transition-all ${subtitleStyle.bgColor === value || (value === "transparent" && subtitleStyle.bgPct === 0)
                                     ? "border-white scale-110 shadow-lg"
                                     : "border-white/30 opacity-75 hover:opacity-100 hover:scale-105"
-                                }`}
+                                  }`}
                                 style={{
                                   backgroundColor: value === "transparent" ? "transparent" : value,
                                   backgroundImage: value === "transparent" ? "linear-gradient(135deg, #555 25%, transparent 25%, transparent 75%, #555 75%), linear-gradient(135deg, #555 25%, transparent 25%, transparent 75%, #555 75%)" : undefined,

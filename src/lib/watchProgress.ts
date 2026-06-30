@@ -61,24 +61,26 @@ export async function saveWatchProgress(progress: WatchProgress) {
     };
 
     if (percent >= 0.95) {
-      // Mark as fully watched
+      // Mark as fully watched. Matches NuvioMobile's SupabaseWatchedSyncAdapter
+      // contract exactly: RPC param is `p_items` (NOT p_entries) and each item is
+      // { content_id, content_type, title, season, episode, watched_at }.
       await supabase.rpc("sync_delete_watch_progress", {
         p_profile_id: profileId,
         p_keys: [progressKey]
       });
       await supabase.rpc("sync_push_watched_items", {
         p_profile_id: profileId,
-        p_entries: [{
+        p_items: [{
            content_id: String(progress.id),
            content_type: progress.type,
-           video_id: String(progress.id),
-           season: progress.season || null,
-           episode: progress.episode || null,
+           title: progress.title || "",
+           season: progress.season ?? null,
+           episode: progress.episode ?? null,
            watched_at: Date.now()
         }]
       });
     } else {
-      // Push progress
+      // Push in-progress entry. sync_push_watch_progress uses `p_entries`.
       await supabase.rpc("sync_push_watch_progress", {
         p_profile_id: profileId,
         p_entries: [entry]

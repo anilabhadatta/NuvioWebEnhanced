@@ -1,12 +1,14 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function AuthScreen() {
   const router = useRouter();
-  const [isSignUp, setIsSignUp] = useState(false);
+  const searchParams = useSearchParams();
+  const nextPath = searchParams.get("next") || "/dashboard";
+  const [isSignUp, setIsSignUp] = useState(searchParams.get("mode") === "signup");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -30,7 +32,9 @@ export default function AuthScreen() {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
         if (err) throw err;
       }
-      router.push("/dashboard");
+      // Clear any guest marker now that the user has a real account.
+      try { localStorage.removeItem("nuvio_anon"); } catch { /* ignore */ }
+      router.push(nextPath);
     } catch (err: any) {
       setError(err.message || "Authentication failed.");
     } finally {
