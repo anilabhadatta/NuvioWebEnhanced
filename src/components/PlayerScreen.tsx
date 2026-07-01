@@ -920,11 +920,20 @@ export default function PlayerScreen() {
         }
       }
     };
+    const onError = (e: any) => {
+      const errObj = v.error || (v.video && v.video.error);
+      const detail = e.detail || {};
+      const errMsg = `[Player Error Event] Code: ${errObj?.code || 'unknown'}, Msg: ${errObj?.message || 'none'}, Detail: ${JSON.stringify(detail)}`;
+      console.error(errMsg);
+    };
+
     v.addEventListener('statechange', onStateChange);
     v.addEventListener('canplay', onCanPlay);
+    v.addEventListener('error', onError);
     return () => {
       v.removeEventListener('statechange', onStateChange);
       v.removeEventListener('canplay', onCanPlay);
+      v.removeEventListener('error', onError);
     };
   }, [resolvedSrc]);
 

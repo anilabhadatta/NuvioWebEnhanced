@@ -61,23 +61,45 @@ if (typeof window === "undefined") {
   (async () => {
     if (!navigator.serviceWorker) return;
 
-    // Permanently uninstall the Service Worker polyfill.
-    // WebKit (iOS Safari / Brave iOS) crashes when a Service Worker intercepts native MP4 video streams.
-    // Since Shaka Player doesn't strictly need SharedArrayBuffer, we can rely entirely on next.config.ts
-    // for Chrome/Android isolation, and let iOS degrade gracefully to native playback without SW interference.
+    // Detect iOS/iPadOS (all browsers use WebKit on iOS and need the SW)
+    const isIOS =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(navigator.userAgent));
+
+    // Detect desktop Safari (macOS)
+    const isDesktopSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    const needsSW = isIOS || isDesktopSafari;
+
+    if (!needsSW) {
+      // Clean up the service worker if it was registered on non-WebKit desktop/Android browsers (Chrome, Firefox, etc.)
+      // since they natively support COEP: credentialless from next.config.ts and don't need the SW.
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.unregister();
+        }
+      } catch (e) {}
+      return;
+    }
+
+    // On iOS/Safari, if already isolated, skip registration
+    if (window.crossOriginIsolated) return;
+    if (!window.isSecureContext) return;
+
     try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      let unregisteredAny = false;
-      for (const reg of registrations) {
-        await reg.unregister();
-        unregisteredAny = true;
-      }
-      if (unregisteredAny && navigator.serviceWorker.controller) {
-        console.log("[coi-sw] Unregistered legacy service worker. Reloading to clear isolation state.");
+      const scriptSrc = document.currentScript ? document.currentScript.src : "/coi-serviceworker.js";
+      const reg = await navigator.serviceWorker.register(
+        scriptSrc,
+        { scope: "/" }
+      );
+
+      // Force reload once when service worker becomes active to apply COOP/COEP headers to the document
+      if (reg.active && !navigator.serviceWorker.controller) {
         window.location.reload();
       }
-    } catch (e) {
-      console.warn("[coi-sw] cleanup failed:", e);
+    } catch (err) {
+      console.warn("[coi-sw] registration failed:", err);
     }
   })();
 }
