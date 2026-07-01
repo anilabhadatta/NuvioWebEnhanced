@@ -284,12 +284,24 @@ export default function PlayerScreen() {
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [userPaused, setUserPaused] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => {
+    if (typeof navigator !== 'undefined' && navigator.userActivation) {
+      return !navigator.userActivation.hasBeenActive;
+    }
+    return false;
+  });
+  const [mutedByAutoplay, setMutedByAutoplay] = useState(() => {
+    if (typeof navigator !== 'undefined' && navigator.userActivation) {
+      return !navigator.userActivation.hasBeenActive;
+    }
+    return false;
+  });
+
   const [isBuffering, setIsBuffering] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -363,18 +375,9 @@ export default function PlayerScreen() {
     setIsDraggingProgress(false);
   };
 
-  // Click/Touch middle screen handler
-  const handleMiddleScreenClick = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Touch event: toggle control overlay visibility (iPad)
-    if (e.pointerType === "touch") {
-      setShowControls((prev) => !prev);
-      resetControlsTimeout();
-    } else {
-      // Mouse click: toggle play/pause (Desktop)
-      togglePlay();
-      resetControlsTimeout();
-    }
-  };
+  const lastTapRef = useRef(0);
+
+
 
   // Capture all console errors and Shaka Player errors to the screen for iPad debugging
   useEffect(() => {
@@ -742,7 +745,10 @@ export default function PlayerScreen() {
       // transition causes audio jitter. Volume is synced only on explicit user actions
       // (togglePlay, handleVolumeChange, keyboard shortcuts).
     }
-    else if (state === 'paused') { setIsPlaying(false); }
+    else if (state === 'paused') {
+      setIsPlaying(false);
+      setIsBuffering(false);
+    }
     else if (state === 'buffering' || state === 'seeking' || state === 'loading') { setIsBuffering(true); }
     else if (state === 'ready') { setIsBuffering(false); setPlayerError(null); }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
@@ -974,24 +980,40 @@ export default function PlayerScreen() {
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const onStateChange = (e: any) => {
-      if (e.detail === 'ready' && !userPausedRef.current) {
+
+    let playTimeout: any = null;
+    let autoplayTriggered = false;
+
+    const triggerPlay = () => {
+      if (autoplayTriggered || userPausedRef.current) return;
+      autoplayTriggered = true;
+
+      clearTimeout(playTimeout);
+      playTimeout = setTimeout(() => {
+        if (userPausedRef.current) return;
         const p = typeof v.play === 'function' ? v.play() : null;
         if (p && typeof p.catch === 'function') {
           p.catch((err: any) => {
-            if (err?.name === 'NotAllowedError') setUserPaused(true);
+            try {
+              if (typeof v.pause === 'function') v.pause();
+              v.currentTime = 0;
+            } catch (_) {}
+            setCurrentTime(0);
+            setUserPaused(true);
+            autoplayTriggered = false; // Allow retrying on interaction
           });
         }
+      }, 800); // 800ms delay to let the decoder pipeline warm up fully before play
+    };
+
+    const onStateChange = (e: any) => {
+      if (e.detail === 'ready' && !userPausedRef.current) {
+        triggerPlay();
       }
     };
     const onCanPlay = () => {
-      if (!userPausedRef.current && typeof v.play === 'function') {
-        const p = v.play();
-        if (p && typeof p.catch === 'function') {
-          p.catch((err: any) => {
-            if (err?.name === 'NotAllowedError') setUserPaused(true);
-          });
-        }
+      if (!userPausedRef.current) {
+        triggerPlay();
       }
     };
     const onError = (e: any) => {
@@ -1035,6 +1057,7 @@ EventDump: ${JSON.stringify(collected)}`;
     v.addEventListener('canplay', onCanPlay);
     v.addEventListener('error', onError);
     return () => {
+      clearTimeout(playTimeout);
       v.removeEventListener('statechange', onStateChange);
       v.removeEventListener('canplay', onCanPlay);
       v.removeEventListener('error', onError);
@@ -1047,6 +1070,16 @@ EventDump: ${JSON.stringify(collected)}`;
     if (!v) return;
     try { v.playbackRate = playbackRate; } catch (_) { /* ignore */ }
   }, [playbackRate, resolvedSrc]);
+
+  // Synchronize volume and muted state to the player on mount/src changes
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      if (typeof v.volume !== 'undefined') v.volume = volume;
+      if (typeof v.muted !== 'undefined') v.muted = isMuted;
+    } catch (_) {}
+  }, [volume, isMuted, resolvedSrc]);
 
   // Clear stale state IMMEDIATELY when the requested stream URL changes.
   // This prevents the threshold effect from accidentally chain-firing if the
@@ -1104,6 +1137,43 @@ EventDump: ${JSON.stringify(collected)}`;
     }
   };
 
+  const handleUnmute = useCallback(() => {
+    setMutedByAutoplay(false);
+    setIsMuted(false);
+    const video = videoRef.current;
+    if (video && typeof video.muted !== "undefined") video.muted = false;
+    resetControlsTimeout();
+  }, [resetControlsTimeout]);
+
+  // Click/Touch middle screen handler
+  const handleMiddleScreenClick = (e: React.PointerEvent<HTMLDivElement>) => {
+    // If the video is muted due to autoplay block, unmute it on click instead of pausing/toggling controls
+    if (mutedByAutoplay) {
+      handleUnmute();
+      return;
+    }
+
+    // Touch event: toggle control overlay visibility (iPad)
+    if (e.pointerType === "touch") {
+      const now = Date.now();
+      const DOUBLE_TAP_DELAY = 300;
+      const isDoubleTap = now - lastTapRef.current < DOUBLE_TAP_DELAY;
+      lastTapRef.current = now;
+
+      if (isDoubleTap) {
+        togglePlay();
+        resetControlsTimeout();
+      } else {
+        setShowControls((prev) => !prev);
+        resetControlsTimeout();
+      }
+    } else {
+      // Mouse click: toggle play/pause (Desktop)
+      togglePlay();
+      resetControlsTimeout();
+    }
+  };
+
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     const video = videoRef.current;
     if (!video || !duration) return;
@@ -1116,6 +1186,7 @@ EventDump: ${JSON.stringify(collected)}`;
     const val = parseFloat(e.target.value);
     setVolume(val);
     setIsMuted(val === 0);
+    setMutedByAutoplay(false);
     const video = videoRef.current;
     if (video && typeof video.volume !== 'undefined') video.volume = val;
     if (video && typeof video.muted !== 'undefined') video.muted = (val === 0);
@@ -1209,7 +1280,7 @@ EventDump: ${JSON.stringify(collected)}`;
   const toggleFullscreen = useCallback(() => {
     try {
       const player = videoRef.current; // This is <movi-player>
-      const nativeVideo = player?.video || player?.querySelector('video');
+      const nativeVideo = player?.video || player?.shadowRoot?.querySelector('video') || player?.querySelector('video');
 
       // Detect iOS/iPadOS
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -1268,6 +1339,7 @@ EventDump: ${JSON.stringify(collected)}`;
           e.preventDefault();
           const next = !isMuted;
           setIsMuted(next);
+          setMutedByAutoplay(false);
           if (typeof video.muted !== "undefined") video.muted = next;
           resetControlsTimeout();
           break;
@@ -1293,6 +1365,7 @@ EventDump: ${JSON.stringify(collected)}`;
           const nv = Math.min(1, volume + 0.05);
           setVolume(nv);
           setIsMuted(nv === 0);
+          setMutedByAutoplay(false);
           if (typeof video.volume !== "undefined") video.volume = nv;
           if (typeof video.muted !== "undefined") video.muted = (nv === 0);
           resetControlsTimeout();
@@ -1303,6 +1376,7 @@ EventDump: ${JSON.stringify(collected)}`;
           const nv = Math.max(0, volume - 0.05);
           setVolume(nv);
           setIsMuted(nv === 0);
+          setMutedByAutoplay(false);
           if (typeof video.volume !== "undefined") video.volume = nv;
           if (typeof video.muted !== "undefined") video.muted = (nv === 0);
           resetControlsTimeout();
@@ -1553,6 +1627,19 @@ EventDump: ${JSON.stringify(collected)}`;
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
           <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
         </div>
+      )}
+
+      {mutedByAutoplay && !isBuffering && resolvedSrc && (
+        <button
+          onClick={handleUnmute}
+          className="absolute top-24 left-1/2 -translate-x-1/2 bg-black/80 hover:bg-black/95 border border-white/20 px-5 py-2.5 rounded-full text-white text-sm font-semibold flex items-center gap-2 z-50 transition-all shadow-lg backdrop-blur-md animate-[bounce_1.5s_infinite]"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+          </svg>
+          Tap to Unmute
+        </button>
       )}
 
       {playerError && (
