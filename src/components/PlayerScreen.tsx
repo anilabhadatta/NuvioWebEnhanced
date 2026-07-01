@@ -280,6 +280,7 @@ export default function PlayerScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const videoRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1115,10 +1116,20 @@ EventDump: ${JSON.stringify(collected)}`;
   }, [showControls, openMenu]);
 
   // Track fullscreen state changes so the toggle button reflects the truth.
+  // We must listen to both the standard event and the webkit-prefixed event
+  // because Safari/iPadOS only fires webkitfullscreenchange.
   useEffect(() => {
-    const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    const onFs = () =>
+      setIsFullscreen(
+        Boolean(document.fullscreenElement) ||
+        Boolean((document as any).webkitFullscreenElement)
+      );
     document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    document.addEventListener("webkitfullscreenchange", onFs);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFs);
+      document.removeEventListener("webkitfullscreenchange", onFs);
+    };
   }, []);
 
   // Persist auto-next-episode preference.
@@ -1290,33 +1301,56 @@ EventDump: ${JSON.stringify(collected)}`;
     playNextRef.current = () => { void playNextEpisode(); };
   }, [playNextEpisode]);
 
-  // Fullscreen toggle — works on desktop (standard API) and iPadOS Safari (webkit prefix).
-  // On iOS/iPadOS the Fullscreen API is not available on arbitrary elements; we must use
-  // webkitRequestFullscreen on the document root element, which Safari does support.
+  // Fullscreen toggle — comprehensive cross-browser implementation for desktop,
+  // iPadOS Safari, and Brave/Chrome on iPad.
+  //
+  // Strategy:
+  //   1. Standard Fullscreen API  — Chrome/Edge/Firefox desktop & some iPad browsers
+  //   2. webkit-prefixed API on the container element — Safari/Chrome iPadOS
+  //   3. webkitEnterFullscreen on the <video> element directly — last resort for
+  //      older WebKit builds. This is the ONLY element webkitEnterFullscreen works
+  //      on; calling it on documentElement throws in Brave (the bug in the screenshot).
   const toggleFullscreen = useCallback(() => {
     try {
       const isInFullscreen =
-        !!document.fullscreenElement || !!(document as any).webkitFullscreenElement;
+        !!document.fullscreenElement ||
+        !!(document as any).webkitFullscreenElement;
 
       if (isInFullscreen) {
-        // Exit fullscreen
+        // ── Exit fullscreen ────────────────────────────────────────────────
         if (typeof document.exitFullscreen === 'function') {
-          document.exitFullscreen();
+          document.exitFullscreen().catch(() => {});
         } else if (typeof (document as any).webkitExitFullscreen === 'function') {
           (document as any).webkitExitFullscreen();
+        } else if (typeof (document as any).webkitCancelFullScreen === 'function') {
+          (document as any).webkitCancelFullScreen();
         }
       } else {
-        // Enter fullscreen — try the outermost container, fall back to documentElement
-        const target: any = document.documentElement;
-        if (typeof target.requestFullscreen === 'function') {
-          target.requestFullscreen();
-        } else if (typeof target.webkitRequestFullscreen === 'function') {
-          // iPadOS Safari
-          target.webkitRequestFullscreen();
+        // ── Enter fullscreen ───────────────────────────────────────────────
+        // Prefer our container element; fall back to documentElement; then video.
+        const el: any = containerRef.current ?? document.documentElement;
+
+        if (typeof el.requestFullscreen === 'function') {
+          // Standard API (Chrome, Firefox, Edge, Brave)
+          el.requestFullscreen({ navigationUI: 'hide' }).catch(() => {
+            // Brave sometimes rejects on first gesture — silently ignore
+          });
+        } else if (typeof el.webkitRequestFullscreen === 'function') {
+          // WebKit-prefixed (Safari on macOS/iPadOS)
+          el.webkitRequestFullscreen();
+        } else {
+          // Absolute last resort: use webkitEnterFullscreen on the raw <video>
+          // element (works in some older WebKit). Only valid on HTMLVideoElement.
+          const innerVideo = videoRef.current?.shadowRoot?.querySelector('video')
+            ?? videoRef.current;
+          if (innerVideo && typeof innerVideo.webkitEnterFullscreen === 'function') {
+            innerVideo.webkitEnterFullscreen();
+          }
         }
       }
     } catch (e) {
-      console.error("Fullscreen toggle failed", e);
+      // Swallow silently — errors here are almost always permission/gesture
+      // timing issues that resolve on the next user interaction.
     }
   }, []);
 
@@ -1572,10 +1606,18 @@ EventDump: ${JSON.stringify(collected)}`;
 
   return (
     <div
-      className="relative w-full h-screen bg-black flex items-center justify-center overflow-hidden"
+      ref={containerRef}
+      className="relative w-full bg-black flex items-center justify-center overflow-hidden"
       onMouseMove={resetControlsTimeout}
       onMouseLeave={() => isPlaying && setShowControls(false)}
-      style={{ cursor: showControls ? "default" : "none" }}
+      style={{
+        cursor: showControls ? "default" : "none",
+        // Use 100dvh (dynamic viewport height) so the player always fills the
+        // full visual viewport on iOS/iPadOS Safari and Chrome, where 100vh
+        // does NOT account for the browser chrome (address bar, home indicator).
+        // This prevents the bottom playback controls from being clipped.
+        height: '100dvh',
+      }}
     >
       <MoviPlayerWrapper
         key="movi-wrapper"
