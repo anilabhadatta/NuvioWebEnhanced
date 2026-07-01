@@ -25,25 +25,27 @@ if (typeof window === "undefined") {
       return;
     }
 
+    // 2. Bypass all cross-origin requests (like TMDB, jsdelivr, Torbox).
+    // WebKit/Safari crashes or throws 405 errors when a Service Worker attempts to reconstruct
+    // cross-origin responses. Since we use crossOrigin="anonymous" on images/scripts, they
+    // pass COEP requirements natively without Service Worker header injection.
+    if (url.origin !== self.location.origin) {
+      return;
+    }
+
     e.respondWith(
       fetch(req)
         .then((res) => {
-          // 2. If the response is opaque (status 0), we cannot modify its headers.
-          // Return it directly to prevent breaking cross-origin images (like TMDB).
+          // 3. If the response is opaque (status 0), we cannot modify its headers.
           if (res.status === 0 || res.type === "opaque") {
             return res;
           }
 
           const headers = new Headers(res.headers);
 
-          if (url.origin === self.location.origin) {
-            // Same-origin resources need COOP/COEP to enable isolation
-            headers.set("Cross-Origin-Opener-Policy", "same-origin");
-            headers.set("Cross-Origin-Embedder-Policy", "require-corp");
-          } else {
-            // Cross-origin resources (like Torbox stream segments) must permit being loaded under require-corp
-            headers.set("Cross-Origin-Resource-Policy", "cross-origin");
-          }
+          // We only intercept same-origin resources to inject COOP/COEP
+          headers.set("Cross-Origin-Opener-Policy", "same-origin");
+          headers.set("Cross-Origin-Embedder-Policy", "require-corp");
 
           return new Response(res.body, {
             status: res.status,
