@@ -167,7 +167,7 @@ function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
 // bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
 // code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
 // cross-origin so it's compatible with our COEP: require-corp headers.
-const MOVI_PLAYER_CDN_URL = "/movi-player.js";
+const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.2/dist/element.js";
 
 let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
@@ -185,6 +185,7 @@ function ensureMoviPlayerLoaded(): Promise<void> {
     s.type = "module";
     s.src = MOVI_PLAYER_CDN_URL;
     s.async = false;
+    s.crossOrigin = "anonymous";
     s.dataset.nuvioMoviPlayer = "true";
     s.onload = () => {
       customElements.whenDefined("movi-player").then(() => resolve());
@@ -299,6 +300,30 @@ export default function PlayerScreen() {
   const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSub, setSelectedSub] = useState(-1);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
+  // Capture all console errors and Shaka Player errors to the screen for iPad debugging
+  useEffect(() => {
+    const addLog = (msg: string) => {
+      setDebugLogs((prev) => [...prev, msg].slice(-10)); // Keep last 10 logs
+    };
+
+    const originalError = console.error;
+    console.error = (...args) => {
+      originalError.apply(console, args);
+      addLog(`[ERR] ${args.map(a => typeof a === 'object' && a !== null ? JSON.stringify(a, Object.getOwnPropertyNames(a)) : String(a)).join(' ')}`);
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      addLog(`[Promise] ${event.reason?.message || String(event.reason)}`);
+    };
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      console.error = originalError;
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
 
   // Tracks the last blob URL we created for an addon subtitle, so we can revoke it.
   const lastAddonSubBlobUrl = useRef<string | null>(null);
@@ -1991,6 +2016,15 @@ export default function PlayerScreen() {
             setStreamPickerEpisode(null);
           }}
         />
+      )}
+      {/* On-Screen Debug Console */}
+      {debugLogs.length > 0 && (
+        <div className="absolute top-16 left-4 z-[9999] bg-black/90 text-red-500 font-mono text-[10px] sm:text-xs p-4 rounded w-[90%] sm:max-w-2xl overflow-y-auto max-h-[50vh] pointer-events-none whitespace-pre-wrap break-all border border-red-500/30 shadow-2xl">
+          <div className="font-bold text-white mb-2 pb-2 border-b border-white/20">iPad Debug Console (Take Screenshot)</div>
+          {debugLogs.map((log, i) => (
+            <div key={i} className="mb-2 leading-relaxed">{log}</div>
+          ))}
+        </div>
       )}
     </div>
   );
