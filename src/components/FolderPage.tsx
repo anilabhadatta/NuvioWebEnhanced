@@ -432,7 +432,7 @@ export default function FolderPage() {
         {/* Top nav */}
         <div className="absolute top-0 left-0 right-0 flex items-center gap-3 px-5 py-4 z-10">
           <button
-            onClick={() => { window.location.href = "/dashboard"; }}
+            onClick={() => { router.push("/dashboard"); }}
             className="folder-back-btn flex items-center gap-2 text-white font-medium text-sm"
             style={{
               background: "rgba(0,0,0,0.35)",

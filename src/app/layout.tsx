@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import AppProviders from "@/components/AppProviders";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,7 +23,9 @@ export default function RootLayout({
           completely untouched. This is required for iPad/Safari SharedArrayBuffer.
         */}
         <Script src="/coi-serviceworker.js" strategy="afterInteractive" />
-        {children}
+        <AppProviders>
+          {children}
+        </AppProviders>
       </body>
     </html>
   );
