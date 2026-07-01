@@ -175,12 +175,12 @@ function configureShakaPerformance(moviElement: any) {
     if (!shaka || typeof shaka.configure !== 'function') return;
 
     shaka.configure({
-      // ── Decoder pipeline ──────────────────────────────────────────────
-      // Prefer the browser's native MSE pipeline over Shaka's WASM decoder.
-      // This offloads decoding to the GPU/hardware codec, which is orders
-      // of magnitude faster than the JS thread for 1440p/4K content.
-      preferNativeHls: true,
       streaming: {
+        // ── Decoder pipeline ──────────────────────────────────────────────
+        // Prefer the browser's native MSE pipeline over Shaka's WASM decoder.
+        // This offloads decoding to the GPU/hardware codec, which is orders
+        // of magnitude faster than the JS thread for 1440p/4K content.
+        preferNativeHls: true,
         // Use native HLS on Safari instead of Shaka's MSE pipeline.
         useNativeHlsOnSafari: true,
         // ── Buffer sizing for high-bitrate content ───────────────────
@@ -363,7 +363,8 @@ export default function PlayerScreen() {
   const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSub, setSelectedSub] = useState(-1);
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [isSoftwareDec, setIsSoftwareDec] = useState(false);
+  const [showHwWarningModal, setShowHwWarningModal] = useState(false);
   const [referrerUrl, setReferrerUrl] = useState("/dashboard");
   const [isDraggingProgress, setIsDraggingProgress] = useState(false);
   const [dragProgress, setDragProgress] = useState(0);
@@ -419,7 +420,7 @@ export default function PlayerScreen() {
       const targetTime = ratio * duration;
       try {
         video.currentTime = targetTime;
-      } catch (_) {}
+      } catch (_) { }
       setCurrentTime(targetTime);
     }
   };
@@ -432,28 +433,10 @@ export default function PlayerScreen() {
 
 
 
-  // Capture all console errors and Shaka Player errors to the screen for iPad debugging
+  // Reset software decoding state when resolved source changes
   useEffect(() => {
-    const addLog = (msg: string) => {
-      setDebugLogs((prev) => [...prev, msg].slice(-10)); // Keep last 10 logs
-    };
-
-    const originalError = console.error;
-    console.error = (...args) => {
-      originalError.apply(console, args);
-      addLog(`[ERR] ${args.map(a => typeof a === 'object' && a !== null ? JSON.stringify(a, Object.getOwnPropertyNames(a)) : String(a)).join(' ')}`);
-    };
-
-    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      addLog(`[Promise] ${event.reason?.message || String(event.reason)}`);
-    };
-    window.addEventListener('unhandledrejection', handleUnhandledRejection);
-
-    return () => {
-      console.error = originalError;
-      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
-    };
-  }, []);
+    setIsSoftwareDec(false);
+  }, [resolvedSrc]);
 
   // Tracks the last blob URL we created for an addon subtitle, so we can revoke it.
   const lastAddonSubBlobUrl = useRef<string | null>(null);
@@ -797,6 +780,10 @@ export default function PlayerScreen() {
       // NOTE: Do NOT sync volume/muted here — doing so on every buffering→playing
       // transition causes audio jitter. Volume is synced only on explicit user actions
       // (togglePlay, handleVolumeChange, keyboard shortcuts).
+      try {
+        const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
+        setIsSoftwareDec(isSw);
+      } catch (_) {}
     }
     else if (state === 'paused') {
       setIsPlaying(false);
@@ -809,6 +796,10 @@ export default function PlayerScreen() {
       // Configure Shaka for hardware-accelerated, high-res playback each time
       // the player reports ready (fires once per source load).
       configureShakaPerformance(video);
+      try {
+        const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
+        setIsSoftwareDec(isSw);
+      } catch (_) {}
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
@@ -869,6 +860,12 @@ export default function PlayerScreen() {
 
     setCurrentTime(t);
     setDuration(video.duration || 0);
+
+    // Periodically sync software decoding status
+    try {
+      const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
+      setIsSoftwareDec(isSw);
+    } catch (_) {}
   };
 
   const stableStateChange = useCallback((e: any) => onStateChangeRef.current?.(e), []);
@@ -1385,7 +1382,7 @@ EventDump: ${JSON.stringify(collected)}`;
       if (isInFullscreen) {
         // ── Exit fullscreen ────────────────────────────────────────────────
         if (typeof document.exitFullscreen === 'function') {
-          document.exitFullscreen().catch(() => {});
+          document.exitFullscreen().catch(() => { });
         } else if (typeof (document as any).webkitExitFullscreen === 'function') {
           (document as any).webkitExitFullscreen();
         } else if (typeof (document as any).webkitCancelFullScreen === 'function') {
@@ -1560,31 +1557,26 @@ EventDump: ${JSON.stringify(collected)}`;
     const video = videoRef.current;
     if (video) {
       const numId = Number(id);
-      console.log("[handleAudioChange] Selected Audio ID:", numId);
       try {
         const player = video.player;
         if (player) {
           if (typeof player.isNativeAudioActive === 'function' && player.isNativeAudioActive()) {
-            console.log("[handleAudioChange] Native audio is active, reverting to muxed audio first.");
             player.useMuxedAudio();
           }
           if (typeof player.selectAudioTrack === 'function') {
             player.selectAudioTrack(numId);
-            console.log("[handleAudioChange] Switched track via player.selectAudioTrack");
           }
         } else if (typeof video.selectAudioTrack === 'function') {
           video.selectAudioTrack(numId);
-          console.log("[handleAudioChange] Switched track via video.selectAudioTrack");
         }
 
         // Corrective seek/flush to apply track changes immediately in WASM mode
         if (typeof video.currentTime === 'number') {
           const curr = video.currentTime;
           video.currentTime = curr;
-          console.log("[handleAudioChange] Performed corrective seek to time:", curr);
         }
-      } catch (err) {
-        console.error("[handleAudioChange] Failed to select audio track:", err);
+      } catch (_) {
+        // Silently fail track switch
       }
     }
     setOpenMenu(null);
@@ -1608,7 +1600,6 @@ EventDump: ${JSON.stringify(collected)}`;
       }
 
       const numId = id === -1 ? null : Number(id);
-      console.log("[handleSubtitleChange] Selected Subtitle ID:", numId);
       try {
         const internalPlayer = moviEl.player;
         if (numId === null) {
@@ -1620,15 +1611,14 @@ EventDump: ${JSON.stringify(collected)}`;
           // Select built-in sub by numeric track id
           if (internalPlayer && typeof internalPlayer.selectSubtitleTrack === 'function') {
             internalPlayer.selectSubtitleTrack(numId);
-            console.log("[handleSubtitleChange] Switched via player.selectSubtitleTrack:", numId);
           }
         }
         // Corrective seek/flush to apply track changes immediately
         if (typeof moviEl.currentTime === 'number') {
           moviEl.currentTime = moviEl.currentTime;
         }
-      } catch (err) {
-        console.error("[handleSubtitleChange] Failed to select subtitle track:", err);
+      } catch (_) {
+        // Silently fail track switch
       }
     }
     setOpenMenu(null);
@@ -1645,9 +1635,6 @@ EventDump: ${JSON.stringify(collected)}`;
       const res = await fetch(url);
       const text = await res.text();
       const cues = parseSubtitleText(text);
-      if (cues.length === 0) {
-        console.warn('[loadExternalSubtitle] No cues parsed from', url);
-      }
       // Revoke previous blob if any
       if (lastAddonSubBlobUrl.current) {
         try { URL.revokeObjectURL(lastAddonSubBlobUrl.current); } catch { }
@@ -1656,8 +1643,8 @@ EventDump: ${JSON.stringify(collected)}`;
       setSelectedSub(-1);       // Reset built-in selection to "Off"
       setExternalSubCues(cues);
       setActiveExternalSub(id);
-    } catch (e) {
-      console.error('[loadExternalSubtitle] failed:', e);
+    } catch (_) {
+      // Silently fail external subtitle load
     }
   };
 
@@ -1853,9 +1840,9 @@ EventDump: ${JSON.stringify(collected)}`;
                 <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
                   <div className="h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
                 </div>
-                <div 
-                  className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity pointer-events-none" 
-                  style={{ left: `calc(${displayProgress}% - 8px)` }} 
+                <div
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity pointer-events-none"
+                  style={{ left: `calc(${displayProgress}% - 8px)` }}
                 />
               </div>
             );
@@ -2219,6 +2206,21 @@ EventDump: ${JSON.stringify(collected)}`;
                 </button>
               )}
 
+              {/* Software Decoding indicator */}
+              {isSoftwareDec && (
+                <button
+                  onClick={() => setShowHwWarningModal(true)}
+                  className="flex items-center gap-1.5 px-3 h-10 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/25 rounded-lg text-xs font-semibold select-none cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] animate-pulse"
+                  title="Software fallback active. Playback may stutter. Click for details."
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                  <span>Software Dec</span>
+                </button>
+              )}
+
               {/* Open externally */}
               <button
                 onClick={() => setShowExternalPlayer(true)}
@@ -2380,21 +2382,44 @@ EventDump: ${JSON.stringify(collected)}`;
           }}
         />
       )}
-      {/* On-Screen Debug Console */}
-      {debugLogs.length > 0 && (
-        <div className="absolute top-16 left-4 z-[9999] bg-black/90 text-red-500 font-mono text-[10px] sm:text-xs p-4 rounded w-[90%] sm:max-w-2xl overflow-y-auto max-h-[50vh] pointer-events-auto whitespace-pre-wrap break-all border border-red-500/30 shadow-2xl">
-          <div className="flex items-center justify-between font-bold text-white mb-2 pb-2 border-b border-white/20">
-            <span>iPad Debug Console (Take Screenshot)</span>
+      {/* Hardware Acceleration Warning Modal */}
+      {showHwWarningModal && (
+        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/75 p-6 backdrop-blur-sm" onClick={() => setShowHwWarningModal(false)}>
+          <div className="bg-[#181818] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 text-left" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4 text-amber-400">
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 flex-shrink-0">
+                <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
+              </svg>
+              <h2 className="text-white font-bold text-lg">Software Decoding Active</h2>
+            </div>
+            
+            <p className="text-white/80 text-sm mb-5 leading-relaxed">
+              Your browser is using CPU-based software decoding for this stream. This will cause lag and stuttering, especially for high-resolution (1080p/4K) files.
+            </p>
+
+            <div className="space-y-3 mb-6">
+              <div className="bg-white/5 border border-white/5 rounded-xl p-3.5">
+                <h4 className="text-white font-semibold text-xs uppercase tracking-wider mb-1">1. Enable Hardware Acceleration</h4>
+                <p className="text-white/60 text-xs leading-relaxed">
+                  Go to your browser settings, search for <strong className="text-white/90">"hardware acceleration"</strong> or <strong className="text-white/90">"graphics acceleration"</strong>, and make sure it is turned ON. Restart your browser.
+                </p>
+              </div>
+
+              <div className="bg-white/5 border border-white/5 rounded-xl p-3.5">
+                <h4 className="text-white font-semibold text-xs uppercase tracking-wider mb-1">2. Install HEVC Video Extensions (Windows)</h4>
+                <p className="text-white/60 text-xs leading-relaxed">
+                  Chromium-based browsers (Chrome/Edge) on Windows require the system codec to decode HEVC hardware. Search the Microsoft Store for <strong className="text-white/90">"HEVC Video Extensions"</strong> to install it.
+                </p>
+              </div>
+            </div>
+
             <button
-              onClick={() => setDebugLogs([])}
-              className="px-2 py-1 bg-red-500/20 hover:bg-red-500/40 border border-red-500/40 rounded text-[10px] text-red-400 font-bold transition-all pointer-events-auto cursor-pointer"
+              onClick={() => setShowHwWarningModal(false)}
+              className="w-full py-3 bg-white/10 hover:bg-white/20 border border-white/5 rounded-xl text-white font-semibold text-sm transition-all cursor-pointer text-center"
             >
-              ✕ Clear & Close
+              Dismiss
             </button>
           </div>
-          {debugLogs.map((log, i) => (
-            <div key={i} className="mb-2 leading-relaxed">{log}</div>
-          ))}
         </div>
       )}
     </div>

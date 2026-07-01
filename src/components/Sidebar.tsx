@@ -131,11 +131,10 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-[14px] font-medium group ${
-                isActive
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-[14px] font-medium group ${isActive
                   ? "sidebar-item-active text-white"
                   : "text-[#888] hover:text-white hover:bg-white/5"
-              }`}
+                }`}
             >
               <span className={isActive ? "text-white" : "text-[#888] group-hover:text-white"}>
                 {item.icon(isActive)}

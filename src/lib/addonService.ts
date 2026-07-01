@@ -87,7 +87,6 @@ export async function fetchStreamsFromAddon(addon: NuvioAddon, type: string, vid
     }
 
     const streamUrl = buildStreamUrl(addon.url, type, videoId);
-    console.log("Fetching streams from:", streamUrl);
     const res = await fetch(streamUrl);
     if (!res.ok) return [];
 
