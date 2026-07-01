@@ -167,7 +167,7 @@ function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
 // bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
 // code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
 // cross-origin so it's compatible with our COEP: require-corp headers.
-const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.2/dist/element.js";
+const MOVI_PLAYER_CDN_URL = "/movi-player.js";
 
 let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
@@ -185,7 +185,6 @@ function ensureMoviPlayerLoaded(): Promise<void> {
     s.type = "module";
     s.src = MOVI_PLAYER_CDN_URL;
     s.async = false;
-    s.crossOrigin = "anonymous";
     s.dataset.nuvioMoviPlayer = "true";
     s.onload = () => {
       customElements.whenDefined("movi-player").then(() => resolve());
