@@ -118,7 +118,6 @@ export default function HeroBanner() {
             alt={title}
             className="absolute inset-0 w-full h-full object-cover transition-all duration-1000"
             style={{ objectPosition: "center 20%" }}
-            crossOrigin="anonymous"
           />
         )}
 

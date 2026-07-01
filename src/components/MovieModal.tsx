@@ -149,7 +149,6 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
               src={`${TMDB_IMAGE_BASE}${movie.backdrop_path}`}
               alt={title}
               className="w-full h-full object-cover"
-              crossOrigin="anonymous"
             />
           ) : (
             <div className="w-full h-full bg-[#222]" />
@@ -296,7 +295,6 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
                             src={`${TMDB_IMAGE_W500}${ep.still_path}`}
                             alt={ep.name}
                             className="w-full h-full object-cover"
-                            crossOrigin="anonymous"
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-[#555]">No Image</div>

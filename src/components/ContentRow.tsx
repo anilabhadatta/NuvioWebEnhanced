@@ -157,7 +157,6 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
                         alt={title_}
                         className="w-full h-full object-cover"
                         loading="lazy"
-                        crossOrigin="anonymous"
                       />
                     ) : (
                       <div className="w-full h-full bg-[#222] flex items-center justify-center text-[#555] text-xs">

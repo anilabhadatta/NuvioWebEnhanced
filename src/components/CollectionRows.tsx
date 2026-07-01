@@ -5,7 +5,7 @@ import { Collection, CollectionFolder, pullCollections, loadLocalCollections } f
 import { TMDBMovie } from "@/lib/tmdb";
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
-import { fetchTmdbCollectionSource, resolveStremioIdToMovie } from "@/lib/tmdb";
+import { fetchTmdbCollectionSource, resolveStremioIdToMovie, sanitizeImageUrl } from "@/lib/tmdb";
 import { useRouter } from "next/navigation";
 
 let isHydrated = false;
@@ -155,11 +155,10 @@ function CollectionRow({
                 <div className="w-full h-full relative bg-gradient-to-br from-[#202020] to-[#151515] flex flex-col items-center justify-center p-3 text-center">
                   {folder.coverImageUrl ? (
                     <img
-                      src={folder.coverImageUrl}
+                      src={sanitizeImageUrl(folder.coverImageUrl)}
                       alt={folder.title}
                       className="absolute inset-0 w-full h-full object-cover"
                       loading="lazy"
-                      crossOrigin="anonymous"
                     />
                   ) : null}
 
@@ -336,7 +335,6 @@ function FolderAsMovieRow({
                       alt={meta.name}
                       className="w-full h-full object-cover"
                       loading="lazy"
-                      crossOrigin="anonymous"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-[#555] text-xs px-2 text-center">
