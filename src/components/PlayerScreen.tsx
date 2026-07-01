@@ -923,7 +923,37 @@ export default function PlayerScreen() {
     const onError = (e: any) => {
       const errObj = v.error || (v.video && v.video.error);
       const detail = e.detail || {};
-      const errMsg = `[Player Error Event] Code: ${errObj?.code || 'unknown'}, Msg: ${errObj?.message || 'none'}, Detail: ${JSON.stringify(detail)}`;
+
+      // Shaka Player error fields
+      const shakaCode = detail.code || e.code || e.detail?.code;
+      const shakaCategory = detail.category || e.detail?.category;
+      const shakaSeverity = detail.severity || e.detail?.severity;
+      const shakaData = detail.data || e.detail?.data;
+      const msg = detail.message || e.message || errObj?.message || 'none';
+
+      // Gather all top-level keys
+      const collected: any = {};
+      const target = e.detail || e;
+      if (target) {
+        const keys = Object.getOwnPropertyNames(target);
+        for (const key of keys) {
+          try {
+            const val = target[key];
+            if (typeof val !== 'function' && typeof val !== 'object') {
+              collected[key] = val;
+            }
+          } catch {}
+        }
+      }
+
+      const errMsg = `[Player Error]
+NativeCode: ${errObj?.code || 'none'}
+NativeMsg: ${errObj?.message || 'none'}
+ShakaCode: ${shakaCode || 'none'} (Cat: ${shakaCategory || 'none'}, Sev: ${shakaSeverity || 'none'})
+Msg: ${msg}
+ShakaData: ${JSON.stringify(shakaData || [])}
+EventDump: ${JSON.stringify(collected)}`;
+
       console.error(errMsg);
     };
 
