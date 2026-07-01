@@ -1457,20 +1457,7 @@ export default function PlayerScreen() {
 
         {/* Top Bar */}
         <div className="bg-gradient-to-b from-black/80 to-transparent p-6 flex items-center pointer-events-auto">
-          <button
-            onClick={() => {
-              if (typeof window !== "undefined") {
-                if (document.referrer && document.referrer.startsWith(window.location.origin)) {
-                  window.location.href = document.referrer;
-                } else {
-                  window.location.href = "/";
-                }
-              } else {
-                router.back();
-              }
-            }}
-            className="w-10 h-10 rounded-full bg-black/50 hover:bg-black/80 border border-white/20 flex items-center justify-center text-white transition-all mr-4"
-          >
+          <button onClick={() => router.back()} className="w-10 h-10 rounded-full bg-black/50 hover:bg-black/80 border border-white/20 flex items-center justify-center text-white transition-all mr-4">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
           </button>
           <div>
