@@ -66,18 +66,18 @@ export default function Dashboard() {
   }
 
   return (
-    <div
-      className="flex min-h-screen bg-[#111111]"
-      style={{
-        opacity: mounted ? 1 : 0,
-        transform: mounted ? "translateY(0)" : "translateY(12px)",
-        transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
-      }}
-    >
+    <div className="flex min-h-screen bg-[#111111]">
       <Sidebar />
 
       {/* Main content offset by sidebar width */}
-      <main className="flex-1 ml-[220px] overflow-y-auto">
+      <main
+        className="flex-1 ml-[220px] overflow-y-auto"
+        style={{
+          opacity: mounted ? 1 : 0,
+          transform: mounted ? "none" : "translateY(12px)",
+          transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
+        }}
+      >
         {/* Hero */}
         <HeroBanner />
 

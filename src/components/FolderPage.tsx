@@ -402,7 +402,7 @@ export default function FolderPage() {
       className="min-h-screen bg-[#111] text-white flex flex-col"
       style={{
         opacity: mounted ? 1 : 0,
-        transform: mounted ? "scale(1)" : "scale(0.985)",
+        transform: mounted ? "none" : "scale(0.985)",
         transition: "opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
       }}
     >
