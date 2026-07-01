@@ -320,22 +320,3 @@ export const fetchTmdbCollectionSource = async (source: any): Promise<any[]> => 
   const { items } = await fetchTmdbCollectionSourcePage(source, 1);
   return items;
 };
-
-/**
- * Safely rewrites github.com raw image URLs to raw.githubusercontent.com so they
- * support CORS headers and can be loaded under COEP: require-corp.
- */
-export function sanitizeImageUrl(url: string | null | undefined): string {
-  if (!url) return "";
-  const trimmed = url.trim();
-  if (trimmed.includes("github.com") && trimmed.includes("/blob/")) {
-    try {
-      const parsed = new URL(trimmed);
-      const pathname = parsed.pathname.replace("/blob/", "/");
-      return `https://raw.githubusercontent.com${pathname}`;
-    } catch (e) {
-      return trimmed;
-    }
-  }
-  return trimmed;
-}

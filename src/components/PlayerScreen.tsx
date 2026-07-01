@@ -213,17 +213,8 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     // Create immediately as a plain, unregistered element
     let player = wrapperRef.current.querySelector("movi-player") as any;
     if (!player) {
-      wrapperRef.current.innerHTML = `<movi-player class="w-full h-full object-contain" playsinline="true" crossorigin="anonymous"></movi-player>`;
+      wrapperRef.current.innerHTML = `<movi-player class="w-full h-full object-contain" playsinline="true"></movi-player>`;
       player = wrapperRef.current.querySelector("movi-player") as any;
-      // Force crossorigin on the internal video tag once it renders
-      setTimeout(() => {
-        try {
-          const vid = player?.shadowRoot?.querySelector("video") || player?.querySelector("video");
-          if (vid && !vid.hasAttribute("crossorigin")) {
-            vid.setAttribute("crossorigin", "anonymous");
-          }
-        } catch(e) {}
-      }, 250);
       playerRef.current = player;
       onInit(player);
     }
@@ -1429,7 +1420,7 @@ export default function PlayerScreen() {
             >
               {nextEpisode.thumbnail ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={nextEpisode.thumbnail} alt="" className="w-full h-full object-cover" crossOrigin="anonymous" />
+                <img src={nextEpisode.thumbnail} alt="" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full bg-white/5" />
               )}
@@ -1466,20 +1457,7 @@ export default function PlayerScreen() {
 
         {/* Top Bar */}
         <div className="bg-gradient-to-b from-black/80 to-transparent p-6 flex items-center pointer-events-auto">
-          <button
-            onClick={() => {
-              if (typeof window !== "undefined") {
-                if (document.referrer && document.referrer.startsWith(window.location.origin)) {
-                  window.location.href = document.referrer;
-                } else {
-                  window.location.href = "/";
-                }
-              } else {
-                router.back();
-              }
-            }}
-            className="w-10 h-10 rounded-full bg-black/50 hover:bg-black/80 border border-white/20 flex items-center justify-center text-white transition-all mr-4"
-          >
+          <button onClick={() => router.back()} className="w-10 h-10 rounded-full bg-black/50 hover:bg-black/80 border border-white/20 flex items-center justify-center text-white transition-all mr-4">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
           </button>
           <div>

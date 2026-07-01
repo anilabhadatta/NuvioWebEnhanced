@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { pullCollections, loadLocalCollections, Collection, CollectionFolder, CollectionSource } from "@/lib/collections";
-import { fetchTmdbCollectionSourcePage, fetchTmdbCollectionSource, resolveStremioIdToMovie, TMDBMovie, sanitizeImageUrl } from "@/lib/tmdb";
+import { fetchTmdbCollectionSourcePage, fetchTmdbCollectionSource, resolveStremioIdToMovie, TMDBMovie } from "@/lib/tmdb";
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
 import MovieModal from "@/components/MovieModal";
@@ -71,14 +71,12 @@ export default function FolderPage() {
   const [activeTabIdx, setActiveTabIdx] = useState<number>(ALL_TAB);
   const [tabStates, setTabStates] = useState<Record<number, TabState>>({});
   const [idToUrl, setIdToUrl] = useState<Map<string, string>>(new Map());
-  const [addonsResolved, setAddonsResolved] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
   const tabContainerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const fetchedTabsRef = useRef<Set<number>>(new Set());
 
   // Restore scroll and movie on mount
   useEffect(() => {
@@ -132,26 +130,13 @@ export default function FolderPage() {
                     if (manifest?.id) map.set(manifest.id, a.url);
                   }),
                 );
-                if (active) {
-                  setIdToUrl(map);
-                  setAddonsResolved(true);
-                }
-              } else if (active) {
-                setAddonsResolved(true);
+                if (active) setIdToUrl(map);
               }
   
               // Restore tab state from session storage
               const savedTabs = sessionStorage.getItem(`nuvio_folder_tabs_${folderId}`);
               if (savedTabs) {
-                try { 
-                  const parsed = JSON.parse(savedTabs);
-                  // Sanitize: clear stuck loading states from previous crashed sessions
-                  Object.keys(parsed).forEach(k => {
-                    parsed[k].loading = false;
-                    parsed[k].loadingMore = false;
-                  });
-                  setTabStates((prev) => Object.keys(prev).length > 0 ? prev : parsed); 
-                } catch(e) {}
+                try { setTabStates((prev) => Object.keys(prev).length > 0 ? prev : JSON.parse(savedTabs)); } catch(e) {}
               }
               const savedActiveTab = sessionStorage.getItem(`nuvio_folder_activeTab_${folderId}`);
               if (savedActiveTab) {
@@ -236,7 +221,7 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-  // ── Load "All" tab — fetches sources one by one in a circular manner ──────
+  // ── Load "All" tab — merges first page of all sources ────────────────────
   const loadAllTab = useCallback(
     async (reset = false) => {
       const current = tabStates[ALL_TAB] || INITIAL_TAB;
@@ -248,22 +233,34 @@ export default function FolderPage() {
 
       setTabState(ALL_TAB, isFirstLoad ? { loading: true } : { loadingMore: true });
       try {
-        // Circular logic: nextPage = 1 -> source 0 page 1. nextPage = 2 -> source 1 page 1.
-        const sourceIndex = (nextPage - 1) % sources.length;
-        const sourcePage = Math.floor((nextPage - 1) / sources.length) + 1;
-        const source = sources[sourceIndex];
+        const results: any[] = [];
+        const batchSize = 3;
+        for (let i = 0; i < sources.length; i += batchSize) {
+          const batch = sources.slice(i, i + batchSize);
+          const res = await Promise.all(
+            batch.map((s) => resolveSourcePage(s as any, idToUrl, nextPage))
+          );
+          results.push(...res);
+        }
 
-        // Fetch just this ONE source's page to keep it extremely fast
-        const res = await resolveSourcePage(source as any, idToUrl, sourcePage);
+        let maxTotalPages = 1;
+        const merged: CatalogMeta[] = [];
+        const seenInBatch = new Set<string>();
         
-        // Virtually infinite scrolling (e.g. 50 pages deep per source max)
-        const maxTotalPages = sources.length * 50;
+        for (const res of results) {
+          if (res.totalPages > maxTotalPages) maxTotalPages = res.totalPages;
+          for (const item of res.items) {
+            if (!seenInBatch.has(item.id)) {
+              seenInBatch.add(item.id);
+              merged.push(item);
+            }
+          }
+        }
 
         setTabStates((prev) => {
           const existing = prev[ALL_TAB] || INITIAL_TAB;
           const existingIds = new Set(existing.metas.map((m) => m.id));
-          const newItems = res.items.filter((m) => !existingIds.has(m.id));
-          
+          const newItems = merged.filter((m) => !existingIds.has(m.id));
           return {
             ...prev,
             [ALL_TAB]: {
@@ -283,46 +280,21 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-  // ── Bootstrap: set initial active tab when folder is ready ───────────────
+  // ── Bootstrap: load "All" tab when folder is ready ──────────────────────
   useEffect(() => {
-    if (sources.length > 0 && folder && Object.keys(tabStates).length === 0) {
+    if (sources.length > 0 && folder) {
+      setTabStates({});
       setActiveTabIdx(ALL_TAB);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folder, sources.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folder, idToUrl]);
 
-  // ── Load active tab content ──────────────────────────────────────────────
   useEffect(() => {
-    if (!folder || sources.length === 0) return;
-
-    const needsAddon = sources.some(
-      (s: any) => !s.provider || (s.provider as string) === "addon"
-    );
-    if (needsAddon && !addonsResolved) {
-      return; // Wait for addon URLs to resolve before fetching
-    }
-
-    // If we've already initiated a fetch for this tab in this session, skip.
-    if (fetchedTabsRef.current.has(activeTabIdx)) {
-      return;
-    }
-
-    const currentTabState = tabStates[activeTabIdx];
-    // Only skip fetching if we legitimately have cached data. If it was stuck loading and empty, force a re-fetch.
-    if (currentTabState?.loaded && currentTabState.metas.length > 0) {
-      fetchedTabsRef.current.add(activeTabIdx);
-      return;
-    }
-
-    fetchedTabsRef.current.add(activeTabIdx);
-
-    if (activeTabIdx === ALL_TAB) {
+    if (sources.length > 0 && folder && activeTabIdx === ALL_TAB) {
       loadAllTab(true);
-    } else {
-      loadSourceTab(activeTabIdx, true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabIdx, folder, idToUrl, loadAllTab, loadSourceTab, sources.length, addonsResolved]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folder, idToUrl]);
 
   // ── IntersectionObserver for infinite scroll ─────────────────────────────
   useEffect(() => {
@@ -341,7 +313,7 @@ export default function FolderPage() {
           }
         }
       },
-      { rootMargin: "1200px" },
+      { rootMargin: "400px" },
     );
 
     observer.observe(sentinel);
@@ -409,17 +381,15 @@ export default function FolderPage() {
       <div className="relative h-[40vh] min-h-[260px] overflow-hidden flex-shrink-0">
         {folder.heroBackdropUrl ? (
           <img
-            src={`/api/proxy/image?url=${encodeURIComponent(folder.heroBackdropUrl)}`}
+            src={folder.heroBackdropUrl}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-top"
-            crossOrigin="anonymous"
           />
         ) : folder.coverImageUrl ? (
           <img
-            src={`/api/proxy/image?url=${encodeURIComponent(folder.coverImageUrl)}`}
+            src={folder.coverImageUrl}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-center"
-            crossOrigin="anonymous"
           />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#111]" />
@@ -459,10 +429,9 @@ export default function FolderPage() {
         <div className="absolute bottom-7 left-5 right-5 z-10 flex items-end gap-4">
           {folder.titleLogoUrl ? (
             <img
-              src={`/api/proxy/image?url=${encodeURIComponent(folder.titleLogoUrl)}`}
+              src={folder.titleLogoUrl}
               alt={folder.title}
               className="h-12 max-w-[240px] object-contain drop-shadow-2xl"
-              crossOrigin="anonymous"
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
           ) : (
@@ -557,7 +526,7 @@ export default function FolderPage() {
                 >
                   {meta.poster ? (
                     <img
-                      src={sanitizeImageUrl(meta.poster)}
+                      src={meta.poster}
                       alt={meta.name}
                       className="w-full h-full object-cover"
                       loading="lazy"

@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { CollectionFolder } from "@/lib/collections";
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
-import { fetchTmdbCollectionSource, TMDBMovie, resolveStremioIdToMovie, sanitizeImageUrl } from "@/lib/tmdb";
+import { fetchTmdbCollectionSource, TMDBMovie, resolveStremioIdToMovie } from "@/lib/tmdb";
 
 interface FolderDetailModalProps {
   folder: CollectionFolder;
@@ -140,10 +140,11 @@ export default function FolderDetailModal({ folder, onClose, onSelectMovie }: Fo
                   <div className="aspect-[2/3] w-full relative bg-[#333]">
                     {meta.poster ? (
                       <img
-                        src={sanitizeImageUrl(meta.poster)}
+                        src={meta.poster}
                         alt={meta.name}
                         className="w-full h-full object-cover"
                         loading="lazy"
+                        crossOrigin="anonymous"
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-center p-3 text-xs text-gray-500 font-semibold">
