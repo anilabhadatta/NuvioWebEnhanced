@@ -301,6 +301,80 @@ export default function PlayerScreen() {
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSub, setSelectedSub] = useState(-1);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [referrerUrl, setReferrerUrl] = useState("/dashboard");
+  const [isDraggingProgress, setIsDraggingProgress] = useState(false);
+  const [dragProgress, setDragProgress] = useState(0);
+
+  // Referrer tracking for absolute bulletproof Back button navigation
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const ref = document.referrer;
+      if (ref && ref.includes(window.location.origin) && !ref.includes("/player")) {
+        sessionStorage.setItem("nuvio_player_referrer", ref);
+        setReferrerUrl(ref);
+      } else {
+        const saved = sessionStorage.getItem("nuvio_player_referrer");
+        if (saved) {
+          setReferrerUrl(saved);
+        }
+      }
+    }
+  }, []);
+
+  // Draggable Seek Progress (PointerEvent supports both touch/mouse)
+  const handleProgressPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const video = videoRef.current;
+    if (!video || !duration) return;
+    e.preventDefault(); // Prevents native browser selection / drag session
+    setIsDraggingProgress(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    setDragProgress(ratio * 100);
+    setCurrentTime(ratio * duration);
+  };
+
+  const handleProgressPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingProgress || !duration) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    setDragProgress(ratio * 100);
+    setCurrentTime(ratio * duration);
+  };
+
+  const handleProgressPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingProgress) return;
+    setIsDraggingProgress(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    
+    const video = videoRef.current;
+    if (video && duration) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const targetTime = ratio * duration;
+      video.currentTime = targetTime;
+      setCurrentTime(targetTime);
+    }
+  };
+
+  const handleProgressLostPointerCapture = () => {
+    setIsDraggingProgress(false);
+  };
+
+  // Click/Touch middle screen handler
+  const handleMiddleScreenClick = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Touch event: toggle control overlay visibility (iPad)
+    if (e.pointerType === "touch") {
+      setShowControls((prev) => !prev);
+      resetControlsTimeout();
+    } else {
+      // Mouse click: toggle play/pause (Desktop)
+      togglePlay();
+      resetControlsTimeout();
+    }
+  };
 
   // Capture all console errors and Shaka Player errors to the screen for iPad debugging
   useEffect(() => {
@@ -1134,10 +1208,32 @@ EventDump: ${JSON.stringify(collected)}`;
   // Fullscreen toggle
   const toggleFullscreen = useCallback(() => {
     try {
-      if (document.fullscreenElement) {
-        document.exitFullscreen?.();
+      const player = videoRef.current; // This is <movi-player>
+      const nativeVideo = player?.video || player?.querySelector('video');
+
+      // Detect iOS/iPadOS
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(navigator.userAgent));
+
+      if (isIOS && nativeVideo && typeof nativeVideo.webkitEnterFullscreen === 'function') {
+        nativeVideo.webkitEnterFullscreen();
+        return;
+      }
+
+      if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
+        }
       } else {
-        document.documentElement.requestFullscreen?.();
+        if (player?.requestFullscreen) {
+          player.requestFullscreen();
+        } else if (player?.webkitRequestFullscreen) {
+          player.webkitRequestFullscreen();
+        } else if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen();
+        }
       }
     } catch (e) {
       console.error("Fullscreen toggle failed", e);
@@ -1408,6 +1504,12 @@ EventDump: ${JSON.stringify(collected)}`;
         }, [])}
       />
 
+      {/* Transparent Click Catcher for Middle of Screen (z-10) */}
+      <div
+        className="absolute inset-0 z-10"
+        onPointerDown={handleMiddleScreenClick}
+      />
+
       {/* External subtitle overlay — rendered by our own parser, works with any player */}
       {activeSubCue && (
         <div
@@ -1520,7 +1622,7 @@ EventDump: ${JSON.stringify(collected)}`;
 
         {/* Top Bar */}
         <div className="bg-gradient-to-b from-black/80 to-transparent p-6 flex items-center pointer-events-auto">
-          <button onClick={() => router.back()} className="w-10 h-10 rounded-full bg-black/50 hover:bg-black/80 border border-white/20 flex items-center justify-center text-white transition-all mr-4">
+          <button onClick={() => { window.location.href = referrerUrl; }} className="w-10 h-10 rounded-full bg-black/50 hover:bg-black/80 border border-white/20 flex items-center justify-center text-white transition-all mr-4">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
           </button>
           <div>
@@ -1532,10 +1634,23 @@ EventDump: ${JSON.stringify(collected)}`;
         {/* Bottom Bar */}
         <div className="bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 pointer-events-auto">
           {/* Progress / Seek */}
-          <div className="w-full h-2 bg-white/20 rounded-full cursor-pointer mb-6 group relative" onClick={handleSeek}>
-            <div className="h-full bg-white rounded-full" style={{ width: `${progress}%` }} />
-            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${progress}% - 8px)` }} />
-          </div>
+          {(() => {
+            const displayProgress = isDraggingProgress ? dragProgress : progress;
+            return (
+              <div
+                className="w-full h-2 bg-white/20 rounded-full cursor-pointer mb-6 group relative"
+                style={{ touchAction: "none" }}
+                onPointerDown={handleProgressPointerDown}
+                onPointerMove={handleProgressPointerMove}
+                onPointerUp={handleProgressPointerUp}
+                onPointerCancel={handleProgressLostPointerCapture}
+                onLostPointerCapture={handleProgressLostPointerCapture}
+              >
+                <div className="h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${displayProgress}% - 8px)` }} />
+              </div>
+            );
+          })()}
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -2058,8 +2173,16 @@ EventDump: ${JSON.stringify(collected)}`;
       )}
       {/* On-Screen Debug Console */}
       {debugLogs.length > 0 && (
-        <div className="absolute top-16 left-4 z-[9999] bg-black/90 text-red-500 font-mono text-[10px] sm:text-xs p-4 rounded w-[90%] sm:max-w-2xl overflow-y-auto max-h-[50vh] pointer-events-none whitespace-pre-wrap break-all border border-red-500/30 shadow-2xl">
-          <div className="font-bold text-white mb-2 pb-2 border-b border-white/20">iPad Debug Console (Take Screenshot)</div>
+        <div className="absolute top-16 left-4 z-[9999] bg-black/90 text-red-500 font-mono text-[10px] sm:text-xs p-4 rounded w-[90%] sm:max-w-2xl overflow-y-auto max-h-[50vh] pointer-events-auto whitespace-pre-wrap break-all border border-red-500/30 shadow-2xl">
+          <div className="flex items-center justify-between font-bold text-white mb-2 pb-2 border-b border-white/20">
+            <span>iPad Debug Console (Take Screenshot)</span>
+            <button
+              onClick={() => setDebugLogs([])}
+              className="px-2 py-1 bg-red-500/20 hover:bg-red-500/40 border border-red-500/40 rounded text-[10px] text-red-400 font-bold transition-all pointer-events-auto cursor-pointer"
+            >
+              ✕ Clear & Close
+            </button>
+          </div>
           {debugLogs.map((log, i) => (
             <div key={i} className="mb-2 leading-relaxed">{log}</div>
           ))}
