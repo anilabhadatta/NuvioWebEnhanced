@@ -73,8 +73,6 @@ if (typeof window === "undefined") {
   (async () => {
     if (!navigator.serviceWorker) return;
 
-    const isOnPlayerPage = window.location.pathname.startsWith("/player");
-
     // Detect iOS/iPadOS (all browsers use WebKit on iOS and need the SW)
     const isIOS =
       /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -83,58 +81,32 @@ if (typeof window === "undefined") {
     // Detect desktop Safari (macOS)
     const isDesktopSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
-    // We only need the service worker fallback on iOS/Safari and specifically on the player page.
-    const needsSW = (isIOS || isDesktopSafari) && isOnPlayerPage;
+    const needsSW = isIOS || isDesktopSafari;
 
     if (!needsSW) {
-      // Clean up the service worker if it was registered with scope "/"
-      // (which would affect dashboard/homepage and cause CORS/COOP/COEP issues)
-      // or if we are on a browser that supports COEP: credentialless natively.
+      // Clean up the service worker if it was registered on non-WebKit desktop/Android browsers (Chrome, Firefox, etc.)
+      // since they natively support COEP: credentialless from next.config.ts and don't need the SW.
       try {
         const registrations = await navigator.serviceWorker.getRegistrations();
-        let unregisteredAny = false;
         for (const reg of registrations) {
-          const scopeUrl = new URL(reg.scope);
-          if (scopeUrl.pathname === "/") {
-            await reg.unregister();
-            unregisteredAny = true;
-            console.log("[coi-sw] Unregistered root service worker to prevent CORS issues.");
-          }
+          await reg.unregister();
         }
-        if (unregisteredAny && navigator.serviceWorker.controller) {
-          // Force reload to clear the service worker controller and reset page isolation
-          window.location.reload();
-        }
-      } catch (e) {
-        console.error("[coi-sw] Error cleaning up root service worker:", e);
-      }
+      } catch (e) { }
       return;
     }
 
-    // On iOS/Safari and on the player page:
+    // On iOS/Safari, if already isolated, skip registration
     if (window.crossOriginIsolated) return;
     if (!window.isSecureContext) return;
 
     try {
-      // Prior to registering the player-scoped service worker, make sure
-      // we clear any existing root-scoped worker to avoid conflicts.
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const reg of registrations) {
-        const scopeUrl = new URL(reg.scope);
-        if (scopeUrl.pathname === "/") {
-          await reg.unregister();
-          console.log("[coi-sw] Cleaned up root service worker before registering player-scoped worker.");
-        }
-      }
-
       const scriptSrc = document.currentScript ? document.currentScript.src : "/coi-serviceworker.js";
       const reg = await navigator.serviceWorker.register(
         scriptSrc,
-        { scope: "/player" }
+        { scope: "/" }
       );
 
-      // Force reload once when service worker becomes active to apply COOP/COEP headers to the document.
-      // Note: we only do this reload when on the player page.
+      // Force reload once when service worker becomes active to apply COOP/COEP headers to the document
       if (reg.active && !navigator.serviceWorker.controller) {
         window.location.reload();
       }
