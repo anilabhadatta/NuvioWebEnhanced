@@ -25,6 +25,18 @@ if (typeof window === "undefined") {
       return;
     }
 
+    // 1b. Bypass ALL image requests — let the browser load them natively.
+    // App thumbnails use crossOrigin="anonymous" and their CDNs (TMDB, poster
+    // hosts) respond with CORS, which already satisfies COEP: require-corp.
+    // Reconstructing an image response here (new Response(res.body, ...)) can
+    // strip that CORS approval and, combined with Safari's cache, produces the
+    // intermittent broken-thumbnail bug. Skipping images does NOT affect the
+    // document's COOP/COEP isolation headers (SharedArrayBuffer) or cross-origin
+    // video segments, so playback behaviour is unchanged.
+    if (req.destination === "image") {
+      return;
+    }
+
     e.respondWith(
       fetch(req)
         .then((res) => {

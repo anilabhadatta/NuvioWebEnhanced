@@ -1420,7 +1420,7 @@ export default function PlayerScreen() {
             >
               {nextEpisode.thumbnail ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={nextEpisode.thumbnail} alt="" className="w-full h-full object-cover" />
+                <img src={nextEpisode.thumbnail} alt="" className="w-full h-full object-cover" crossOrigin="anonymous" />
               ) : (
                 <div className="w-full h-full bg-white/5" />
               )}

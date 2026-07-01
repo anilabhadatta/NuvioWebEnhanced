@@ -384,12 +384,14 @@ export default function FolderPage() {
             src={folder.heroBackdropUrl}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-top"
+            crossOrigin="anonymous"
           />
         ) : folder.coverImageUrl ? (
           <img
             src={folder.coverImageUrl}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-center"
+            crossOrigin="anonymous"
           />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#111]" />
@@ -432,6 +434,7 @@ export default function FolderPage() {
               src={folder.titleLogoUrl}
               alt={folder.title}
               className="h-12 max-w-[240px] object-contain drop-shadow-2xl"
+              crossOrigin="anonymous"
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
           ) : (
