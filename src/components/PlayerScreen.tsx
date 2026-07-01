@@ -985,20 +985,38 @@ export default function PlayerScreen() {
         if (userPausedRef.current) return;
         const p = typeof v.play === 'function' ? v.play() : null;
         if (p && typeof p.catch === 'function') {
-          p.catch(() => {
-            // Browser blocked unmuted autoplay (common on iPadOS Safari on hard refresh).
-            // DO NOT fall back to muted — instead pause cleanly at 0:00 and show the
-            // play button. When the user taps play that IS a real user gesture, so
-            // the browser will allow unmuted playback immediately.
-            try {
-              if (typeof v.pause === 'function') v.pause();
-              v.currentTime = 0;
-            } catch (_) {}
-            setCurrentTime(0);
-            setUserPaused(true);
-            autoplayTriggered = false;
+          p.catch((err: any) => {
+            // Unmuted play failed. Fallback to muted autoplay!
+            setIsMuted(true);
+            setMutedByAutoplay(true);
+            if (typeof v.muted !== 'undefined') v.muted = true;
+            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
+            setTimeout(() => {
+              if (!userPausedRef.current) {
+                typeof v.play === 'function' && v.play();
+              }
+            }, 100);
           });
         }
+
+        // Custom player autoplay block detection: Check if the audio context is suspended.
+        // If it is suspended and the player is not muted, the browser blocked unmuted autoplay.
+        // Switch to muted autoplay so it continues playing instead of remaining stuck on black screen.
+        setTimeout(() => {
+          if (userPausedRef.current) return;
+          const isSuspended = v.player?.audioRenderer?.audioContext?.state === "suspended";
+          if (isSuspended && !v.player?.muted) {
+            setIsMuted(true);
+            setMutedByAutoplay(true);
+            if (typeof v.muted !== 'undefined') v.muted = true;
+            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
+            setTimeout(() => {
+              if (!userPausedRef.current) {
+                typeof v.play === 'function' && v.play();
+              }
+            }, 100);
+          }
+        }, 150);
       }, 800); // 800ms delay to let the decoder pipeline warm up fully before play
     };
 
