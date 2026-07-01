@@ -356,7 +356,9 @@ export default function PlayerScreen() {
       const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const targetTime = ratio * duration;
-      video.currentTime = targetTime;
+      try {
+        video.currentTime = targetTime;
+      } catch (_) {}
       setCurrentTime(targetTime);
     }
   };
@@ -1288,34 +1290,29 @@ EventDump: ${JSON.stringify(collected)}`;
     playNextRef.current = () => { void playNextEpisode(); };
   }, [playNextEpisode]);
 
-  // Fullscreen toggle
+  // Fullscreen toggle — works on desktop (standard API) and iPadOS Safari (webkit prefix).
+  // On iOS/iPadOS the Fullscreen API is not available on arbitrary elements; we must use
+  // webkitRequestFullscreen on the document root element, which Safari does support.
   const toggleFullscreen = useCallback(() => {
     try {
-      const player = videoRef.current; // This is <movi-player>
-      const nativeVideo = player?.video || player?.shadowRoot?.querySelector('video') || player?.querySelector('video');
+      const isInFullscreen =
+        !!document.fullscreenElement || !!(document as any).webkitFullscreenElement;
 
-      // Detect iOS/iPadOS
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-        (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/.test(navigator.userAgent));
-
-      if (isIOS && nativeVideo && typeof nativeVideo.webkitEnterFullscreen === 'function') {
-        nativeVideo.webkitEnterFullscreen();
-        return;
-      }
-
-      if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
-        if (document.exitFullscreen) {
+      if (isInFullscreen) {
+        // Exit fullscreen
+        if (typeof document.exitFullscreen === 'function') {
           document.exitFullscreen();
-        } else if ((document as any).webkitExitFullscreen) {
+        } else if (typeof (document as any).webkitExitFullscreen === 'function') {
           (document as any).webkitExitFullscreen();
         }
       } else {
-        if (player?.requestFullscreen) {
-          player.requestFullscreen();
-        } else if (player?.webkitRequestFullscreen) {
-          player.webkitRequestFullscreen();
-        } else if (document.documentElement.requestFullscreen) {
-          document.documentElement.requestFullscreen();
+        // Enter fullscreen — try the outermost container, fall back to documentElement
+        const target: any = document.documentElement;
+        if (typeof target.requestFullscreen === 'function') {
+          target.requestFullscreen();
+        } else if (typeof target.webkitRequestFullscreen === 'function') {
+          // iPadOS Safari
+          target.webkitRequestFullscreen();
         }
       }
     } catch (e) {
@@ -1737,7 +1734,7 @@ EventDump: ${JSON.stringify(collected)}`;
             const displayProgress = isDraggingProgress ? dragProgress : progress;
             return (
               <div
-                className="w-full h-2 bg-white/20 rounded-full cursor-pointer mb-6 group relative"
+                className="w-full py-4 -my-4 cursor-pointer mb-6 group relative select-none pointer-events-auto"
                 style={{ touchAction: "none" }}
                 onPointerDown={handleProgressPointerDown}
                 onPointerMove={handleProgressPointerMove}
@@ -1745,8 +1742,13 @@ EventDump: ${JSON.stringify(collected)}`;
                 onPointerCancel={handleProgressLostPointerCapture}
                 onLostPointerCapture={handleProgressLostPointerCapture}
               >
-                <div className="h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${displayProgress}% - 8px)` }} />
+                <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
+                </div>
+                <div 
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity pointer-events-none" 
+                  style={{ left: `calc(${displayProgress}% - 8px)` }} 
+                />
               </div>
             );
           })()}
