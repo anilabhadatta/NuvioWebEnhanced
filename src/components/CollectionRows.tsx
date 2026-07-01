@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Collection, CollectionFolder, pullCollections, loadLocalCollections } from "@/lib/collections";
+import { Collection, CollectionFolder, pullCollections, loadLocalCollections, normalizeGithubUrl } from "@/lib/collections";
 import { TMDBMovie } from "@/lib/tmdb";
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
@@ -107,7 +107,7 @@ function CollectionRow({
           {folders.length}
         </span>
       </div>
-      
+
       <div className="relative">
         <button
           onClick={scrollLeft}
@@ -129,7 +129,7 @@ function CollectionRow({
         <div ref={rowRef} className="flex gap-4 overflow-x-auto hide-scrollbar pb-6 pt-2 px-1">
           {folders.map((folder) => {
             const shape = folder.tileShape || "landscape";
-            
+
             // Layout size classes based on tileShape
             let sizeClass = "w-60 h-[135px]"; // Default landscape
             if (shape === "wide") sizeClass = "w-80 h-[135px]";
@@ -155,7 +155,7 @@ function CollectionRow({
                 <div className="w-full h-full relative bg-gradient-to-br from-[#202020] to-[#151515] flex flex-col items-center justify-center p-3 text-center">
                   {folder.coverImageUrl ? (
                     <img
-                      src={folder.coverImageUrl}
+                      src={normalizeGithubUrl(folder.coverImageUrl)}
                       alt={folder.title}
                       className="absolute inset-0 w-full h-full object-cover"
                       loading="lazy"
@@ -314,9 +314,8 @@ function FolderAsMovieRow({
               {[1, 2, 3, 4, 5].map((i) => (
                 <div
                   key={i}
-                  className={`animate-pulse rounded-xl bg-white/5 shrink-0 ${
-                    landscape ? "w-60 h-[135px]" : "w-40 h-[240px]"
-                  }`}
+                  className={`animate-pulse rounded-xl bg-white/5 shrink-0 ${landscape ? "w-60 h-[135px]" : "w-40 h-[240px]"
+                    }`}
                 />
               ))}
             </div>
@@ -325,14 +324,13 @@ function FolderAsMovieRow({
               <div
                 key={meta.id}
                 onClick={() => handleMovieClick(meta)}
-                className={`row-card cursor-pointer rounded-xl relative group/card shrink-0 transition-transform duration-300 hover:scale-105 hover:z-10 shadow-md ${
-                  landscape ? "w-60 h-[135px]" : "w-40 h-[240px]"
-                }`}
+                className={`row-card cursor-pointer rounded-xl relative group/card shrink-0 transition-transform duration-300 hover:scale-105 hover:z-10 shadow-md ${landscape ? "w-60 h-[135px]" : "w-40 h-[240px]"
+                  }`}
               >
                 <div className="w-full h-full rounded-xl overflow-hidden relative bg-[#222]">
                   {meta.poster ? (
                     <img
-                      src={meta.poster}
+                      src={normalizeGithubUrl(meta.poster)}
                       alt={meta.name}
                       className="w-full h-full object-cover"
                       loading="lazy"

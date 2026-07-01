@@ -159,3 +159,36 @@ export async function pushCollections(collections: Collection[]): Promise<boolea
     return false;
   }
 }
+
+/**
+ * Normalizes GitHub web UI URLs into direct raw.githubusercontent.com URLs.
+ * This resolves CORS redirects which fail under strict COEP/ServiceWorker policies.
+ */
+export function normalizeGithubUrl(url: string | undefined): string {
+  if (!url) return "";
+  const trimmed = url.trim();
+
+  // Check if it's a GitHub link that needs normalization
+  if (
+    trimmed.includes("github.com") &&
+    (trimmed.includes("/blob/") || trimmed.includes("?raw=true") || trimmed.includes("&raw=true"))
+  ) {
+    try {
+      const urlObj = new URL(trimmed);
+      urlObj.searchParams.delete("raw");
+      let path = urlObj.pathname;
+      // Convert /blob/BRANCH to /BRANCH
+      path = path.replace("/blob/", "/");
+      return `https://raw.githubusercontent.com${path}${urlObj.search}`;
+    } catch {
+      // Fallback string replacement if URL parsing fails
+      return trimmed
+        .replace("github.com", "raw.githubusercontent.com")
+        .replace("/blob/", "/")
+        .replace(/\?raw=true&?/, "")
+        .replace(/&raw=true/, "");
+    }
+  }
+  return trimmed;
+}
+
