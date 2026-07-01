@@ -69,7 +69,7 @@ export default function TorboxLibrary() {
     const link = await requestTorboxLink(apiKey, item.id, fileId);
     setResolving(null);
     if (link) {
-      router.push(`/player?id=torbox_${item.id}_${fileId}&type=movie&url=${encodeURIComponent(link)}`);
+      window.location.href = `/player?id=torbox_${item.id}_${fileId}&type=movie&url=${encodeURIComponent(link)}`;
     } else {
       setError("Could not resolve a download link for this file.");
     }

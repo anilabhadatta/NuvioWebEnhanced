@@ -246,7 +246,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
           if (key) {
             const link = await requestTorboxLink(key, torrentId, fileId);
             if (link) {
-              router.push(`/player?id=${item.id}&type=${item.type}&url=${encodeURIComponent(link)}`);
+              window.location.href = `/player?id=${item.id}&type=${item.type}&url=${encodeURIComponent(link)}`;
               return;
             }
           }
@@ -267,7 +267,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
       try { sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl); } catch { /* ignore */ }
     }
     setPicker(null);
-    router.push(route);
+    window.location.href = route;
   };
 
   return (

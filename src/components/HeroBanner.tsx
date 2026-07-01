@@ -205,7 +205,7 @@ export default function HeroBanner() {
               if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
               else sessionStorage.removeItem("nuvio.currentAddonUrl");
             } catch { /* ok */ }
-            router.push(route);
+            window.location.href = route;
           }}
         />
       )}

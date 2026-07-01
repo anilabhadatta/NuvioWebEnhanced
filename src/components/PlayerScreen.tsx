@@ -1259,7 +1259,7 @@ EventDump: ${JSON.stringify(collected)}`;
       }
 
       const u = encodeURIComponent(stream.url);
-      router.replace(
+      window.location.replace(
         `/player?id=${movieId}&type=${mediaType}&url=${u}&s=${nextEpisode.season}&e=${nextEpisode.episode}`
       );
     } catch (err) {
@@ -2265,7 +2265,7 @@ EventDump: ${JSON.stringify(collected)}`;
               if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
               else sessionStorage.removeItem("nuvio.currentAddonUrl");
             } catch { /* ok */ }
-            router.replace(route);
+            window.location.replace(route);
             setShowStreamPicker(false);
             setStreamPickerSeason(null);
             setStreamPickerEpisode(null);
