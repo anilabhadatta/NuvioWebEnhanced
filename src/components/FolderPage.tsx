@@ -71,22 +71,24 @@ export default function FolderPage() {
   const [activeTabIdx, setActiveTabIdx] = useState<number>(ALL_TAB);
   const [tabStates, setTabStates] = useState<Record<number, TabState>>({});
   const [idToUrl, setIdToUrl] = useState<Map<string, string>>(new Map());
+  const [addonsResolved, setAddonsResolved] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
   const tabContainerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const fetchedTabsRef = useRef<Set<number>>(new Set());
 
   // Restore scroll and movie on mount
   useEffect(() => {
     const lastMovie = sessionStorage.getItem("lastOpenedMovie");
     if (lastMovie) {
-      try { setSelectedMovie(JSON.parse(lastMovie)); } catch(e) {}
+      try { setSelectedMovie(JSON.parse(lastMovie)); } catch (e) { }
     }
-    
+
     requestAnimationFrame(() => setMounted(true));
-    
+
     // Restore scroll position slightly after mount to ensure DOM is ready
     setTimeout(() => {
       const savedScroll = sessionStorage.getItem(`nuvio_folder_scroll_${folderId}`);
@@ -117,7 +119,7 @@ export default function FolderPage() {
               if (!active) return true;
               setFolder(f);
               setCollectionTitle(col.title);
-  
+
               const needsAddon = (f.sources || []).some(
                 (s) => !s.provider || (s.provider as string) === "addon",
               );
@@ -130,13 +132,26 @@ export default function FolderPage() {
                     if (manifest?.id) map.set(manifest.id, a.url);
                   }),
                 );
-                if (active) setIdToUrl(map);
+                if (active) {
+                  setIdToUrl(map);
+                  setAddonsResolved(true);
+                }
+              } else if (active) {
+                setAddonsResolved(true);
               }
-  
+
               // Restore tab state from session storage
               const savedTabs = sessionStorage.getItem(`nuvio_folder_tabs_${folderId}`);
               if (savedTabs) {
-                try { setTabStates((prev) => Object.keys(prev).length > 0 ? prev : JSON.parse(savedTabs)); } catch(e) {}
+                try {
+                  const parsed = JSON.parse(savedTabs);
+                  // Sanitize: clear stuck loading states from previous crashed sessions
+                  Object.keys(parsed).forEach(k => {
+                    parsed[k].loading = false;
+                    parsed[k].loadingMore = false;
+                  });
+                  setTabStates((prev) => Object.keys(prev).length > 0 ? prev : parsed);
+                } catch (e) { }
               }
               const savedActiveTab = sessionStorage.getItem(`nuvio_folder_activeTab_${folderId}`);
               if (savedActiveTab) {
@@ -221,7 +236,7 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-  // ── Load "All" tab — merges first page of all sources ────────────────────
+  // ── Load "All" tab — fetches sources one by one in a circular manner ──────
   const loadAllTab = useCallback(
     async (reset = false) => {
       const current = tabStates[ALL_TAB] || INITIAL_TAB;
@@ -233,34 +248,22 @@ export default function FolderPage() {
 
       setTabState(ALL_TAB, isFirstLoad ? { loading: true } : { loadingMore: true });
       try {
-        const results: any[] = [];
-        const batchSize = 3;
-        for (let i = 0; i < sources.length; i += batchSize) {
-          const batch = sources.slice(i, i + batchSize);
-          const res = await Promise.all(
-            batch.map((s) => resolveSourcePage(s as any, idToUrl, nextPage))
-          );
-          results.push(...res);
-        }
+        // Circular logic: nextPage = 1 -> source 0 page 1. nextPage = 2 -> source 1 page 1.
+        const sourceIndex = (nextPage - 1) % sources.length;
+        const sourcePage = Math.floor((nextPage - 1) / sources.length) + 1;
+        const source = sources[sourceIndex];
 
-        let maxTotalPages = 1;
-        const merged: CatalogMeta[] = [];
-        const seenInBatch = new Set<string>();
-        
-        for (const res of results) {
-          if (res.totalPages > maxTotalPages) maxTotalPages = res.totalPages;
-          for (const item of res.items) {
-            if (!seenInBatch.has(item.id)) {
-              seenInBatch.add(item.id);
-              merged.push(item);
-            }
-          }
-        }
+        // Fetch just this ONE source's page to keep it extremely fast
+        const res = await resolveSourcePage(source as any, idToUrl, sourcePage);
+
+        // Virtually infinite scrolling (e.g. 50 pages deep per source max)
+        const maxTotalPages = sources.length * 50;
 
         setTabStates((prev) => {
           const existing = prev[ALL_TAB] || INITIAL_TAB;
           const existingIds = new Set(existing.metas.map((m) => m.id));
-          const newItems = merged.filter((m) => !existingIds.has(m.id));
+          const newItems = res.items.filter((m) => !existingIds.has(m.id));
+
           return {
             ...prev,
             [ALL_TAB]: {
@@ -280,21 +283,46 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-  // ── Bootstrap: load "All" tab when folder is ready ──────────────────────
+  // ── Bootstrap: set initial active tab when folder is ready ───────────────
   useEffect(() => {
-    if (sources.length > 0 && folder) {
-      setTabStates({});
+    if (sources.length > 0 && folder && Object.keys(tabStates).length === 0) {
       setActiveTabIdx(ALL_TAB);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folder, idToUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folder, sources.length]);
 
+  // ── Load active tab content ──────────────────────────────────────────────
   useEffect(() => {
-    if (sources.length > 0 && folder && activeTabIdx === ALL_TAB) {
-      loadAllTab(true);
+    if (!folder || sources.length === 0) return;
+
+    const needsAddon = sources.some(
+      (s: any) => !s.provider || (s.provider as string) === "addon"
+    );
+    if (needsAddon && !addonsResolved) {
+      return; // Wait for addon URLs to resolve before fetching
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folder, idToUrl]);
+
+    // If we've already initiated a fetch for this tab in this session, skip.
+    if (fetchedTabsRef.current.has(activeTabIdx)) {
+      return;
+    }
+
+    const currentTabState = tabStates[activeTabIdx];
+    // Only skip fetching if we legitimately have cached data. If it was stuck loading and empty, force a re-fetch.
+    if (currentTabState?.loaded && currentTabState.metas.length > 0) {
+      fetchedTabsRef.current.add(activeTabIdx);
+      return;
+    }
+
+    fetchedTabsRef.current.add(activeTabIdx);
+
+    if (activeTabIdx === ALL_TAB) {
+      loadAllTab(true);
+    } else {
+      loadSourceTab(activeTabIdx, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabIdx, folder, idToUrl, loadAllTab, loadSourceTab, sources.length, addonsResolved]);
 
   // ── IntersectionObserver for infinite scroll ─────────────────────────────
   useEffect(() => {
@@ -313,7 +341,7 @@ export default function FolderPage() {
           }
         }
       },
-      { rootMargin: "400px" },
+      { rootMargin: "1200px" },
     );
 
     observer.observe(sentinel);
@@ -579,7 +607,7 @@ export default function FolderPage() {
           onPlay={(movie, stream, season, episode) => {
             // Save scroll position before navigating away
             sessionStorage.setItem(`nuvio_folder_scroll_${folderId}`, String(window.scrollY));
-            
+
             const url = stream.url ? encodeURIComponent(stream.url) : "";
             const tmdbId = movie.id;
             const type = movie.media_type || (movie.title ? "movie" : "tv");
