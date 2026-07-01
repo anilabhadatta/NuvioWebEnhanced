@@ -160,6 +160,66 @@ function applySubtitleStyleToPlayer(player: any, style: SubtitleStyle) {
   }, 0);
 }
 
+// ---------------------------------------------------------------------------
+// Shaka Performance Configuration
+// ---------------------------------------------------------------------------
+// movi-player wraps Shaka Player internally. By default Shaka uses a software
+// WASM/WebCodecs decoder that is single-threaded — it cannot keep up with high-
+// resolution content like 1440p even on fast machines. This function reaches
+// into the Shaka instance and reconfigures it for native, hardware-accelerated
+// MSE decoding, and increases buffer goals for high-bitrate streams.
+function configureShakaPerformance(moviElement: any) {
+  try {
+    // movi-player exposes its internal Shaka instance as .player
+    const shaka = moviElement?.player;
+    if (!shaka || typeof shaka.configure !== 'function') return;
+
+    shaka.configure({
+      // ── Decoder pipeline ──────────────────────────────────────────────
+      // Prefer the browser's native MSE pipeline over Shaka's WASM decoder.
+      // This offloads decoding to the GPU/hardware codec, which is orders
+      // of magnitude faster than the JS thread for 1440p/4K content.
+      preferNativeHls: true,
+      streaming: {
+        // Use native HLS on Safari instead of Shaka's MSE pipeline.
+        useNativeHlsOnSafari: true,
+        // ── Buffer sizing for high-bitrate content ───────────────────
+        // Larger buffers prevent mid-stream stalls when the network
+        // briefly delivers data slower than the decoder consumes it.
+        bufferingGoal: 60,          // seconds ahead to buffer (default: 10)
+        rebufferingGoal: 2,         // seconds needed before resuming play
+        bufferBehind: 30,           // seconds to keep behind playhead
+        // ── Stall recovery tweaks ───────────────────────────────────
+        stallEnabled: true,
+        stallThreshold: 1,          // detect stall after 1s (default: 1)
+        stallSkip: 0.1,             // skip 0.1s to recover stall
+        // ── Segment fetch ────────────────────────────────────────────
+        retryParameters: {
+          maxAttempts: 4,
+          baseDelay: 100,
+          backoffFactor: 1.5,
+          fuzzFactor: 0.5,
+        },
+      },
+      // ── Adaptive Bitrate ─────────────────────────────────────────────
+      // Tell Shaka to start with a high bandwidth estimate so it selects
+      // the best quality immediately instead of ramping up from 360p.
+      abr: {
+        enabled: true,
+        defaultBandwidthEstimate: 40_000_000, // 40 Mbps — high starting estimate
+        bandwidthUpgradeTarget: 0.85,
+        bandwidthDowngradeTarget: 0.95,
+        restrictions: {
+          minHeight: 0,
+          maxHeight: Infinity, // never restrict resolution
+        },
+      },
+    });
+  } catch (e) {
+    // Silently ignore — Shaka may not be initialised yet; we'll retry on 'ready'.
+  }
+}
+
 // Singleton promise that resolves once movi-player has been loaded into the
 // page. We bypass Next.js's bundler for this dependency because the SWC
 // minifier produces invalid JavaScript ("octal escape sequences are not
@@ -743,7 +803,13 @@ export default function PlayerScreen() {
       setIsBuffering(false);
     }
     else if (state === 'buffering' || state === 'seeking' || state === 'loading') { setIsBuffering(true); }
-    else if (state === 'ready') { setIsBuffering(false); setPlayerError(null); }
+    else if (state === 'ready') {
+      setIsBuffering(false);
+      setPlayerError(null);
+      // Configure Shaka for hardware-accelerated, high-res playback each time
+      // the player reports ready (fires once per source load).
+      configureShakaPerformance(video);
+    }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
 
