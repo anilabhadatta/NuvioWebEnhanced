@@ -237,6 +237,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
                       alt={title_}
                       className="w-full h-full object-cover"
                       loading="lazy"
+                      crossOrigin="anonymous"
                     />
                   ) : isTorbox ? (
                     <div className="w-full h-full bg-gradient-to-br from-[#0f172a] to-[#020617] flex flex-col items-center justify-center text-white border border-white/5">
