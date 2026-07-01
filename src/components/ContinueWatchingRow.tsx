@@ -1,12 +1,14 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { getWatchProgress, WatchProgress } from "@/lib/watchProgress";
 import { TMDB_IMAGE_W500, TMDB_API_KEY, resolveStremioIdToMovie } from "@/lib/tmdb";
 import StreamPickerModal from "./StreamPickerModal";
 import { StreamItem } from "@/lib/addonService";
 
 export default function ContinueWatchingRow({ first }: { first?: boolean }) {
+  const router = useRouter();
   const [items, setItems] = useState<WatchProgress[]>([]);
   const [enrichedItems, setEnrichedItems] = useState<any[]>([]);
   const [picker, setPicker] = useState<WatchProgress | null>(null);
@@ -159,7 +161,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
           if (key) {
             const link = await requestTorboxLink(key, torrentId, fileId);
             if (link) {
-              window.location.href = `/player?id=${item.id}&type=${item.type}&url=${encodeURIComponent(link)}`;
+              router.push(`/player?id=${item.id}&type=${item.type}&url=${encodeURIComponent(link)}`);
               return;
             }
           }
@@ -180,7 +182,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
       try { sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl); } catch { /* ignore */ }
     }
     setPicker(null);
-    window.location.href = route;
+    router.push(route);
   };
 
   return (

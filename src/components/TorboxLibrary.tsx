@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   TorboxItem,
   getTorboxApiKey,
@@ -20,6 +21,7 @@ function formatSize(bytes?: number): string {
 }
 
 export default function TorboxLibrary() {
+  const router = useRouter();
   const [apiKey, setApiKey] = useState("");
   const [items, setItems] = useState<TorboxItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,7 +69,7 @@ export default function TorboxLibrary() {
     const link = await requestTorboxLink(apiKey, item.id, fileId);
     setResolving(null);
     if (link) {
-      window.location.href = `/player?id=torbox_${item.id}_${fileId}&type=movie&url=${encodeURIComponent(link)}`;
+      router.push(`/player?id=torbox_${item.id}_${fileId}&type=movie&url=${encodeURIComponent(link)}`);
     } else {
       setError("Could not resolve a download link for this file.");
     }

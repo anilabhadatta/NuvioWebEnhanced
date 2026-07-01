@@ -284,18 +284,8 @@ export default function PlayerScreen() {
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [userPaused, setUserPaused] = useState(false);
-  const [isMuted, setIsMuted] = useState(() => {
-    if (typeof navigator !== 'undefined' && navigator.userActivation) {
-      return !navigator.userActivation.hasBeenActive;
-    }
-    return false;
-  });
-  const [mutedByAutoplay, setMutedByAutoplay] = useState(() => {
-    if (typeof navigator !== 'undefined' && navigator.userActivation) {
-      return !navigator.userActivation.hasBeenActive;
-    }
-    return false;
-  });
+  const [isMuted, setIsMuted] = useState(false);
+  const [mutedByAutoplay, setMutedByAutoplay] = useState(false);
 
   const [isBuffering, setIsBuffering] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
@@ -340,7 +330,7 @@ export default function PlayerScreen() {
     e.preventDefault(); // Prevents native browser selection / drag session
     setIsDraggingProgress(true);
     e.currentTarget.setPointerCapture(e.pointerId);
-    
+
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     setDragProgress(ratio * 100);
@@ -360,7 +350,7 @@ export default function PlayerScreen() {
     if (!isDraggingProgress) return;
     setIsDraggingProgress(false);
     e.currentTarget.releasePointerCapture(e.pointerId);
-    
+
     const video = videoRef.current;
     if (video && duration) {
       const rect = e.currentTarget.getBoundingClientRect();
@@ -994,15 +984,37 @@ export default function PlayerScreen() {
         const p = typeof v.play === 'function' ? v.play() : null;
         if (p && typeof p.catch === 'function') {
           p.catch((err: any) => {
-            try {
-              if (typeof v.pause === 'function') v.pause();
-              v.currentTime = 0;
-            } catch (_) {}
-            setCurrentTime(0);
-            setUserPaused(true);
-            autoplayTriggered = false; // Allow retrying on interaction
+            // Unmuted play failed. Fallback to muted autoplay!
+            setIsMuted(true);
+            setMutedByAutoplay(true);
+            if (typeof v.muted !== 'undefined') v.muted = true;
+            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
+            setTimeout(() => {
+              if (!userPausedRef.current) {
+                typeof v.play === 'function' && v.play();
+              }
+            }, 100);
           });
         }
+
+        // Custom player autoplay block detection: Check if the audio context is suspended.
+        // If it is suspended and the player is not muted, the browser blocked unmuted autoplay.
+        // Switch to muted autoplay so it continues playing instead of remaining stuck on black screen.
+        setTimeout(() => {
+          if (userPausedRef.current) return;
+          const isSuspended = v.player?.audioRenderer?.audioContext?.state === "suspended";
+          if (isSuspended && !v.player?.muted) {
+            setIsMuted(true);
+            setMutedByAutoplay(true);
+            if (typeof v.muted !== 'undefined') v.muted = true;
+            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
+            setTimeout(() => {
+              if (!userPausedRef.current) {
+                typeof v.play === 'function' && v.play();
+              }
+            }, 100);
+          }
+        }, 150);
       }, 800); // 800ms delay to let the decoder pipeline warm up fully before play
     };
 
@@ -1038,7 +1050,7 @@ export default function PlayerScreen() {
             if (typeof val !== 'function' && typeof val !== 'object') {
               collected[key] = val;
             }
-          } catch {}
+          } catch { }
         }
       }
 
@@ -1078,7 +1090,7 @@ EventDump: ${JSON.stringify(collected)}`;
     try {
       if (typeof v.volume !== 'undefined') v.volume = volume;
       if (typeof v.muted !== 'undefined') v.muted = isMuted;
-    } catch (_) {}
+    } catch (_) { }
   }, [volume, isMuted, resolvedSrc]);
 
   // Clear stale state IMMEDIATELY when the requested stream URL changes.
@@ -1813,8 +1825,8 @@ EventDump: ${JSON.stringify(collected)}`;
                                 title={label}
                                 onClick={() => updateSubtitleStyle({ ...subtitleStyle, color: value })}
                                 className={`w-6 h-6 rounded-full border-2 transition-all ${subtitleStyle.color === value
-                                    ? "border-white scale-110 shadow-lg"
-                                    : "border-transparent opacity-75 hover:opacity-100 hover:scale-105"
+                                  ? "border-white scale-110 shadow-lg"
+                                  : "border-transparent opacity-75 hover:opacity-100 hover:scale-105"
                                   }`}
                                 style={{ backgroundColor: value }}
                               />
@@ -1852,8 +1864,8 @@ EventDump: ${JSON.stringify(collected)}`;
                                   ...(value !== "none" ? { bgColor: "transparent", bgPct: 0 } : {}),
                                 })}
                                 className={`py-1.5 px-2 rounded text-xs font-bold transition-colors ${subtitleStyle.edge === value
-                                    ? "bg-white text-black"
-                                    : "bg-white/10 text-white hover:bg-white/20"
+                                  ? "bg-white text-black"
+                                  : "bg-white/10 text-white hover:bg-white/20"
                                   }`}
                               >
                                 {label}
@@ -1888,8 +1900,8 @@ EventDump: ${JSON.stringify(collected)}`;
                                   }
                                 }}
                                 className={`w-6 h-6 rounded-full border-2 transition-all ${subtitleStyle.bgColor === value || (value === "transparent" && subtitleStyle.bgPct === 0)
-                                    ? "border-white scale-110 shadow-lg"
-                                    : "border-white/30 opacity-75 hover:opacity-100 hover:scale-105"
+                                  ? "border-white scale-110 shadow-lg"
+                                  : "border-white/30 opacity-75 hover:opacity-100 hover:scale-105"
                                   }`}
                                 style={{
                                   backgroundColor: value === "transparent" ? "transparent" : value,

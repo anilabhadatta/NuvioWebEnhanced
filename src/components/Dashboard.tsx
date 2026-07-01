@@ -90,7 +90,7 @@ export default function Dashboard() {
                 if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
                 else sessionStorage.removeItem("nuvio.currentAddonUrl");
               } catch { /* ok */ }
-              window.location.href = route;
+              router.push(route);
             }}
           />
         )}
