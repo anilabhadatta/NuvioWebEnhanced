@@ -83,8 +83,8 @@ if (typeof window === "undefined") {
     // Detect desktop Safari (macOS)
     const isDesktopSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
-    // We only need the service worker fallback on iOS/Safari.
-    const needsSW = isIOS || isDesktopSafari;
+    // We only need the service worker fallback on iOS/Safari and specifically on the player page.
+    const needsSW = (isIOS || isDesktopSafari) && isOnPlayerPage;
 
     if (!needsSW) {
       // Clean up the service worker if it was registered with scope "/"
@@ -116,13 +116,25 @@ if (typeof window === "undefined") {
     if (!window.isSecureContext) return;
 
     try {
+      // Prior to registering the player-scoped service worker, make sure
+      // we clear any existing root-scoped worker to avoid conflicts.
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const reg of registrations) {
+        const scopeUrl = new URL(reg.scope);
+        if (scopeUrl.pathname === "/") {
+          await reg.unregister();
+          console.log("[coi-sw] Cleaned up root service worker before registering player-scoped worker.");
+        }
+      }
+
       const scriptSrc = document.currentScript ? document.currentScript.src : "/coi-serviceworker.js";
       const reg = await navigator.serviceWorker.register(
         scriptSrc,
-        { scope: "/" }
+        { scope: "/player" }
       );
 
       // Force reload once when service worker becomes active to apply COOP/COEP headers to the document.
+      // Note: we only do this reload when on the player page.
       if (reg.active && !navigator.serviceWorker.controller) {
         window.location.reload();
       }

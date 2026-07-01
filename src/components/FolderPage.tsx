@@ -409,17 +409,15 @@ export default function FolderPage() {
       <div className="relative h-[40vh] min-h-[260px] overflow-hidden flex-shrink-0">
         {folder.heroBackdropUrl ? (
           <img
-            src={`/api/proxy/image?url=${encodeURIComponent(folder.heroBackdropUrl)}`}
+            src={folder.heroBackdropUrl}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-top"
-            crossOrigin="anonymous"
           />
         ) : folder.coverImageUrl ? (
           <img
-            src={`/api/proxy/image?url=${encodeURIComponent(folder.coverImageUrl)}`}
+            src={folder.coverImageUrl}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-center"
-            crossOrigin="anonymous"
           />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#111]" />
@@ -459,10 +457,9 @@ export default function FolderPage() {
         <div className="absolute bottom-7 left-5 right-5 z-10 flex items-end gap-4">
           {folder.titleLogoUrl ? (
             <img
-              src={`/api/proxy/image?url=${encodeURIComponent(folder.titleLogoUrl)}`}
+              src={folder.titleLogoUrl}
               alt={folder.title}
               className="h-12 max-w-[240px] object-contain drop-shadow-2xl"
-              crossOrigin="anonymous"
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
           ) : (
@@ -562,7 +559,6 @@ export default function FolderPage() {
                       className="w-full h-full object-cover"
                       loading="lazy"
                       decoding="async"
-                      crossOrigin="anonymous"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center p-3 text-center">
