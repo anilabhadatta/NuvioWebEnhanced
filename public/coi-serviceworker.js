@@ -96,9 +96,26 @@ if (typeof window === "undefined") {
         { scope: "/" }
       );
 
-      // Force reload once when service worker becomes active to apply COOP/COEP headers to the document
-      if (reg.active && !navigator.serviceWorker.controller) {
+      // Helper: reload once when the SW becomes active for the first time.
+      // We only reload once (tracked via sessionStorage) to prevent reload loops.
+      const reloadOnce = () => {
+        if (sessionStorage.getItem("coi-reloaded")) return;
+        sessionStorage.setItem("coi-reloaded", "1");
         window.location.reload();
+      };
+
+      if (!navigator.serviceWorker.controller) {
+        // No controller yet — the SW is either installing or already active but
+        // not yet controlling this page (first visit). Watch for activation.
+        const pending = reg.installing || reg.waiting || reg.active;
+        if (pending && pending.state !== "activated") {
+          pending.addEventListener("statechange", function () {
+            if (this.state === "activated") reloadOnce();
+          });
+        } else {
+          // Already active but not controlling — reload so it takes control.
+          reloadOnce();
+        }
       }
     } catch (err) {
       console.warn("[coi-sw] registration failed:", err);
