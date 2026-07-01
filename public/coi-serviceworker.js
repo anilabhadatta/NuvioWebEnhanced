@@ -33,7 +33,7 @@ if (typeof window === "undefined") {
     // intermittent broken-thumbnail bug. Skipping images does NOT affect the
     // document's COOP/COEP isolation headers (SharedArrayBuffer) or cross-origin
     // video segments, so playback behaviour is unchanged.
-    if (req.destination === "image") {
+    if (req.destination === "image" || req.destination === "video" || req.destination === "audio") {
       return;
     }
 

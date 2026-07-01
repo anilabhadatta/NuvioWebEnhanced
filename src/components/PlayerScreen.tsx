@@ -213,8 +213,17 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     // Create immediately as a plain, unregistered element
     let player = wrapperRef.current.querySelector("movi-player") as any;
     if (!player) {
-      wrapperRef.current.innerHTML = `<movi-player class="w-full h-full object-contain" playsinline="true"></movi-player>`;
+      wrapperRef.current.innerHTML = `<movi-player class="w-full h-full object-contain" playsinline="true" crossorigin="anonymous"></movi-player>`;
       player = wrapperRef.current.querySelector("movi-player") as any;
+      // Force crossorigin on the internal video tag once it renders
+      setTimeout(() => {
+        try {
+          const vid = player?.shadowRoot?.querySelector("video") || player?.querySelector("video");
+          if (vid && !vid.hasAttribute("crossorigin")) {
+            vid.setAttribute("crossorigin", "anonymous");
+          }
+        } catch(e) {}
+      }, 250);
       playerRef.current = player;
       onInit(player);
     }
