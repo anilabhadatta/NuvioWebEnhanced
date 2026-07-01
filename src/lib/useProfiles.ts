@@ -20,8 +20,21 @@ export interface ProfilesState {
 const ProfilesContext = createContext<ProfilesState | null>(null);
 
 export function ProfilesProvider({ children }: { children: React.ReactNode }) {
-  const [profiles, setProfiles] = useState<NuvioProfile[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<number>(1);
+  const [profiles, setProfiles] = useState<NuvioProfile[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("nuvio_profiles_cache");
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
+  const [activeProfileId, setActiveProfileId] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      return getActiveProfileId();
+    }
+    return 1;
+  });
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -29,9 +42,17 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     const list = await pullProfiles();
     setProfiles(list);
     setLoading(false);
+    try {
+      localStorage.setItem("nuvio_profiles_cache", JSON.stringify(list));
+    } catch {}
   }, []);
 
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem("nuvio_profiles_cache");
+      if (cached) setProfiles(JSON.parse(cached));
+    } catch {}
+
     setActiveProfileId(getActiveProfileId());
     refresh();
 
@@ -67,9 +88,22 @@ export function useProfiles(): ProfilesState {
 
   // Fallback to local state if hook is used outside provider
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const [profiles, setProfiles] = useState<NuvioProfile[]>([]);
+  const [profiles, setProfiles] = useState<NuvioProfile[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("nuvio_profiles_cache");
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const [activeProfileId, setActiveProfileId] = useState<number>(1);
+  const [activeProfileId, setActiveProfileId] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      return getActiveProfileId();
+    }
+    return 1;
+  });
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const [loading, setLoading] = useState(true);
 
@@ -79,10 +113,18 @@ export function useProfiles(): ProfilesState {
     const list = await pullProfiles();
     setProfiles(list);
     setLoading(false);
+    try {
+      localStorage.setItem("nuvio_profiles_cache", JSON.stringify(list));
+    } catch {}
   }, []);
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem("nuvio_profiles_cache");
+      if (cached) setProfiles(JSON.parse(cached));
+    } catch {}
+
     setActiveProfileId(getActiveProfileId());
     refresh();
 

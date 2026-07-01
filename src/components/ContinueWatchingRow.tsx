@@ -3,18 +3,86 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { getWatchProgress, WatchProgress } from "@/lib/watchProgress";
-import { TMDB_IMAGE_W500, TMDB_API_KEY, resolveStremioIdToMovie } from "@/lib/tmdb";
+import { TMDB_IMAGE_W500, resolveStremioIdToMovie } from "@/lib/tmdb";
 import StreamPickerModal from "./StreamPickerModal";
 import { StreamItem } from "@/lib/addonService";
 
+let isHydrated = false;
+let cachedEnrichedItems: any[] = [];
+const tmdbResolutionCache = new Map<string, any>();
+
+function getInitialProgress(): WatchProgress[] {
+  if (typeof window === "undefined") return [];
+  try {
+    // 1. Get local progress
+    const local = getWatchProgress();
+    
+    // 2. Get cloud progress
+    let cloudData: any[] = [];
+    const cloudStr = localStorage.getItem("nuvio_cloud_progress");
+    if (cloudStr) cloudData = JSON.parse(cloudStr);
+
+    const cloudProgress: WatchProgress[] = cloudData.map((c: any) => ({
+      id: c.content_id,
+      type: c.content_type === "series" ? "tv" : c.content_type,
+      title: "Stream",
+      poster: "",
+      season: c.season || undefined,
+      episode: c.episode || undefined,
+      currentTime: c.position / 1000,
+      duration: c.duration / 1000,
+      updatedAt: c.last_watched
+    }));
+
+    const allProgress = [...local, ...cloudProgress];
+    
+    const getWeight = (p: any) => {
+      if (p.season !== undefined && p.episode !== undefined) {
+        return p.season * 10000 + p.episode;
+      }
+      return p.updatedAt;
+    };
+
+    const uniqueMap = new Map<string, WatchProgress>();
+    for (const p of allProgress) {
+      const idStr = String(p.id);
+      if (!uniqueMap.has(idStr)) {
+        uniqueMap.set(idStr, p);
+      } else {
+        const existing = uniqueMap.get(idStr)!;
+        if (getWeight(p) > getWeight(existing)) {
+          uniqueMap.set(idStr, p);
+        }
+      }
+    }
+    
+    const uniqueProgress = Array.from(uniqueMap.values());
+    uniqueProgress.sort((a, b) => b.updatedAt - a.updatedAt);
+    return uniqueProgress;
+  } catch {
+    return [];
+  }
+}
+
 export default function ContinueWatchingRow({ first }: { first?: boolean }) {
   const router = useRouter();
-  const [items, setItems] = useState<WatchProgress[]>([]);
-  const [enrichedItems, setEnrichedItems] = useState<any[]>([]);
+  const [items, setItems] = useState<WatchProgress[]>(() => {
+    if (typeof window !== "undefined" && isHydrated) {
+      return getInitialProgress();
+    }
+    return [];
+  });
+  const [enrichedItems, setEnrichedItems] = useState<any[]>(() => {
+    if (typeof window !== "undefined" && isHydrated) {
+      return cachedEnrichedItems;
+    }
+    return [];
+  });
   const [picker, setPicker] = useState<WatchProgress | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    isHydrated = true;
     // 1. Get local progress
     const local = getWatchProgress();
     
@@ -71,6 +139,12 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
       
       // Fetch details from TMDB to get images
       Promise.all(uniqueProgress.map(async (p) => {
+        const cacheKey = `${p.id}:${p.type}`;
+        if (tmdbResolutionCache.has(cacheKey)) {
+          const cachedData = tmdbResolutionCache.get(cacheKey);
+          return { ...p, ...cachedData };
+        }
+
         try {
           if (String(p.id).startsWith("torbox_")) {
             const parts = String(p.id).split("_");
@@ -107,16 +181,22 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
                    tmdbData = await searchTmdb(cleanTitle, year || undefined, isTv ? "tv" : "movie");
                 }
                 
-                return { ...p, tmdbData, title: tmdbData ? (tmdbData.title || tmdbData.name) : tboxItem.name };
+                const resVal = { tmdbData, title: tmdbData ? (tmdbData.title || tmdbData.name) : tboxItem.name };
+                tmdbResolutionCache.set(cacheKey, resVal);
+                return { ...p, ...resVal };
               }
             }
-            return { ...p, tmdbData: null };
+            const resVal = { tmdbData: null };
+            tmdbResolutionCache.set(cacheKey, resVal);
+            return { ...p, ...resVal };
           }
 
           const tmdbType = p.type === "series" ? "tv" : p.type;
           const rawId = String(p.id).startsWith("tt") ? String(p.id) : `tmdb:${p.id}`;
           const movie = await resolveStremioIdToMovie(rawId, tmdbType);
-          return { ...p, tmdbData: movie, tmdbId: movie?.id };
+          const resVal = { tmdbData: movie, tmdbId: movie?.id };
+          tmdbResolutionCache.set(cacheKey, resVal);
+          return { ...p, ...resVal };
         } catch (e) {
           return { ...p, tmdbData: null };
         }
@@ -139,8 +219,13 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
         
         const finalItems = Array.from(finalMap.values());
         finalItems.sort((a, b) => b.updatedAt - a.updatedAt);
+        cachedEnrichedItems = finalItems;
         setEnrichedItems(finalItems);
       });
+    } else {
+      setItems([]);
+      setEnrichedItems([]);
+      cachedEnrichedItems = [];
     }
   }, []);
 

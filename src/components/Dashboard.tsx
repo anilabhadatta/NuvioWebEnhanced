@@ -12,9 +12,15 @@ import { TMDB_URLS, TMDBMovie } from "@/lib/tmdb";
 import MovieModal from "./MovieModal";
 import { syncWatchProgressFromCloud } from "@/lib/watchProgress";
 
+import { useAuth } from "@/lib/useAuth";
+import { useProfiles } from "@/lib/useProfiles";
+
 export default function Dashboard() {
   const router = useRouter();
+  const { isAuthenticated, isAnonymous, loading: authLoading } = useAuth();
+  const { loading: profilesLoading } = useProfiles();
   const [selectedMovie, setSelectedMovie] = React.useState<TMDBMovie | null>(null);
+  const [mounted, setMounted] = React.useState(false);
 
   useEffect(() => {
     const last = sessionStorage.getItem("lastOpenedMovie");
@@ -35,20 +41,39 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    const check = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const anon = localStorage.getItem("nuvio_anon");
-      if (!session && !anon) {
+    if (!authLoading) {
+      if (!isAuthenticated && !isAnonymous) {
         router.replace("/");
-      } else {
+      } else if (isAuthenticated) {
         syncWatchProgressFromCloud();
       }
-    };
-    check();
-  }, [router]);
+      // Give a tiny frame delay to ensure browser layout is stable before fading in
+      requestAnimationFrame(() => setMounted(true));
+    }
+  }, [isAuthenticated, isAnonymous, authLoading, router]);
+
+  // While checking auth status or active profile database info, show a clean background with spinner
+  if (authLoading || (isAuthenticated && profilesLoading)) {
+    return (
+      <div className="w-full h-screen bg-[#111111] flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated && !isAnonymous) {
+    return null;
+  }
 
   return (
-    <div className="flex min-h-screen bg-[#111111]">
+    <div
+      className="flex min-h-screen bg-[#111111]"
+      style={{
+        opacity: mounted ? 1 : 0,
+        transform: mounted ? "translateY(0)" : "translateY(12px)",
+        transition: "opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
+      }}
+    >
       <Sidebar />
 
       {/* Main content offset by sidebar width */}
