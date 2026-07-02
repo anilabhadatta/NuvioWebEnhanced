@@ -658,9 +658,15 @@ export default function PlaysVideoPlayerScreen() {
       const list: any[] = [];
       for (let i = 0; i < nativeAudioTracks.length; i++) {
         const t = nativeAudioTracks[i];
+        const label = (t.label || t.language || "").toLowerCase();
+        if (label.includes("handler") || label.includes("mediabunny")) {
+          continue;
+        }
         list.push({ id: i, name: t.label || t.language || `Audio Track ${i + 1}`, active: t.enabled });
       }
-      return list;
+      if (list.length > 0) {
+        return list;
+      }
     }
 
     // 3. Codec-based label from engine's public codecPath getter.
