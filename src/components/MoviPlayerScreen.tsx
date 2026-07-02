@@ -543,7 +543,8 @@ export default function MoviPlayerScreen() {
   // Extended menu union (audio | sub | speed)
   // Note: existing openMenu type only had "audio" | "sub" — we widen via local string.
 
-  const movieId = searchParams.get("id");
+  const rawMovieId = searchParams.get("id");
+  const movieId = rawMovieId ? rawMovieId.replace(/^tmdb:/, "") : null;
   const mediaType = searchParams.get("type");
   const streamUrl = searchParams.get("url");
   const season = searchParams.get("s");

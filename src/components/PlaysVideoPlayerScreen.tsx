@@ -364,7 +364,13 @@ export default function PlaysVideoPlayerScreen() {
   // Extended menu union (audio | sub | speed)
   // Note: existing openMenu type only had "audio" | "sub" — we widen via local string.
 
-  const movieId = searchParams.get("id");
+  const rawMovieId = searchParams.get("id");
+  // Strip any "tmdb:" prefix — e.g. "tmdb:12345" → "12345"
+  // If the raw value is an IMDb id like "tt2861424", parseInt returns NaN.
+  // We gate every TMDB API call on hasValidTmdbId so NaN never reaches the network.
+  const movieId = rawMovieId ? rawMovieId.replace(/^tmdb:/, "") : null;
+  const numericMovieId = movieId ? parseInt(movieId, 10) : NaN;
+  const hasValidTmdbId = Number.isFinite(numericMovieId);
   const mediaType = searchParams.get("type");
   const streamUrl = searchParams.get("url");
   const season = searchParams.get("s");
@@ -468,11 +474,13 @@ export default function PlaysVideoPlayerScreen() {
         const { fetchAllSubtitles } = await import("@/lib/addonService");
         const stremioType = isSeries ? "series" : "movie";
         let imdbId = null;
-        try {
-          const tmdbType = isSeries ? "tv" : "movie";
-          const externalIds = await fetchExternalIds(parseInt(movieId!), tmdbType);
-          if (externalIds?.imdb_id) imdbId = externalIds.imdb_id;
-        } catch (e) { }
+        if (hasValidTmdbId) {
+          try {
+            const tmdbType = isSeries ? "tv" : "movie";
+            const externalIds = await fetchExternalIds(numericMovieId, tmdbType);
+            if (externalIds?.imdb_id) imdbId = externalIds.imdb_id;
+          } catch (e) { }
+        }
 
         const baseId = imdbId || `tmdb:${movieId}`;
         const searchId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
@@ -484,12 +492,12 @@ export default function PlaysVideoPlayerScreen() {
       }
     }
     loadSubtitles();
-  }, [movieId, mediaType, season, episode, streamHash]);
+  }, [movieId, hasValidTmdbId, numericMovieId, mediaType, season, episode, streamHash]);
 
   // Load skip intervals exactly once
   const lastFetchedSkipsId = useRef<string | null>(null);
   useEffect(() => {
-    if (!movieId) return;
+    if (!movieId || !hasValidTmdbId) return;
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
     if (!isSeries || !season || !episode) return;
 
@@ -499,7 +507,7 @@ export default function PlaysVideoPlayerScreen() {
 
     async function loadSkips() {
       try {
-        const externalIds = await fetchExternalIds(parseInt(movieId!), "tv");
+        const externalIds = await fetchExternalIds(numericMovieId, "tv");
         if (externalIds?.imdb_id) {
           const intervals = await fetchSkipIntervals(externalIds.imdb_id, parseInt(season!), parseInt(episode!));
           setSkipIntervals(intervals);
@@ -509,7 +517,7 @@ export default function PlaysVideoPlayerScreen() {
       }
     }
     loadSkips();
-  }, [movieId, mediaType, season, episode]);
+  }, [movieId, hasValidTmdbId, numericMovieId, mediaType, season, episode]);
 
   // Load next-episode metadata from TMDB when on a TV show.
   const lastFetchedNextId = useRef<string | null>(null);
@@ -518,7 +526,7 @@ export default function PlaysVideoPlayerScreen() {
   const autoNextLockRef = useRef(false);
 
   useEffect(() => {
-    if (!movieId) { setNextEpisode(null); return; }
+    if (!movieId || !hasValidTmdbId) { setNextEpisode(null); return; }
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
     if (!isSeries || !season || !episode) { setNextEpisode(null); return; }
 
@@ -535,35 +543,35 @@ export default function PlaysVideoPlayerScreen() {
 
     (async () => {
       try {
-        const next = await fetchNextEpisode(parseInt(movieId!), parseInt(season!), parseInt(episode!));
+        const next = await fetchNextEpisode(numericMovieId, parseInt(season!), parseInt(episode!));
         setNextEpisode(next);
       } catch (e) {
         console.error("fetchNextEpisode failed", e);
         setNextEpisode(null);
       }
     })();
-  }, [movieId, mediaType, season, episode]);
+  }, [movieId, hasValidTmdbId, numericMovieId, mediaType, season, episode]);
 
   // Fetch total seasons count for the episodes panel
   useEffect(() => {
-    if (!movieId) return;
+    if (!movieId || !hasValidTmdbId) return;
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
     if (!isSeries) return;
     (async () => {
       try {
-        const details = await fetchTvDetails(parseInt(movieId));
+        const details = await fetchTvDetails(numericMovieId);
         if (details?.number_of_seasons) setTotalSeasons(details.number_of_seasons);
       } catch (_) { /* ignore */ }
     })();
-  }, [movieId, mediaType, season]);
+  }, [movieId, hasValidTmdbId, numericMovieId, mediaType, season]);
 
   // Fetch episodes when the episodes panel is opened or season changes
   useEffect(() => {
-    if (!showEpisodesPanel || !movieId) return;
+    if (!showEpisodesPanel || !movieId || !hasValidTmdbId) return;
     setEpisodesLoading(true);
     (async () => {
       try {
-        const data = await fetchTvSeason(parseInt(movieId), episodesSeasonNum);
+        const data = await fetchTvSeason(numericMovieId, episodesSeasonNum);
         setEpisodesData(data?.episodes || []);
       } catch (e) {
         console.error("Failed to fetch season episodes", e);
@@ -572,169 +580,193 @@ export default function PlaysVideoPlayerScreen() {
         setEpisodesLoading(false);
       }
     })();
-  }, [showEpisodesPanel, movieId, episodesSeasonNum]);
+  }, [showEpisodesPanel, movieId, hasValidTmdbId, numericMovieId, episodesSeasonNum]);
 
 
+  // --------------------------------------------------------------------------------
   // --------------------------------------------------------------------------------
   // 2. STABLE EVENT LISTENERS (Prevents React Re-render Loop Crashes)
   // --------------------------------------------------------------------------------
   const onStateChangeRef = useRef<((e: any) => void) | null>(null);
-  const onTracksChangeRef = useRef<((e: any) => void) | null>(null);
   const onTimeUpdateRef = useRef<(() => void) | null>(null);
 
   // Track state refs for deep comparison to prevent infinite loop re-renders
-  const audiosCache = useRef(JSON.stringify([{ id: 0, name: "Default" }]));
+  const audiosCache = useRef("[]"); // start empty so first sync always triggers setAudios
   const subtitlesCache = useRef(JSON.stringify([{ id: -1, name: "None" }]));
 
-  // Assign refs DIRECTLY during render — no useEffect needed.
-  // Refs don't trigger re-renders so this is safe and avoids infinite loops.
-  onStateChangeRef.current = (e: any) => {
-    const video = videoRef.current;
-    if (!video || !resolvedSrc) return;
-    if (video.getAttribute("src") !== resolvedSrc) return;
-
-    const state = e.detail;
-    if (state === 'playing') {
-      setIsBuffering(false);
-      setIsPlaying(true);
-      setPlayerError(null);
-      // NOTE: Do NOT sync volume/muted here — doing so on every buffering→playing
-      // transition causes audio jitter. Volume is synced only on explicit user actions
-      // (togglePlay, handleVolumeChange, keyboard shortcuts).
-      setIsSoftwareDec(false);
+  // Helper to discover audio tracks from HLS, native video, or engine codec metadata
+  const getAudioTracks = useCallback((video: HTMLVideoElement, engine: any) => {
+    // 1. hls.js audioTracks — populated only from Master Playlist #EXT-X-MEDIA renditions.
+    // In PlaysVideo HLS-remux mode the playlist is a MEDIA playlist (no #EXT-X-MEDIA),
+    // so hls.js only exposes one synthetic audio group (with an internal name like
+    // "MediabunnySoundHandler"). We skip any entry whose name looks like an internal
+    // handler and fall through to the codec-based label instead.
+    const hlsInst = (engine as any)?.hls;
+    const hlsTracks: any[] = hlsInst?.audioTracks ?? [];
+    const meaningfulHlsTracks = hlsTracks.filter((t: any) => {
+      const n: string = (t.name || t.lang || "").toLowerCase();
+      // Suppress synthetic handler names; keep real language/name entries
+      return n && !n.includes("handler") && !n.includes("mediabunny");
+    });
+    if (meaningfulHlsTracks.length > 0) {
+      return meaningfulHlsTracks.map((t: any, idx: number) => ({
+        id: hlsTracks.indexOf(t),
+        name: t.name || t.lang || `Audio Track ${idx + 1}`,
+        active: hlsInst.audioTrack === hlsTracks.indexOf(t),
+      }));
     }
-    else if (state === 'paused') {
-      setIsPlaying(false);
-      setIsBuffering(false);
-    }
-    else if (state === 'buffering' || state === 'seeking' || state === 'loading') { setIsBuffering(true); }
-    else if (state === 'ready') {
-      setIsBuffering(false);
-      setPlayerError(null);
-      // Configure Shaka for hardware-accelerated, high-res playback each time
-      // the player reports ready (fires once per source load).
-      
-      setIsSoftwareDec(false);
-    }
-    else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
-  };
 
-  onTracksChangeRef.current = (e: any) => {
-    const video = videoRef.current;
-    if (!video || !resolvedSrc) return;
-    if (video.getAttribute("src") !== resolvedSrc) return;
+    // 2. Native video.audioTracks — works in Safari passthrough mode
+    const nativeAudioTracks = (video as any).audioTracks;
+    if (nativeAudioTracks?.length > 0) {
+      const list: any[] = [];
+      for (let i = 0; i < nativeAudioTracks.length; i++) {
+        const t = nativeAudioTracks[i];
+        list.push({ id: i, name: t.label || t.language || `Audio Track ${i + 1}`, active: t.enabled });
+      }
+      return list;
+    }
 
-    const { audio, subtitle } = e.detail;
-    if (audio?.length > 0) {
-      const newAudios = audio.map((t: any, i: number) => {
-        const parts = [t.language, t.label, t.codec ? `[${t.codec}]` : '', t.channels ? `${t.channels}ch` : ''];
-        const niceName = parts.filter(Boolean).join(' ') || `Audio ${i + 1}`;
-        return { id: t.id, name: niceName };
+    // 3. Codec-based label from engine's public codecPath getter.
+    // In HLS-remux mode PlaysVideo serves one mixed audio stream.
+    // Use the public getter (engine.codecPath) rather than the private _codecPath field.
+    const codecPath = engine?.codecPath;
+    const srcCodec = codecPath?.sourceAudio?.short;
+    const outCodec = codecPath?.outputAudio?.short;
+    const codec = srcCodec || outCodec;
+    const trackName = codec ? `Audio (${codec.toUpperCase()})` : 'Audio Track 1';
+    return [{ id: 0, name: trackName, active: true }];
+  }, []);
+
+  // Stable refs so syncTracksImpl has ZERO state deps — never goes stale in DOM handlers.
+  const selectedAudioRef = useRef(selectedAudio);
+  const selectedSubRef = useRef(selectedSub);
+  const activeExternalSubRef = useRef(activeExternalSub);
+  useEffect(() => { selectedAudioRef.current = selectedAudio; }, [selectedAudio]);
+  useEffect(() => { selectedSubRef.current = selectedSub; }, [selectedSub]);
+  useEffect(() => { activeExternalSubRef.current = activeExternalSub; }, [activeExternalSub]);
+
+  // Core track-sync logic. Only depends on getAudioTracks (stable) + refs.
+  const syncTracksImpl = useCallback((video: HTMLVideoElement, engine: any) => {
+    if (!video) return;
+
+    // --- Audio ---
+    const audioTracks = getAudioTracks(video, engine);
+    const newAudios = audioTracks.map((t: any) => ({ id: t.id, name: t.name }));
+    const strAudios = JSON.stringify(newAudios);
+    if (audiosCache.current !== strAudios) {
+      audiosCache.current = strAudios;
+      setAudios(newAudios);
+    }
+    const activeAudio = audioTracks.find((t: any) => t.active);
+    if (activeAudio && selectedAudioRef.current !== activeAudio.id) {
+      setSelectedAudio(activeAudio.id);
+    }
+
+    // --- Subtitles ---
+    // Merge engine._subtitleTracks (metadata available early) with native textTracks (DOM blobs arrive later)
+    const trackMap = new Map<number, { id: number; name: string; active: boolean }>();
+
+    const engineTracks: any[] = engine?._subtitleTracks ?? [];
+    engineTracks.forEach((t: any) => {
+      trackMap.set(t.index, {
+        id: t.index,
+        name: [t.language, t.name].filter(Boolean).join(' ') || `Subtitle ${t.index + 1}`,
+        active: false,
       });
-      const strAudios = JSON.stringify(newAudios);
-      if (audiosCache.current !== strAudios) {
-        audiosCache.current = strAudios;
-        setAudios(newAudios);
-      }
-      const active = audio.find((t: any) => t.active);
-      if (active && selectedAudio !== active.id) {
-        setSelectedAudio(active.id);
-      }
+    });
+
+    const nativeTracks = video.textTracks;
+    for (let i = 0; i < nativeTracks.length; i++) {
+      const t = nativeTracks[i];
+      if (t.kind !== 'subtitles' && t.kind !== 'captions') continue;
+      const existing = trackMap.get(i);
+      const name = existing?.name || [t.language, t.label].filter(Boolean).join(' ') || `Subtitle ${i + 1}`;
+      trackMap.set(i, { id: i, name, active: t.mode === 'showing' });
     }
-    if (subtitle?.length > 0) {
-      const newSubs = [{ id: -1, name: 'None' }, ...subtitle.map((t: any, i: number) => {
-        const niceName = [t.language, t.label].filter(Boolean).join(' ') || `Subtitle ${i + 1}`;
-        return { id: t.id, name: niceName };
-      })];
-      const strSubs = JSON.stringify(newSubs);
-      if (subtitlesCache.current !== strSubs) {
-        subtitlesCache.current = strSubs;
-        setSubtitles(newSubs);
-      }
-      const active = subtitle.find((t: any) => t.active);
-      if (active && selectedSub !== active.id) {
-        setSelectedSub(active.id);
-      }
+
+    const subtitleList = Array.from(trackMap.values()).sort((a, b) => a.id - b.id);
+    const newSubs = [{ id: -1, name: 'None' }, ...subtitleList];
+    const strSubs = JSON.stringify(newSubs);
+    if (subtitlesCache.current !== strSubs) {
+      subtitlesCache.current = strSubs;
+      setSubtitles(newSubs);
     }
+
+    const activeSub = subtitleList.find((t) => t.active);
+    if (activeSub) {
+      if (selectedSubRef.current !== activeSub.id) setSelectedSub(activeSub.id);
+    } else if (selectedSubRef.current !== -1 && !activeExternalSubRef.current) {
+      let anyShowing = false;
+      for (let i = 0; i < nativeTracks.length; i++) {
+        if (nativeTracks[i].mode === 'showing') { anyShowing = true; break; }
+      }
+      if (!anyShowing) setSelectedSub(-1);
+    }
+  }, [getAudioTracks]);
+
+  // Stable ref so DOM event handlers always call the latest syncTracksImpl
+  const syncTracksRef = useRef(syncTracksImpl);
+  useEffect(() => { syncTracksRef.current = syncTracksImpl; }, [syncTracksImpl]);
+
+  // State-change handler — assigned during render, never re-subscribed
+  onStateChangeRef.current = (e: any) => {
+    if (!resolvedSrc) return;
+    const state = e.detail;
+    if (state === 'playing') { setIsBuffering(false); setIsPlaying(true); setPlayerError(null); }
+    else if (state === 'paused') { setIsPlaying(false); setIsBuffering(false); }
+    else if (state === 'buffering' || state === 'seeking' || state === 'loading') { setIsBuffering(true); }
+    else if (state === 'ready') { setIsBuffering(false); setPlayerError(null); }
+    else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
 
   onTimeUpdateRef.current = () => {
     const video = videoRef.current;
+    const engine = engineRef.current;
     if (!video || !resolvedSrc) return;
-    if (video.getAttribute("src") !== resolvedSrc) return;
-
     const t = video.currentTime ?? 0;
-
-    // Clear the "awaiting fresh time" gate only when the NEW stream reports an
-    // early position. A navigated episode always starts near 0, so a low time
-    // means the new stream is genuinely live. A stale tick lingering from the
-    // previous episode (near its end, e.g. 21:37) must NOT clear the gate —
-    // otherwise the next-episode threshold fires immediately and shows the
-    // following episode's card while this one is still loading.
     if (t < 60) awaitingFreshTimeRef.current = false;
-
     setCurrentTime(t);
     setDuration(video.duration || 0);
-
-    // Periodically sync software decoding status
-    try {
-      const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
-      setIsSoftwareDec(isSw);
-    } catch (_) { }
+    syncTracksRef.current(video, engine);
   };
 
   const stableStateChange = useCallback((e: any) => onStateChangeRef.current?.(e), []);
-  const stableTracksChange = useCallback((e: any) => onTracksChangeRef.current?.(e), []);
   const stableTimeUpdate = useCallback(() => onTimeUpdateRef.current?.(), []);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    const engine = engineRef.current;
-    if (!video || !engine) return;
+  const lastAttachedVideoRef = useRef<any>(null);
+  const lastAttachedEngineRef = useRef<any>(null);
 
-    const handlePlay = () => {
-      onStateChangeRef.current?.({ detail: "playing" });
-    };
-    const handlePause = () => {
-      onStateChangeRef.current?.({ detail: "paused" });
-    };
-    const handleWaiting = () => {
-      onStateChangeRef.current?.({ detail: "buffering" });
-    };
-    const handlePlaying = () => {
-      onStateChangeRef.current?.({ detail: "playing" });
-    };
-    const handleSeeking = () => {
-      onStateChangeRef.current?.({ detail: "seeking" });
-    };
-    const handleTimeUpdate = () => {
-      onTimeUpdateRef.current?.();
-    };
+  // setupListeners has empty deps — all calls go through stable refs, never stale
+  const setupListeners = useCallback((video: any, engine: any) => {
+    if (lastAttachedVideoRef.current === video && lastAttachedEngineRef.current === engine) return;
+    lastAttachedVideoRef.current = video;
+    lastAttachedEngineRef.current = engine;
 
-    const handleEngineReady = (e: any) => {
+    const handlePlay    = () => onStateChangeRef.current?.({ detail: "playing" });
+    const handlePause   = () => onStateChangeRef.current?.({ detail: "paused" });
+    const handleWaiting = () => onStateChangeRef.current?.({ detail: "buffering" });
+    const handlePlaying = () => onStateChangeRef.current?.({ detail: "playing" });
+    const handleSeeking = () => onStateChangeRef.current?.({ detail: "seeking" });
+    const handleTimeUpdate = () => onTimeUpdateRef.current?.();
+
+    // Called every time a <track> blob is appended to the video DOM
+    const handleTracksUpdate = () => syncTracksRef.current(video, engine);
+
+    const handleEngineReady = (ev?: any) => {
       onStateChangeRef.current?.({ detail: "ready" });
-
-      const tracks = e.detail?.subtitleTracks ?? [];
-      onTracksChangeRef.current?.({
-        detail: {
-          audio: [{ id: 0, name: "Default", active: true }],
-          subtitle: tracks.map((t: any) => ({
-            id: t.index,
-            language: t.language || "",
-            label: t.name || t.language || `Track ${t.index + 1}`,
-            active: t.index === 0
-          }))
-        }
-      });
+      syncTracksRef.current(video, engine);
+      // The ready event carries codec/track info — re-sync after a short
+      // delay so hls.js has time to settle its internal audioTrack list.
+      setTimeout(() => syncTracksRef.current(video, engine), 300);
+      setTimeout(() => syncTracksRef.current(video, engine), 1200);
     };
-
-    const handleEngineError = (e: any) => {
-      onStateChangeRef.current?.({ detail: "error", message: e.detail?.message });
+    const handlePlaybackDecision = () => {
+      // Fires after PlaysVideo picks HLS vs passthrough — tracks are finalised here.
+      setTimeout(() => syncTracksRef.current(video, engine), 200);
     };
-
-    const handleEngineLoading = () => {
-      onStateChangeRef.current?.({ detail: "loading" });
-    };
+    const handleEngineError   = (e: any) => onStateChangeRef.current?.({ detail: "error", message: e.detail?.message });
+    const handleEngineLoading = () => onStateChangeRef.current?.({ detail: "loading" });
 
     video.addEventListener("play", handlePlay);
     video.addEventListener("pause", handlePause);
@@ -743,23 +775,32 @@ export default function PlaysVideoPlayerScreen() {
     video.addEventListener("seeking", handleSeeking);
     video.addEventListener("timeupdate", handleTimeUpdate);
 
+    // Critical: fires when engine.addSubtitleTrack() appends a blob <track> element
+    video.textTracks.addEventListener("addtrack", handleTracksUpdate);
+    video.textTracks.addEventListener("removetrack", handleTracksUpdate);
+    video.textTracks.addEventListener("change", handleTracksUpdate);
+
+    const nativeAudioTracks = (video as any).audioTracks;
+    if (nativeAudioTracks) {
+      nativeAudioTracks.addEventListener("addtrack", handleTracksUpdate);
+      nativeAudioTracks.addEventListener("removetrack", handleTracksUpdate);
+      nativeAudioTracks.addEventListener("change", handleTracksUpdate);
+    }
+
     engine.addEventListener("ready", handleEngineReady);
     engine.addEventListener("error", handleEngineError);
     engine.addEventListener("loading", handleEngineLoading);
+    engine.addEventListener("playbackdecision", handlePlaybackDecision);
 
+    syncTracksRef.current(video, engine);
+  }, []);
+
+  useEffect(() => {
     return () => {
-      video.removeEventListener("play", handlePlay);
-      video.removeEventListener("pause", handlePause);
-      video.removeEventListener("waiting", handleWaiting);
-      video.removeEventListener("playing", handlePlaying);
-      video.removeEventListener("seeking", handleSeeking);
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-
-      engine.removeEventListener("ready", handleEngineReady);
-      engine.removeEventListener("error", handleEngineError);
-      engine.removeEventListener("loading", handleEngineLoading);
+      lastAttachedVideoRef.current = null;
+      lastAttachedEngineRef.current = null;
     };
-  }, [videoRef.current, engineRef.current]);
+  }, [resolvedSrc]);
 
   // --------------------------------------------------------------------------------
   // 3. UI CONTROLS & HEARTBEAT
@@ -796,11 +837,11 @@ export default function PlaysVideoPlayerScreen() {
   // NuvioMobile's scrobble flow. Uses the TMDB id (movieId) which Trakt accepts.
   const traktStartedRef = useRef(false);
   useEffect(() => {
-    if (!movieId || !mediaType) return;
+    if (!movieId || !mediaType || !hasValidTmdbId) return;
     if (!isTraktConnected()) return;
 
     const buildPayload = (progress: number) => {
-      const tmdbId = parseInt(movieId);
+      const tmdbId = numericMovieId;
       if (!Number.isFinite(tmdbId)) return null;
       const isSeries = mediaType === "tv" || mediaType === "series" || !!season;
       return {
@@ -1163,8 +1204,10 @@ EventDump: ${JSON.stringify(collected)}`;
       // Resolve IMDb id (most addons want ttXXXXXX)
       let baseId = `tmdb:${movieId}`;
       try {
-        const ids = await fetchExternalIds(parseInt(movieId), "tv");
-        if (ids?.imdb_id) baseId = ids.imdb_id;
+        if (hasValidTmdbId) {
+          const ids = await fetchExternalIds(numericMovieId, "tv");
+          if (ids?.imdb_id) baseId = ids.imdb_id;
+        }
       } catch (_) { /* fall back to tmdb id */ }
 
       const videoId = `${baseId}:${nextEpisode.season}:${nextEpisode.episode}`;
@@ -1422,22 +1465,25 @@ EventDump: ${JSON.stringify(collected)}`;
   const handleAudioChange = (id: number) => {
     setSelectedAudio(id);
     const video = videoRef.current;
+    const engine = engineRef.current;
     if (video) {
       const numId = Number(id);
       try {
-        const player = video.player;
-        if (player) {
-          if (typeof player.isNativeAudioActive === 'function' && player.isNativeAudioActive()) {
-            player.useMuxedAudio();
+        // 1. If we are using PlaysVideoEngine's internal hls.js instance:
+        if (engine && (engine as any).hls) {
+          (engine as any).hls.audioTrack = numId;
+        }
+        // 2. If it is native direct video playback (e.g., Safari native audio tracks):
+        else {
+          const nativeAudioTracks = (video as any).audioTracks;
+          if (nativeAudioTracks && nativeAudioTracks.length > numId) {
+            for (let i = 0; i < nativeAudioTracks.length; i++) {
+              nativeAudioTracks[i].enabled = (i === numId);
+            }
           }
-          if (typeof player.selectAudioTrack === 'function') {
-            player.selectAudioTrack(numId);
-          }
-        } else if (typeof video.selectAudioTrack === 'function') {
-          video.selectAudioTrack(numId);
         }
 
-        // Corrective seek/flush to apply track changes immediately in WASM mode
+        // Corrective seek/flush to apply track changes immediately
         if (typeof video.currentTime === 'number') {
           const curr = video.currentTime;
           video.currentTime = curr;
@@ -1459,14 +1505,17 @@ EventDump: ${JSON.stringify(collected)}`;
       try {
         const textTracks = video.textTracks;
         for (let i = 0; i < textTracks.length; i++) {
-          const track = textTracks[i];
           if (numId === null) {
-            track.mode = 'disabled';
+            textTracks[i].mode = 'disabled';
           } else if (i === numId) {
-            track.mode = 'showing';
+            textTracks[i].mode = 'showing';
           } else {
-            track.mode = 'disabled';
+            textTracks[i].mode = 'disabled';
           }
+        }
+        // Corrective seek/flush to apply track changes immediately
+        if (typeof video.currentTime === 'number') {
+          video.currentTime = video.currentTime;
         }
       } catch (_) { }
     }
@@ -1477,9 +1526,14 @@ EventDump: ${JSON.stringify(collected)}`;
     try {
       setOpenMenu(null);
       // Disable any active built-in subtitle first
-      const moviEl = videoRef.current;
-      if (moviEl?.player && typeof moviEl.player.selectSubtitleTrack === 'function') {
-        try { moviEl.player.selectSubtitleTrack(null); } catch { }
+      const video = videoRef.current;
+      if (video) {
+        try {
+          const textTracks = video.textTracks;
+          for (let i = 0; i < textTracks.length; i++) {
+            textTracks[i].mode = 'disabled';
+          }
+        } catch { }
       }
       const res = await fetch(url);
       const text = await res.text();
@@ -1527,7 +1581,8 @@ EventDump: ${JSON.stringify(collected)}`;
         onInit={useCallback((v: HTMLVideoElement, eng: PlaysVideoEngine) => {
           videoRef.current = v;
           engineRef.current = eng;
-        }, [])}
+          setupListeners(v, eng);
+        }, [setupListeners])}
       />
       <style dangerouslySetInnerHTML={{ __html: `
         video::cue {
@@ -1707,7 +1762,7 @@ EventDump: ${JSON.stringify(collected)}`;
             );
           })()}
 
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between relative overflow-visible">
             <div className="flex items-center gap-4">
               {/* Play / Pause */}
               <button onClick={togglePlay} className="w-12 h-12 rounded-full bg-white text-black hover:bg-gray-200 flex items-center justify-center transition-colors shadow-lg">
@@ -1736,11 +1791,15 @@ EventDump: ${JSON.stringify(collected)}`;
                 </button>
                 {openMenu === "audio" && (
                   <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-48 max-h-64 overflow-y-auto z-50">
-                    {audios.map(a => (
-                      <button key={a.id} onClick={() => handleAudioChange(a.id)} className={`block w-full text-left px-4 py-3 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
-                        {a.name}
-                      </button>
-                    ))}
+                    {audios.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-white/40 italic">Detecting audio...</div>
+                    ) : (
+                      audios.map(a => (
+                        <button key={a.id} onClick={() => handleAudioChange(a.id)} className={`block w-full text-left px-4 py-3 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
+                          {a.name}
+                        </button>
+                      ))
+                    )}
                   </div>
                 )}
               </div>
@@ -2213,7 +2272,7 @@ EventDump: ${JSON.stringify(collected)}`;
 
       {showStreamPicker && movieId && (
         <StreamPickerModal
-          tmdbId={parseInt(movieId)} type={mediaType!}
+          tmdbId={numericMovieId} type={mediaType!}
           season={streamPickerSeason ?? (season ? parseInt(season) : undefined)}
           episode={streamPickerEpisode ?? (episode ? parseInt(episode) : undefined)}
           onClose={() => {
