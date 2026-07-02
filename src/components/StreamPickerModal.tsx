@@ -5,7 +5,7 @@ import { TMDBMovie, fetchExternalIds, resolveStremioIdToMovie } from "@/lib/tmdb
 import { NuvioAddon, StreamItem, fetchUserAddons, fetchStreamsFromAddon } from "@/lib/addonService";
 
 interface StreamPickerModalProps {
-  tmdbId: number;
+  tmdbId: number | string;
   type: string;
   season?: number;
   episode?: number;
@@ -37,7 +37,8 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
         const type = isSeries ? "tv" : "movie";
         
         // Fetch metadata so we can display the title in the header
-        resolveStremioIdToMovie(`tmdb:${tmdbId}`, type).then((meta) => {
+        const metaId = (typeof tmdbId === 'string' && tmdbId.startsWith('tt')) ? tmdbId : `tmdb:${tmdbId}`;
+        resolveStremioIdToMovie(metaId, type).then((meta) => {
           if (isMounted && meta) setMovieData(meta);
         }).catch(() => {});
 
@@ -49,13 +50,17 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
 
         // Fetch IMDB ID for proper addon compatibility (many addons only support ttXXXXXX)
         let imdbId = null;
-        try {
-          const externalIds = await fetchExternalIds(tmdbId, type);
-          if (externalIds && externalIds.imdb_id) {
-            imdbId = externalIds.imdb_id;
+        if (typeof tmdbId === 'string' && tmdbId.startsWith('tt')) {
+          imdbId = tmdbId;
+        } else {
+          try {
+            const externalIds = await fetchExternalIds(tmdbId, type);
+            if (externalIds && externalIds.imdb_id) {
+              imdbId = externalIds.imdb_id;
+            }
+          } catch (e) {
+            console.error("Failed to fetch IMDB ID", e);
           }
-        } catch (e) {
-          console.error("Failed to fetch IMDB ID", e);
         }
 
         const baseId = imdbId ? imdbId : "tmdb:" + tmdbId;

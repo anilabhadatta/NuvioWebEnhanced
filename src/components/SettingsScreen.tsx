@@ -27,6 +27,12 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { displayName } = useAuth();
   const [active, setActive] = useState("profiles");
+  const [playerEngine, setPlayerEngine] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("nuvio.player_engine") || "movi-player";
+    }
+    return "movi-player";
+  });
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -98,6 +104,42 @@ export default function SettingsScreen() {
                 Subtitle and player preferences (size, offset, audio language) are available directly in
                 the player&apos;s settings panel while watching.
               </p>
+              
+              <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-5">
+                <p className="text-white font-semibold text-sm">Player Engine</p>
+                <p className="text-[#888] text-xs mt-1 mb-4">
+                  Select the media playback engine to use for streaming.
+                </p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => {
+                      localStorage.setItem("nuvio.player_engine", "movi-player");
+                      setPlayerEngine("movi-player");
+                    }}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
+                      playerEngine === "movi-player"
+                        ? "bg-white text-black border-white"
+                        : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                    }`}
+                  >
+                    movi-player (Default)
+                  </button>
+                  <button
+                    onClick={() => {
+                      localStorage.setItem("nuvio.player_engine", "PlaysVideo");
+                      setPlayerEngine("PlaysVideo");
+                    }}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
+                      playerEngine === "PlaysVideo"
+                        ? "bg-white text-black border-white"
+                        : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                    }`}
+                  >
+                    PlaysVideo
+                  </button>
+                </div>
+              </div>
+
               <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5">
                 <p className="text-white font-semibold text-sm">External player</p>
                 <p className="text-[#888] text-xs mt-1">

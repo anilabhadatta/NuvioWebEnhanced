@@ -368,7 +368,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
 
       {picker && (
         <StreamPickerModal
-          tmdbId={parseInt(String(picker.id))}
+          tmdbId={(picker as any).tmdbId || parseInt(String(picker.id))}
           type={picker.type}
           season={picker.season}
           episode={picker.episode}
