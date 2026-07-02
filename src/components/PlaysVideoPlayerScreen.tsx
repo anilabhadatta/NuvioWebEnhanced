@@ -632,6 +632,16 @@ export default function PlaysVideoPlayerScreen() {
 
   // Helper to discover audio tracks from HLS, native video, or engine codec metadata
   const getAudioTracks = useCallback((video: HTMLVideoElement, engine: any) => {
+    if (engine?.audioTracks?.length > 0) {
+      return engine.audioTracks.map((t: any) => ({
+        id: t.index,
+        name: [t.language !== 'und' ? t.language.toUpperCase() : '', t.name, t.codec ? `(${t.codec.toUpperCase()})` : '']
+          .filter(Boolean)
+          .join(' ') || `Audio Track ${t.index + 1}`,
+        active: t.index === (engine.selectedAudioTrackIndex ?? 0),
+      }));
+    }
+
     // 1. hls.js audioTracks — populated only from Master Playlist #EXT-X-MEDIA renditions.
     // In PlaysVideo HLS-remux mode the playlist is a MEDIA playlist (no #EXT-X-MEDIA),
     // so hls.js only exposes one synthetic audio group (with an internal name like
@@ -713,7 +723,7 @@ export default function PlaysVideoPlayerScreen() {
     engineTracks.forEach((t: any) => {
       trackMap.set(t.index, {
         id: t.index,
-        name: [t.language, t.name].filter(Boolean).join(' ') || `Subtitle ${t.index + 1}`,
+        name: [t.language !== 'und' ? t.language.toUpperCase() : '', t.name].filter(Boolean).join(' ') || `Subtitle ${t.index + 1}`,
         active: false,
       });
     });
@@ -722,9 +732,10 @@ export default function PlaysVideoPlayerScreen() {
     for (let i = 0; i < nativeTracks.length; i++) {
       const t = nativeTracks[i];
       if (t.kind !== 'subtitles' && t.kind !== 'captions') continue;
-      const existing = trackMap.get(i);
+      const trackId = t.id ? Number(t.id) : i;
+      const existing = trackMap.get(trackId);
       const name = existing?.name || [t.language, t.label].filter(Boolean).join(' ') || `Subtitle ${i + 1}`;
-      trackMap.set(i, { id: i, name, active: t.mode === 'showing' });
+      trackMap.set(trackId, { id: trackId, name, active: t.mode === 'showing' });
     }
 
     const subtitleList = Array.from(trackMap.values()).sort((a, b) => a.id - b.id);
@@ -1513,8 +1524,12 @@ EventDump: ${JSON.stringify(collected)}`;
     if (video) {
       const numId = Number(id);
       try {
+        // 0. If engine has selectAudioTrack:
+        if (engine && typeof (engine as any).selectAudioTrack === 'function' && (engine as any).audioTracks?.length > 0) {
+          (engine as any).selectAudioTrack(numId);
+        }
         // 1. If we are using PlaysVideoEngine's internal hls.js instance:
-        if (engine && (engine as any).hls) {
+        else if (engine && (engine as any).hls) {
           (engine as any).hls.audioTrack = numId;
         }
         // 2. If it is native direct video playback (e.g., Safari native audio tracks):
@@ -1549,12 +1564,14 @@ EventDump: ${JSON.stringify(collected)}`;
       try {
         const textTracks = video.textTracks;
         for (let i = 0; i < textTracks.length; i++) {
+          const t = textTracks[i];
+          const trackId = t.id ? Number(t.id) : i;
           if (numId === null) {
-            textTracks[i].mode = 'disabled';
-          } else if (i === numId) {
-            textTracks[i].mode = 'showing';
+            t.mode = 'disabled';
+          } else if (trackId === numId) {
+            t.mode = 'showing';
           } else {
-            textTracks[i].mode = 'disabled';
+            t.mode = 'disabled';
           }
         }
         // Corrective seek/flush to apply track changes immediately

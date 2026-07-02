@@ -208,113 +208,37 @@ if (fs.existsSync(codecProbeFile)) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. Patch demux.js for codec resolution & unknown audio discarding
+// 5. Copy Patched demux.js (codec resolution, unsupported audio discarding & scoping fixes)
 // ─────────────────────────────────────────────────────────────────────────────
 const demuxFile = path.join(__dirname, 'node_modules', 'playsvideo', 'dist', 'pipeline', 'demux.js');
-if (fs.existsSync(demuxFile)) {
-  let content = fs.readFileSync(demuxFile, 'utf8');
-  if (content.includes('supportedTrack = audioTracks.find')) {
-    console.log('playsvideo demux.js is already patched for codec resolution and supported track selection.');
-  } else {
-    const target = `    let audioTrack = null;\r\n    try {\r\n        audioTrack = await input.getPrimaryAudioTrack();\r\n    }\r\n    catch {\r\n        // No audio track — that's fine\r\n    }\r\n    const videoCodec = videoTrack.codec;\r\n    if (!videoCodec) {\r\n        throw new Error('Could not determine video codec');\r\n    }\r\n    const videoSink = new EncodedPacketSink(videoTrack);\r\n    const audioSink = audioTrack ? new EncodedPacketSink(audioTrack) : null;\r\n    const duration = Number(await videoTrack.computeDuration());\r\n    const videoDecoderConfig = await videoTrack.getDecoderConfig();\r\n    if (!videoDecoderConfig) {\r\n        throw new Error('Could not get video decoder config');\r\n    }\r\n    let audioDecoderConfig = null;\r\n    if (audioTrack) {\r\n        audioDecoderConfig = await audioTrack.getDecoderConfig();\r\n    }\r\n    const subtitleTracks = await getSubtitleTrackInfos(input);\r\n    return {\r\n        input,\r\n        duration,\r\n        videoTrack,\r\n        audioTrack,\r\n        videoCodec,\r\n        audioCodec: audioTrack?.codec ?? null,\r\n        videoDecoderConfig,\r\n        audioDecoderConfig,\r\n        videoSink,\r\n        audioSink,\r\n        subtitleTracks,\r\n        dispose: () => input.dispose(),\r\n    };`;
-
-    const targetLf = `    let audioTrack = null;\n    try {\n        audioTrack = await input.getPrimaryAudioTrack();\n    }\n    catch {\n        // No audio track — that's fine\n    }\n    const videoCodec = videoTrack.codec;\n    if (!videoCodec) {\n        throw new Error('Could not determine video codec');\n    }\n    const videoSink = new EncodedPacketSink(videoTrack);\n    const audioSink = audioTrack ? new EncodedPacketSink(audioTrack) : null;\n    const duration = Number(await videoTrack.computeDuration());\n    const videoDecoderConfig = await videoTrack.getDecoderConfig();\n    if (!videoDecoderConfig) {\n        throw new Error('Could not get video decoder config');\n    }\n    let audioDecoderConfig = null;\n    if (audioTrack) {\n        audioDecoderConfig = await audioTrack.getDecoderConfig();\n    }\n    const subtitleTracks = await getSubtitleTrackInfos(input);\n    return {\n        input,\n        duration,\n        videoTrack,\n        audioTrack,\n        videoCodec,\n        audioCodec: audioTrack?.codec ?? null,\n        videoDecoderConfig,\n        audioDecoderConfig,\n        videoSink,\n        audioSink,\n        subtitleTracks,\n        dispose: () => input.dispose(),\n    };`;
-
-    const replacement = `    let audioTrack = null;
-    try {
-        const getCodecForTrack = (track) => {
-            let codec = track?.codec ?? null;
-            if (track && !codec) {
-                const internalId = track.internalCodecId;
-                if (typeof internalId === 'string') {
-                    const id = internalId.toUpperCase();
-                    if (id.includes('AAC')) codec = 'aac';
-                    else if (id.includes('AC3') || id.includes('AC-3')) codec = 'ac3';
-                    else if (id.includes('EAC3') || id.includes('EC-3')) codec = 'eac3';
-                    else if (id.includes('DTS')) codec = 'dts';
-                    else if (id.includes('TRUEHD')) codec = 'truehd';
-                    else if (id.includes('MP3') || id.includes('MPEG/L3')) codec = 'mp3';
-                    else if (id.includes('OPUS')) codec = 'opus';
-                    else if (id.includes('VORBIS')) codec = 'vorbis';
-                    else if (id.includes('FLAC')) codec = 'flac';
-                }
-            }
-            return codec;
-        };
-        const audioTracks = await input.getAudioTracks();
-        const supportedTrack = audioTracks.find(t => {
-            const codec = getCodecForTrack(t);
-            return codec && codec !== 'truehd';
-        });
-        audioTrack = supportedTrack || audioTracks[0] || null;
-    }
-    catch {
-        // No audio track — that's fine
-    }
-    const videoCodec = videoTrack.codec;
-    if (!videoCodec) {
-        throw new Error('Could not determine video codec');
-    }
-    let resolvedAudioCodec = audioTrack ? (audioTrack.codec ?? null) : null;
-    if (audioTrack && !resolvedAudioCodec) {
-        const internalId = audioTrack.internalCodecId;
-        if (typeof internalId === 'string') {
-            const id = internalId.toUpperCase();
-            if (id.includes('AAC')) resolvedAudioCodec = 'aac';
-            else if (id.includes('AC3') || id.includes('AC-3')) resolvedAudioCodec = 'ac3';
-            else if (id.includes('EAC3') || id.includes('EC-3')) resolvedAudioCodec = 'eac3';
-            else if (id.includes('DTS')) resolvedAudioCodec = 'dts';
-            else if (id.includes('TRUEHD')) resolvedAudioCodec = 'truehd';
-            else if (id.includes('MP3') || id.includes('MPEG/L3')) resolvedAudioCodec = 'mp3';
-            else if (id.includes('OPUS')) resolvedAudioCodec = 'opus';
-            else if (id.includes('VORBIS')) resolvedAudioCodec = 'vorbis';
-            else if (id.includes('FLAC')) resolvedAudioCodec = 'flac';
-        }
-    }
-    let finalAudioTrack = audioTrack;
-    if (finalAudioTrack && (!resolvedAudioCodec || resolvedAudioCodec === 'truehd')) {
-        console.warn('Audio track has an unknown or unsupported codec (truehd), discarding to prevent decoder crash');
-        finalAudioTrack = null;
-    }
-    const videoSink = new EncodedPacketSink(videoTrack);
-    const audioSink = finalAudioTrack ? new EncodedPacketSink(finalAudioTrack) : null;
-    const duration = Number(await videoTrack.computeDuration());
-    const videoDecoderConfig = await videoTrack.getDecoderConfig();
-    if (!videoDecoderConfig) {
-        throw new Error('Could not get video decoder config');
-    }
-    let audioDecoderConfig = null;
-    if (finalAudioTrack) {
-        audioDecoderConfig = await finalAudioTrack.getDecoderConfig();
-    }
-    const subtitleTracks = await getSubtitleTrackInfos(input);
-    return {
-        input,
-        duration,
-        videoTrack,
-        audioTrack: finalAudioTrack,
-        videoCodec,
-        audioCodec: finalAudioTrack ? resolvedAudioCodec : null,
-        videoDecoderConfig,
-        audioDecoderConfig,
-        videoSink,
-        audioSink,
-        subtitleTracks,
-        dispose: () => input.dispose(),
-    };`;
-
-    if (content.includes(target)) {
-      content = content.replace(target, replacement);
-      fs.writeFileSync(demuxFile, content, 'utf8');
-      console.log('Successfully patched playsvideo demux.js (CRLF).');
-    } else if (content.includes(targetLf)) {
-      content = content.replace(targetLf, replacement);
-      fs.writeFileSync(demuxFile, content, 'utf8');
-      console.log('Successfully patched playsvideo demux.js (LF).');
-    } else {
-      console.warn('Could not find demuxInput return block in demux.js.');
-    }
-  }
+const sourceDemux = path.join(__dirname, 'patches', 'playsvideo', 'demux.js');
+if (fs.existsSync(sourceDemux)) {
+  fs.copyFileSync(sourceDemux, demuxFile);
+  console.log('Successfully copied patched demux.js.');
 } else {
-  console.warn('playsvideo demux.js not found at:', demuxFile);
+  console.warn('Patched source demux.js not found at:', sourceDemux);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. Copy Patched engine.js (audio track selection, selectAudioTrack & dynamic reload)
+// ─────────────────────────────────────────────────────────────────────────────
+const engineFile = path.join(__dirname, 'node_modules', 'playsvideo', 'dist', 'engine.js');
+const sourceEngine = path.join(__dirname, 'patches', 'playsvideo', 'engine.js');
+if (fs.existsSync(sourceEngine)) {
+  fs.copyFileSync(sourceEngine, engineFile);
+  console.log('Successfully copied patched engine.js.');
+} else {
+  console.warn('Patched source engine.js not found at:', sourceEngine);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. Copy Patched engine.d.ts (type definitions for audio track methods & properties)
+// ─────────────────────────────────────────────────────────────────────────────
+const engineDtsFile = path.join(__dirname, 'node_modules', 'playsvideo', 'dist', 'engine.d.ts');
+const sourceEngineDts = path.join(__dirname, 'patches', 'playsvideo', 'engine.d.ts');
+if (fs.existsSync(sourceEngineDts)) {
+  fs.copyFileSync(sourceEngineDts, engineDtsFile);
+  console.log('Successfully copied patched engine.d.ts.');
+} else {
+  console.warn('Patched source engine.d.ts not found at:', sourceEngineDts);
 }
