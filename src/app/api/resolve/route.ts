@@ -28,7 +28,10 @@ export async function GET(req: NextRequest) {
 
     const res = await fetch(url, {
       method: "GET",
-      headers: { Range: "bytes=0-0" },
+      headers: {
+        Range: "bytes=0-0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
       redirect: "follow",
       signal: controller.signal,
     });
