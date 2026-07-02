@@ -544,12 +544,45 @@ export default function MoviPlayerScreen() {
   // Note: existing openMenu type only had "audio" | "sub" — we widen via local string.
 
   const rawMovieId = searchParams.get("id");
-  const movieId = rawMovieId ? rawMovieId.replace(/^tmdb:/, "") : null;
   const mediaType = searchParams.get("type");
   const streamUrl = searchParams.get("url");
   const season = searchParams.get("s");
   const episode = searchParams.get("e");
   const streamHash = searchParams.get("hash");
+
+  const [resolvedTmdbId, setResolvedTmdbId] = useState<number | null>(null);
+  // Strip any "tmdb:" prefix — e.g. "tmdb:12345" → "12345"
+  const movieId = rawMovieId ? rawMovieId.replace(/^tmdb:/, "") : null;
+  const hasValidTmdbId = resolvedTmdbId !== null;
+
+  // Resolve IMDB ID to TMDB ID if needed
+  useEffect(() => {
+    if (!movieId) {
+      setResolvedTmdbId(null);
+      return;
+    }
+    if (!movieId.startsWith("tt")) {
+      const parsed = parseInt(movieId, 10);
+      if (Number.isFinite(parsed)) {
+        setResolvedTmdbId(parsed);
+      } else {
+        setResolvedTmdbId(null);
+      }
+      return;
+    }
+    
+    // It's an IMDb ID — resolve to TMDB ID
+    let isMounted = true;
+    const type = mediaType === "series" || mediaType === "tv" ? "tv" : "movie";
+    import("@/lib/tmdb").then(({ resolveStremioIdToMovie }) => {
+      resolveStremioIdToMovie(movieId, type).then((movie) => {
+        if (isMounted && movie && movie.id) {
+          setResolvedTmdbId(movie.id);
+        }
+      }).catch(() => {});
+    });
+    return () => { isMounted = false; };
+  }, [movieId, mediaType]);
 
   // Gate to ignore stale currentTime/duration from the PREVIOUS episode until the
   // newly-loaded stream reports its own fresh time. Without this, the old episode's
@@ -648,11 +681,15 @@ export default function MoviPlayerScreen() {
         const { fetchAllSubtitles } = await import("@/lib/addonService");
         const stremioType = isSeries ? "series" : "movie";
         let imdbId = null;
-        try {
-          const tmdbType = isSeries ? "tv" : "movie";
-          const externalIds = await fetchExternalIds(parseInt(movieId!), tmdbType);
-          if (externalIds?.imdb_id) imdbId = externalIds.imdb_id;
-        } catch (e) { }
+        if (movieId!.startsWith("tt")) {
+          imdbId = movieId;
+        } else if (hasValidTmdbId) {
+          try {
+            const tmdbType = isSeries ? "tv" : "movie";
+            const externalIds = await fetchExternalIds(resolvedTmdbId!, tmdbType);
+            if (externalIds?.imdb_id) imdbId = externalIds.imdb_id;
+          } catch (e) { }
+        }
 
         const baseId = imdbId || `tmdb:${movieId}`;
         const searchId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
@@ -664,7 +701,7 @@ export default function MoviPlayerScreen() {
       }
     }
     loadSubtitles();
-  }, [movieId, mediaType, season, episode, streamHash]);
+  }, [movieId, hasValidTmdbId, resolvedTmdbId, mediaType, season, episode, streamHash]);
 
   // Load skip intervals exactly once
   const lastFetchedSkipsId = useRef<string | null>(null);
@@ -679,9 +716,15 @@ export default function MoviPlayerScreen() {
 
     async function loadSkips() {
       try {
-        const externalIds = await fetchExternalIds(parseInt(movieId!), "tv");
-        if (externalIds?.imdb_id) {
-          const intervals = await fetchSkipIntervals(externalIds.imdb_id, parseInt(season!), parseInt(episode!));
+        let imdbId = null;
+        if (movieId!.startsWith("tt")) {
+          imdbId = movieId;
+        } else if (hasValidTmdbId) {
+          const externalIds = await fetchExternalIds(resolvedTmdbId!, "tv");
+          if (externalIds?.imdb_id) imdbId = externalIds.imdb_id;
+        }
+        if (imdbId) {
+          const intervals = await fetchSkipIntervals(imdbId, parseInt(season!), parseInt(episode!));
           setSkipIntervals(intervals);
         }
       } catch (e) {
@@ -689,7 +732,7 @@ export default function MoviPlayerScreen() {
       }
     }
     loadSkips();
-  }, [movieId, mediaType, season, episode]);
+  }, [movieId, hasValidTmdbId, resolvedTmdbId, mediaType, season, episode]);
 
   // Load next-episode metadata from TMDB when on a TV show.
   const lastFetchedNextId = useRef<string | null>(null);
@@ -698,7 +741,7 @@ export default function MoviPlayerScreen() {
   const autoNextLockRef = useRef(false);
 
   useEffect(() => {
-    if (!movieId) { setNextEpisode(null); return; }
+    if (!movieId || !hasValidTmdbId) { setNextEpisode(null); return; }
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
     if (!isSeries || !season || !episode) { setNextEpisode(null); return; }
 
@@ -715,35 +758,35 @@ export default function MoviPlayerScreen() {
 
     (async () => {
       try {
-        const next = await fetchNextEpisode(parseInt(movieId!), parseInt(season!), parseInt(episode!));
+        const next = await fetchNextEpisode(resolvedTmdbId!, parseInt(season!), parseInt(episode!));
         setNextEpisode(next);
       } catch (e) {
         console.error("fetchNextEpisode failed", e);
         setNextEpisode(null);
       }
     })();
-  }, [movieId, mediaType, season, episode]);
+  }, [movieId, hasValidTmdbId, resolvedTmdbId, mediaType, season, episode]);
 
   // Fetch total seasons count for the episodes panel
   useEffect(() => {
-    if (!movieId) return;
+    if (!movieId || !hasValidTmdbId) return;
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
     if (!isSeries) return;
     (async () => {
       try {
-        const details = await fetchTvDetails(parseInt(movieId));
+        const details = await fetchTvDetails(resolvedTmdbId!);
         if (details?.number_of_seasons) setTotalSeasons(details.number_of_seasons);
       } catch (_) { /* ignore */ }
     })();
-  }, [movieId, mediaType, season]);
+  }, [movieId, hasValidTmdbId, resolvedTmdbId, mediaType, season]);
 
   // Fetch episodes when the episodes panel is opened or season changes
   useEffect(() => {
-    if (!showEpisodesPanel || !movieId) return;
+    if (!showEpisodesPanel || !movieId || !hasValidTmdbId) return;
     setEpisodesLoading(true);
     (async () => {
       try {
-        const data = await fetchTvSeason(parseInt(movieId), episodesSeasonNum);
+        const data = await fetchTvSeason(resolvedTmdbId!, episodesSeasonNum);
         setEpisodesData(data?.episodes || []);
       } catch (e) {
         console.error("Failed to fetch season episodes", e);
@@ -930,12 +973,12 @@ export default function MoviPlayerScreen() {
   // NuvioMobile's scrobble flow. Uses the TMDB id (movieId) which Trakt accepts.
   const traktStartedRef = useRef(false);
   useEffect(() => {
-    if (!movieId || !mediaType) return;
+    if (!movieId || !mediaType || !hasValidTmdbId) return;
     if (!isTraktConnected()) return;
 
     const buildPayload = (progress: number) => {
-      const tmdbId = parseInt(movieId);
-      if (!Number.isFinite(tmdbId)) return null;
+      const tmdbId = resolvedTmdbId;
+      if (tmdbId === null) return null;
       const isSeries = mediaType === "tv" || mediaType === "series" || !!season;
       return {
         type: isSeries ? ("episode" as const) : ("movie" as const),
@@ -1297,8 +1340,12 @@ EventDump: ${JSON.stringify(collected)}`;
       // Resolve IMDb id (most addons want ttXXXXXX)
       let baseId = `tmdb:${movieId}`;
       try {
-        const ids = await fetchExternalIds(parseInt(movieId), "tv");
-        if (ids?.imdb_id) baseId = ids.imdb_id;
+        if (movieId!.startsWith("tt")) {
+          baseId = movieId;
+        } else if (hasValidTmdbId) {
+          const ids = await fetchExternalIds(resolvedTmdbId!, "tv");
+          if (ids?.imdb_id) baseId = ids.imdb_id;
+        }
       } catch (_) { /* fall back to tmdb id */ }
 
       const videoId = `${baseId}:${nextEpisode.season}:${nextEpisode.episode}`;
@@ -2355,7 +2402,7 @@ EventDump: ${JSON.stringify(collected)}`;
 
       {showStreamPicker && movieId && (
         <StreamPickerModal
-          tmdbId={parseInt(movieId)} type={mediaType!}
+          tmdbId={movieId} type={mediaType!}
           season={streamPickerSeason ?? (season ? parseInt(season) : undefined)}
           episode={streamPickerEpisode ?? (episode ? parseInt(episode) : undefined)}
           onClose={() => {

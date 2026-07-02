@@ -31,8 +31,15 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
     setLoading(true);
     setStreams([]);
     setError(null);
-
     async function loadStreams() {
+      if (!tmdbId || tmdbId === "NaN" || (typeof tmdbId === "number" && Number.isNaN(tmdbId))) {
+        if (isMounted) {
+          setError("Invalid metadata ID.");
+          setLoading(false);
+        }
+        return;
+      }
+
       try {
         const type = isSeries ? "tv" : "movie";
         

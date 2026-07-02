@@ -20,28 +20,67 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Follow all redirects server-side. Use a ranged GET so the CDN responds
-    // quickly with just headers (206 Partial Content) instead of streaming the
-    // full file. Abort immediately after reading the final URL.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    let currentUrl = url;
+    const maxRedirects = 5;
+    
+    for (let i = 0; i < maxRedirects; i++) {
+      let redirected = false;
 
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        Range: "bytes=0-0",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-      redirect: "follow",
-      signal: controller.signal,
-    });
+      // Try HEAD request first (no body download)
+      try {
+        const res = await fetch(currentUrl, {
+          method: "HEAD",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          },
+          redirect: "manual",
+          cache: "no-store",
+        });
 
-    const finalUrl = res.url || url;
-    clearTimeout(timeout);
-    controller.abort();
+        if (res.status >= 300 && res.status < 400) {
+          const location = res.headers.get("location");
+          if (location) {
+            currentUrl = new URL(location, currentUrl).toString();
+            redirected = true;
+          }
+        }
+      } catch (e) {
+        // HEAD failed, fall through to GET
+      }
+
+      // If HEAD did not redirect and we haven't resolved yet, try GET with manual redirect
+      if (!redirected) {
+        try {
+          const res = await fetch(currentUrl, {
+            method: "GET",
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            },
+            redirect: "manual",
+            cache: "no-store",
+          });
+
+          if (res.status >= 300 && res.status < 400) {
+            const location = res.headers.get("location");
+            if (location) {
+              currentUrl = new URL(location, currentUrl).toString();
+              redirected = true;
+            }
+          }
+        } catch (e) {
+          // If both fail, break loop and return what we have
+          break;
+        }
+      }
+
+      // If no redirect happened on this step, we reached the end of the chain!
+      if (!redirected) {
+        break;
+      }
+    }
 
     return NextResponse.json(
-      { url: finalUrl },
+      { url: currentUrl },
       {
         status: 200,
         headers: {
@@ -51,13 +90,6 @@ export async function GET(req: NextRequest) {
       },
     );
   } catch (err: any) {
-    if (err?.name === "AbortError") {
-      // Abort after reading res.url is expected — return the original URL
-      return NextResponse.json(
-        { url },
-        { status: 200, headers: { "Access-Control-Allow-Origin": "*" } },
-      );
-    }
     return NextResponse.json(
       { error: "Failed to resolve", detail: String(err) },
       { status: 502, headers: { "Access-Control-Allow-Origin": "*" } },
