@@ -137,6 +137,19 @@ export default function SettingsScreen() {
                   >
                     PlaysVideo
                   </button>
+                  <button
+                    onClick={() => {
+                      localStorage.setItem("nuvio.player_engine", "vlc.js");
+                      setPlayerEngine("vlc.js");
+                    }}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
+                      playerEngine === "vlc.js"
+                        ? "bg-white text-black border-white"
+                        : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                    }`}
+                  >
+                    vlc.js
+                  </button>
                 </div>
               </div>
 

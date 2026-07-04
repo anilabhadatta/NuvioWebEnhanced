@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import MoviPlayerScreen from "./MoviPlayerScreen";
 import PlaysVideoPlayerScreen from "./PlaysVideoPlayerScreen";
+import VlcPlayerScreen from "./VlcPlayerScreen";
 
 export default function PlayerScreen() {
   const [engine, setEngine] = useState<string | null>(null);
@@ -18,6 +19,10 @@ export default function PlayerScreen() {
 
   if (engine === "PlaysVideo") {
     return <PlaysVideoPlayerScreen />;
+  }
+
+  if (engine === "vlc.js") {
+    return <VlcPlayerScreen />;
   }
 
   return <MoviPlayerScreen />;
