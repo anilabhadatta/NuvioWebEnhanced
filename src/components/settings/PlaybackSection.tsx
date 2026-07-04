@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState } from "react";
 import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS } from "@/lib/playbackSettings";
+import { AVAILABLE_LANGUAGES } from "@/lib/languageUtils";
 
-const LANGUAGES = ["None", "English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese"];
 const SUBTITLE_STARTUP_OPTIONS = ["Preferred only", "Always on", "Always off"];
 
 export default function PlaybackSection() {
@@ -108,7 +108,8 @@ export default function PlaybackSection() {
             value={settings.preferredAudioLanguage}
             onChange={e => updateSetting("preferredAudioLanguage", e.target.value)}
           >
-            {LANGUAGES.filter(l => l !== "None").map(l => <option key={l} value={l}>{l}</option>)}
+            <option value="none">None</option>
+            {AVAILABLE_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
         </div>
 
@@ -122,7 +123,8 @@ export default function PlaybackSection() {
             value={settings.secondaryAudioLanguage}
             onChange={e => updateSetting("secondaryAudioLanguage", e.target.value)}
           >
-            {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+            <option value="none">None</option>
+            {AVAILABLE_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
         </div>
 
@@ -136,7 +138,8 @@ export default function PlaybackSection() {
             value={settings.preferredSubtitleLanguage}
             onChange={e => updateSetting("preferredSubtitleLanguage", e.target.value)}
           >
-            {LANGUAGES.filter(l => l !== "None").map(l => <option key={l} value={l}>{l}</option>)}
+            <option value="none">None</option>
+            {AVAILABLE_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
         </div>
 
@@ -150,7 +153,8 @@ export default function PlaybackSection() {
             value={settings.secondarySubtitleLanguage}
             onChange={e => updateSetting("secondarySubtitleLanguage", e.target.value)}
           >
-            {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+            <option value="none">None</option>
+            {AVAILABLE_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
           </select>
         </div>
 

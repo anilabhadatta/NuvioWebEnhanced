@@ -8,7 +8,8 @@ import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
 import { saveWatchProgress } from "@/lib/watchProgress";
 import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
-import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS } from "@/lib/playbackSettings";
+import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS, getLocalPlaybackSettings } from "@/lib/playbackSettings";
+import { languageMatchesPreference, getLanguageName } from "@/lib/languageUtils";
 import StreamPickerModal from "./StreamPickerModal";
 
 function formatTime(sec: number): string {
@@ -489,8 +490,9 @@ export default function MoviPlayerScreen() {
     }
   };
 
-  const playbackSettingsRef = useRef<PlaybackSettings>(DEFAULT_PLAYBACK_SETTINGS);
+  const playbackSettingsRef = useRef<PlaybackSettings>(getLocalPlaybackSettings());
   const audioPrefAppliedRef = useRef(false);
+  const [subPrefApplied, setSubPrefApplied] = useState(false);
   const subPrefAppliedRef = useRef(false);
 
   useEffect(() => {
@@ -570,11 +572,13 @@ export default function MoviPlayerScreen() {
     if (autoSelectedAddonSubRef.current) return;
     if (activeExternalSub) return;
 
-    // Only apply if built-in selection logic has run and we have no built-in subtitle selected
-    if (subPrefAppliedRef.current && selectedSub !== -1) return;
+    // Wait for built-in track selection logic to run first!
+    if (!subPrefApplied) return;
+    // If a built-in subtitle was already successfully selected, do not override with an addon subtitle.
+    if (selectedSub !== -1) return;
 
     const prefs = playbackSettingsRef.current;
-    if (prefs.addonSubtitleStartup === "Always off" || prefs.addonSubtitleStartup === "None") return;
+    if (prefs.addonSubtitleStartup === "Always off" || prefs.addonSubtitleStartup === "none" || prefs.addonSubtitleStartup === "None") return;
 
     const prefSub = prefs.preferredSubtitleLanguage;
     const secSub = prefs.secondarySubtitleLanguage;
@@ -597,7 +601,7 @@ export default function MoviPlayerScreen() {
       autoSelectedAddonSubRef.current = true;
       try { videoRef.current?.selectSubtitleTrack(-1); } catch {}
     }
-  }, [addonSubtitles, activeExternalSub, selectedSub]);
+  }, [addonSubtitles, activeExternalSub, selectedSub, subPrefApplied]);
   // Modal & Overlays
   const [showStreamPicker, setShowStreamPicker] = useState(false);
   const [streamPickerSeason, setStreamPickerSeason] = useState<number | null>(null);
@@ -939,16 +943,8 @@ export default function MoviPlayerScreen() {
   };
 
   const isLanguageMatch = (trackLang: string, trackLabel: string, pref: string) => {
-    if (!pref || pref === "None") return false;
-    const p = pref.toLowerCase();
-    const l = trackLang?.toLowerCase() || "";
-    const n = trackLabel?.toLowerCase() || "";
-    if (l === p || n === p) return true;
-    const pShort3 = p.slice(0, 3);
-    const pShort2 = p.slice(0, 2);
-    if (l && (l.startsWith(pShort3) || l.startsWith(pShort2))) return true;
-    if (n && (n.startsWith(pShort3) || n.startsWith(pShort2))) return true;
-    return false;
+    if (!pref || pref.toLowerCase() === "none") return false;
+    return languageMatchesPreference(trackLang, pref) || languageMatchesPreference(trackLabel, pref);
   };
 
   onTracksChangeRef.current = (e: any) => {
@@ -966,17 +962,43 @@ export default function MoviPlayerScreen() {
       const prefAudio = prefs.preferredAudioLanguage;
       const secAudio = prefs.secondaryAudioLanguage;
       
-      if (prefAudio && prefAudio !== "None") {
+      console.log("[MoviPlayer] Evaluating Audio Preferences:", { prefAudio, secAudio });
+
+      if (prefAudio && prefAudio.toLowerCase() !== "none") {
         let targetId = -1;
-        const exactMatch = audio.find((t: any) => isLanguageMatch(t.language, t.label, prefAudio));
+        const exactMatch = audio.find((t: any) => {
+          const match = isLanguageMatch(t.language, t.label, prefAudio);
+          if (match) console.log(`[MoviPlayer] Found primary audio match: ${t.language} / ${t.label} (ID: ${t.id})`);
+          return match;
+        });
+        
         if (exactMatch) targetId = exactMatch.id;
-        else if (secAudio && secAudio !== "None") {
-          const secMatch = audio.find((t: any) => isLanguageMatch(t.language, t.label, secAudio));
+        else if (secAudio && secAudio.toLowerCase() !== "none") {
+          const secMatch = audio.find((t: any) => {
+            const match = isLanguageMatch(t.language, t.label, secAudio);
+            if (match) console.log(`[MoviPlayer] Found secondary audio match: ${t.language} / ${t.label} (ID: ${t.id})`);
+            return match;
+          });
           if (secMatch) targetId = secMatch.id;
         }
         
         if (targetId !== -1) {
-          try { video.selectAudioTrack(targetId); didUpdateAudioPrefs = true; } catch { /* ok */ }
+          console.log(`[MoviPlayer] Selecting audio track ID: ${targetId}`);
+          try { 
+            const player = video.player;
+            if (player) {
+              if (typeof player.isNativeAudioActive === 'function' && player.isNativeAudioActive()) player.useMuxedAudio();
+              if (typeof player.selectAudioTrack === 'function') player.selectAudioTrack(targetId);
+            } else if (typeof video.selectAudioTrack === 'function') {
+              video.selectAudioTrack(targetId);
+            }
+            if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
+            
+            didUpdateAudioPrefs = true; 
+            setSelectedAudio(targetId);
+          } catch { /* ok */ }
+        } else {
+          console.log("[MoviPlayer] No matching audio track found.");
         }
       }
       audioPrefAppliedRef.current = true;
@@ -986,24 +1008,61 @@ export default function MoviPlayerScreen() {
       const prefSub = prefs.preferredSubtitleLanguage;
       const secSub = prefs.secondarySubtitleLanguage;
 
-      if (prefSub && prefSub !== "None") {
+      console.log("[MoviPlayer] Evaluating Subtitle Preferences:", { prefSub, secSub, addonStartup: prefs.addonSubtitleStartup });
+
+      if (prefSub && prefSub.toLowerCase() !== "none") {
         let targetId = -1;
-        const exactMatch = subtitle.find((t: any) => isLanguageMatch(t.language, t.label, prefSub));
+        const exactMatch = subtitle.find((t: any) => {
+          const match = isLanguageMatch(t.language, t.label, prefSub);
+          if (match) console.log(`[MoviPlayer] Found primary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
+          return match;
+        });
+        
         if (exactMatch) targetId = exactMatch.id;
-        else if (secSub && secSub !== "None") {
-          const secMatch = subtitle.find((t: any) => isLanguageMatch(t.language, t.label, secSub));
+        else if (secSub && secSub.toLowerCase() !== "none") {
+          const secMatch = subtitle.find((t: any) => {
+            const match = isLanguageMatch(t.language, t.label, secSub);
+            if (match) console.log(`[MoviPlayer] Found secondary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
+            return match;
+          });
           if (secMatch) targetId = secMatch.id;
         }
 
         if (targetId !== -1) {
           if (!activeExternalSubRef.current) {
-            try { video.selectSubtitleTrack(targetId); didUpdateSubPrefs = true; } catch { /* ok */ }
+            console.log(`[MoviPlayer] Selecting subtitle track ID: ${targetId}`);
+            try { 
+              const player = video.player;
+              if (player && typeof player.selectSubtitleTrack === 'function') {
+                player.selectSubtitleTrack(targetId);
+              }
+              if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
+              
+              didUpdateSubPrefs = true; 
+              setSelectedSub(targetId);
+            } catch { /* ok */ }
+          } else {
+            console.log(`[MoviPlayer] Skipping subtitle auto-selection because an external subtitle is active.`);
           }
         } else if (prefs.addonSubtitleStartup === "Always off") {
-          try { video.selectSubtitleTrack(-1); didUpdateSubPrefs = true; } catch { /* ok */ }
+          console.log(`[MoviPlayer] No matching subtitle found, turning off subtitles (Always off setting).`);
+          try { 
+            const player = video.player;
+            if (player && typeof player.selectSubtitleTrack === 'function') {
+              player.selectSubtitleTrack(null);
+            }
+            if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
+            
+            didUpdateSubPrefs = true; 
+          } catch { /* ok */ }
+        } else {
+          console.log("[MoviPlayer] No matching subtitle track found.");
         }
+      } else {
+        console.log("[MoviPlayer] Subtitle preference is 'None', skipping auto-selection.");
       }
       subPrefAppliedRef.current = true;
+      setSubPrefApplied(true);
     }
     if (audio?.length > 0) {
       const newAudios = audio.map((t: any, i: number) => {
@@ -1017,7 +1076,7 @@ export default function MoviPlayerScreen() {
         setAudios(newAudios);
       }
       const active = audio.find((t: any) => t.active);
-      if (active && selectedAudio !== active.id) {
+      if (!didUpdateAudioPrefs && active && selectedAudio !== active.id) {
         setSelectedAudio(active.id);
       }
     }
@@ -1032,7 +1091,7 @@ export default function MoviPlayerScreen() {
         setSubtitles(newSubs);
       }
       const active = subtitle.find((t: any) => t.active);
-      if (active && selectedSub !== active.id) {
+      if (!didUpdateSubPrefs && active && selectedSub !== active.id) {
         setSelectedSub(active.id);
       }
     }

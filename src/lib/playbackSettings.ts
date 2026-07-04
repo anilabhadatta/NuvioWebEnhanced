@@ -19,10 +19,10 @@ export interface PlaybackSettings {
 }
 
 export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
-  preferredAudioLanguage: "English",
-  secondaryAudioLanguage: "None",
-  preferredSubtitleLanguage: "English",
-  secondarySubtitleLanguage: "None",
+  preferredAudioLanguage: "en",
+  secondaryAudioLanguage: "none",
+  preferredSubtitleLanguage: "en",
+  secondarySubtitleLanguage: "none",
   useForcedSubtitles: false,
   showOnlyPreferredLanguages: false,
   addonSubtitleStartup: "Preferred only",
@@ -35,27 +35,38 @@ export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
   subtitleOutline: false,
 };
 
+export function getLocalPlaybackSettings(): PlaybackSettings {
+  if (typeof window === "undefined") return DEFAULT_PLAYBACK_SETTINGS;
+  const cached = localStorage.getItem(`nuvio_playback_settings_${getActiveProfileId()}`);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch { /* ok */ }
+  }
+  return DEFAULT_PLAYBACK_SETTINGS;
+}
+
 export async function pullPlaybackSettings(): Promise<PlaybackSettings> {
   if (typeof window === "undefined") return DEFAULT_PLAYBACK_SETTINGS;
   const profileId = getActiveProfileId();
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return DEFAULT_PLAYBACK_SETTINGS;
+    if (!session) return getLocalPlaybackSettings();
 
     const { data, error } = await supabase.rpc("sync_pull_profile_settings_blob", {
       p_platform: "mobile",
       p_profile_id: profileId,
     });
 
-    if (error || !data) return DEFAULT_PLAYBACK_SETTINGS;
+    if (error || !data) return getLocalPlaybackSettings();
     
     const blob = Array.isArray(data) ? data[0]?.settings_json : (data as any)?.settings_json;
-    if (!blob || !blob.features || !blob.features.player_settings) return DEFAULT_PLAYBACK_SETTINGS;
+    if (!blob || !blob.features || !blob.features.player_settings) return getLocalPlaybackSettings();
 
     const ps = blob.features.player_settings;
     const getValue = (key: string, fallback: any) => ps[key]?.value !== undefined ? ps[key].value : fallback;
 
-    return {
+    const finalSettings = {
       ...DEFAULT_PLAYBACK_SETTINGS,
       preferredAudioLanguage: getValue("preferred_audio_language", DEFAULT_PLAYBACK_SETTINGS.preferredAudioLanguage),
       secondaryAudioLanguage: getValue("secondary_preferred_audio_language", DEFAULT_PLAYBACK_SETTINGS.secondaryAudioLanguage),
@@ -72,9 +83,12 @@ export async function pullPlaybackSettings(): Promise<PlaybackSettings> {
       subtitleBackgroundColor: getValue("subtitle_background_color", DEFAULT_PLAYBACK_SETTINGS.subtitleBackgroundColor),
       subtitleOutline: getValue("subtitle_outline_enabled", DEFAULT_PLAYBACK_SETTINGS.subtitleOutline),
     };
+    
+    localStorage.setItem(`nuvio_playback_settings_${profileId}`, JSON.stringify(finalSettings));
+    return finalSettings;
   } catch (e) {
     console.error("pullPlaybackSettings error", e);
-    return DEFAULT_PLAYBACK_SETTINGS;
+    return getLocalPlaybackSettings();
   }
 }
 
@@ -82,6 +96,7 @@ export async function pushPlaybackSettings(settings: PlaybackSettings): Promise<
   if (typeof window === "undefined") return false;
   const profileId = getActiveProfileId();
   try {
+    localStorage.setItem(`nuvio_playback_settings_${profileId}`, JSON.stringify(settings));
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return false;
 
