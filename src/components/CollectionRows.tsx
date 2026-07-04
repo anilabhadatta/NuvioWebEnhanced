@@ -275,7 +275,16 @@ function FolderAsMovieRow({
                 config = { type: mediaType, catalogId: "top", url: "https://cinemeta-catalogs.strem.io/top/manifest.json" };
               }
             }
-            const url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
+            let url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
+            if (url && url.includes("v3-cinemeta.strem.io")) {
+              if (config.catalogId === "imdbRating" || config.catalogId === "featured") {
+                url = "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json";
+                config.catalogId = "imdbRating";
+              } else {
+                url = "https://cinemeta-catalogs.strem.io/top/manifest.json";
+                config.catalogId = "top";
+              }
+            }
             if (!url || !config.type || !config.catalogId) return [];
             return fetchCollectionCatalog(url, config.type, config.catalogId, config.genre);
           }),

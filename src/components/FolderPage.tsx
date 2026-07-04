@@ -58,7 +58,18 @@ async function resolveSourcePage(
   }
 
   // Addon-backed
-  const url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
+  let url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
+  
+  if (url && url.includes("v3-cinemeta.strem.io")) {
+    if (config.catalogId === "imdbRating" || config.catalogId === "featured") {
+      url = "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json";
+      config.catalogId = "imdbRating";
+    } else {
+      url = "https://cinemeta-catalogs.strem.io/top/manifest.json";
+      config.catalogId = "top";
+    }
+  }
+
   if (!url || !config.type || !config.catalogId) return { items: [], totalPages: 0, nextSkip: 0 };
 
   try {
@@ -303,28 +314,59 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-  // â”€â”€ Load "All" tab â€” fetches sources one by one in a circular manner â”€â”€â”€â”€â”€â”€
-  const loadAllTab = useCallback(
-    async (reset = false) => {
-      const current = tabStates[ALL_TAB] || INITIAL_TAB;
-      if (!reset && current.loaded && current.page >= current.totalPages) return;
-      if (!reset && (current.loading || current.loadingMore)) return;
+    const depletedSourcesRef = useRef<Set<number>>(new Set());
 
-      const nextPage = reset ? 1 : current.page + 1;
-      const isFirstLoad = reset || !current.loaded;
+    // â”€â”€ Load "All" tab â€” fetches sources one by one in a circular manner â”€â”€â”€â”€â”€â”€
+    const loadAllTab = useCallback(
+      async (reset = false) => {
+        if (reset) depletedSourcesRef.current.clear();
+        
+        const current = tabStates[ALL_TAB] || INITIAL_TAB;
+        if (!reset && current.loaded && current.page >= current.totalPages) return;
+        if (!reset && (current.loading || current.loadingMore)) return;
 
-      setTabState(ALL_TAB, isFirstLoad ? { loading: true } : { loadingMore: true });
-      try {
-        // Circular logic: nextPage = 1 -> source 0 page 1. nextPage = 2 -> source 1 page 1.
-        const sourceIndex = (nextPage - 1) % sources.length;
-        const sourcePage = Math.floor((nextPage - 1) / sources.length) + 1;
-        const source = sources[sourceIndex];
+        let nextPage = reset ? 1 : current.page + 1;
+        const isFirstLoad = reset || !current.loaded;
 
-        // Estimate skip as (sourcePage - 1) * 20
-        const calculatedSkip = (sourcePage - 1) * 20;
+        // Skip depleted sources
+        let sourceIndex = (nextPage - 1) % sources.length;
+        let loopCount = 0;
+        while (depletedSourcesRef.current.has(sourceIndex) && loopCount < sources.length) {
+          nextPage++;
+          sourceIndex = (nextPage - 1) % sources.length;
+          loopCount++;
+        }
 
-        // Fetch just this ONE source's page to keep it extremely fast
-        const res = await resolveSourcePage(source as any, idToUrl, sourcePage, calculatedSkip);
+        if (loopCount >= sources.length) {
+          // All sources are depleted
+          setTabStates((prev) => ({
+            ...prev,
+            [ALL_TAB]: { ...prev[ALL_TAB], totalPages: current.page, loading: false, loadingMore: false }
+          }));
+          return;
+        }
+
+        setTabState(ALL_TAB, isFirstLoad ? { loading: true } : { loadingMore: true });
+        try {
+          const sourcePage = Math.floor((nextPage - 1) / sources.length) + 1;
+          const source = sources[sourceIndex];
+
+          // Estimate skip as (sourcePage - 1) * 20
+          const calculatedSkip = (sourcePage - 1) * 20;
+
+          // Fetch just this ONE source's page to keep it extremely fast
+          const res = await resolveSourcePage(source as any, idToUrl, sourcePage, calculatedSkip);
+
+          if (res.items.length === 0) {
+            depletedSourcesRef.current.add(sourceIndex);
+            // Auto-advance to the next one if this one was empty
+            setTabStates((prev) => ({
+              ...prev,
+              [ALL_TAB]: { ...(prev[ALL_TAB] || INITIAL_TAB), page: nextPage, loading: false, loadingMore: false }
+            }));
+            setTimeout(() => loadAllTab(false), 50);
+            return;
+          }
 
         // Virtually infinite scrolling (e.g. 50 pages deep per source max)
         const maxTotalPages = sources.length * 50;
