@@ -486,7 +486,7 @@ export default function MoviPlayerScreen() {
         subtitleOutline: newStyle.edge === "outline"
       };
       playbackSettingsRef.current = updatedPrefs;
-      pushPlaybackSettings(updatedPrefs).catch(() => {});
+      pushPlaybackSettings(updatedPrefs).catch(() => { });
     }
   };
 
@@ -505,7 +505,7 @@ export default function MoviPlayerScreen() {
         let edge: SubtitleEdge = "shadow";
         let bgColor = db.subtitleBackgroundColor || "transparent";
         let bgPct = 0;
-        
+
         if (db.subtitleOutline) {
           edge = "outline";
         } else if (bgColor && bgColor !== "transparent" && bgColor !== "#00000000") {
@@ -668,7 +668,7 @@ export default function MoviPlayerScreen() {
       }
       return;
     }
-    
+
     // It's an IMDb ID — resolve to TMDB ID
     let isMounted = true;
     const type = mediaType === "series" || mediaType === "tv" ? "tv" : "movie";
@@ -677,7 +677,7 @@ export default function MoviPlayerScreen() {
         if (isMounted && movie && movie.id) {
           setResolvedTmdbId(movie.id);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     });
     return () => { isMounted = false; };
   }, [movieId, mediaType]);
@@ -986,11 +986,11 @@ export default function MoviPlayerScreen() {
     let didUpdateSubPrefs = false;
 
     const prefs = playbackSettingsRef.current;
-    
+
     if (!audioPrefAppliedRef.current && audio?.length > 0) {
       const prefAudio = prefs.preferredAudioLanguage;
       const secAudio = prefs.secondaryAudioLanguage;
-      
+
       console.log("[MoviPlayer] Evaluating Audio Preferences:", { prefAudio, secAudio });
 
       if (prefAudio && prefAudio.toLowerCase() !== "none") {
@@ -1000,7 +1000,7 @@ export default function MoviPlayerScreen() {
           if (match) console.log(`[MoviPlayer] Found primary audio match: ${t.language} / ${t.label} (ID: ${t.id})`);
           return match;
         });
-        
+
         if (exactMatch) targetId = exactMatch.id;
         else if (secAudio && secAudio.toLowerCase() !== "none") {
           const secMatch = audio.find((t: any) => {
@@ -1010,10 +1010,10 @@ export default function MoviPlayerScreen() {
           });
           if (secMatch) targetId = secMatch.id;
         }
-        
+
         if (targetId !== -1) {
           console.log(`[MoviPlayer] Selecting audio track ID: ${targetId}`);
-          try { 
+          try {
             const player = video.player;
             if (player) {
               if (typeof player.isNativeAudioActive === 'function' && player.isNativeAudioActive()) player.useMuxedAudio();
@@ -1022,8 +1022,8 @@ export default function MoviPlayerScreen() {
               video.selectAudioTrack(targetId);
             }
             if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
-            
-            didUpdateAudioPrefs = true; 
+
+            didUpdateAudioPrefs = true;
             setSelectedAudio(targetId);
           } catch { /* ok */ }
         } else {
@@ -1047,7 +1047,7 @@ export default function MoviPlayerScreen() {
             if (match) console.log(`[MoviPlayer] Found primary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
             return match;
           });
-          
+
           if (exactMatch) targetId = exactMatch.id;
           else if (secSub && secSub.toLowerCase() !== "none") {
             const secMatch = subtitle.find((t: any) => {
@@ -1061,14 +1061,14 @@ export default function MoviPlayerScreen() {
           if (targetId !== -1) {
             if (!activeExternalSubRef.current) {
               console.log(`[MoviPlayer] Selecting subtitle track ID: ${targetId}`);
-              try { 
+              try {
                 const player = video.player;
                 if (player && typeof player.selectSubtitleTrack === 'function') {
                   player.selectSubtitleTrack(targetId);
                 }
                 if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
-                
-                didUpdateSubPrefs = true; 
+
+                didUpdateSubPrefs = true;
                 setSelectedSub(targetId);
               } catch { /* ok */ }
             } else {
@@ -1076,14 +1076,14 @@ export default function MoviPlayerScreen() {
             }
           } else if (prefs.addonSubtitleStartup === "Always off") {
             console.log(`[MoviPlayer] No matching subtitle found, turning off subtitles (Always off setting).`);
-            try { 
+            try {
               const player = video.player;
               if (player && typeof player.selectSubtitleTrack === 'function') {
                 player.selectSubtitleTrack(null);
               }
               if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
-              
-              didUpdateSubPrefs = true; 
+
+              didUpdateSubPrefs = true;
             } catch { /* ok */ }
           } else {
             console.log("[MoviPlayer] No built-in match found — will try addon subtitles.");
@@ -1461,13 +1461,13 @@ EventDump: ${JSON.stringify(collected)}`;
     setUserPaused(false);
     setShowNextEpisodeCard(false);
     hasResumedRef.current = false;
-    
+
     // Clear out refs so tracks change events trigger correctly for new streams
     audiosCache.current = JSON.stringify([{ id: 0, name: "Default" }]);
     subtitlesCache.current = JSON.stringify([{ id: -1, name: "None" }]);
     audioPrefAppliedRef.current = false;
     subPrefAppliedRef.current = false;
-    
+
     // Reset subtitle timing offset — a new episode/file has its own sync.
     setSubtitleDelayState(0);
     subtitleDelayRef.current = 0;
@@ -1996,35 +1996,45 @@ EventDump: ${JSON.stringify(collected)}`;
       />
 
       {/* External subtitle overlay — rendered by our own parser, works with any player */}
-      {activeSubCue && (
-        <div
-          className="absolute bottom-[88px] left-0 right-0 flex justify-center z-30 pointer-events-none px-8"
-          style={{ userSelect: 'none' }}
-        >
+      {activeSubCue && (() => {
+        // Build background color respecting user's choice
+        const bgIsTransparent = !subtitleStyle.bgColor || subtitleStyle.bgColor === 'transparent' || subtitleStyle.bgPct === 0;
+        const bgRgb = bgIsTransparent ? null : (() => {
+          const c = subtitleStyle.bgColor.replace('#', '');
+          const full = c.length === 3 ? c[0] + c[0] + c[1] + c[1] + c[2] + c[2] : c;
+          return `${parseInt(full.slice(0, 2), 16)}, ${parseInt(full.slice(2, 4), 16)}, ${parseInt(full.slice(4, 6), 16)}`;
+        })();
+        const addonFontSize = subtitleStyle.sizePct + 80;
+        return (
           <div
-            style={{
-              backgroundColor: subtitleStyle.bgPct > 0
-                ? `rgba(0,0,0,${subtitleStyle.bgPct / 100})`
-                : 'transparent',
-              color: subtitleStyle.color,
-              fontSize: `${subtitleStyle.sizePct}%`,
-              textShadow: subtitleStyle.edge === 'shadow' ? '1px 1px 4px #000, -1px -1px 4px #000' :
-                subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
-                  subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none',
-              padding: subtitleStyle.bgPct > 0 ? '4px 10px' : '0',
-              borderRadius: 4,
-              fontFamily: 'Arial, sans-serif',
-              fontWeight: 600,
-              lineHeight: 1.4,
-              maxWidth: '80vw',
-              textAlign: 'center',
-              whiteSpace: 'pre-line',
-            }}
+            className="absolute bottom-[88px] left-0 right-0 flex justify-center z-30 pointer-events-none px-8"
+            style={{ userSelect: 'none' }}
           >
-            {activeSubCue.text}
+            <div
+              style={{
+                backgroundColor: bgRgb
+                  ? `rgba(${bgRgb}, ${subtitleStyle.bgPct / 100})`
+                  : 'transparent',
+                color: subtitleStyle.color,
+                fontSize: `${addonFontSize}%`,
+                textShadow: subtitleStyle.edge === 'shadow' ? '1px 1px 4px #000, -1px -1px 4px #000' :
+                  subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
+                    subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none',
+                padding: bgRgb ? '4px 10px' : '0',
+                borderRadius: 4,
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 600,
+                lineHeight: 1.4,
+                maxWidth: '80vw',
+                textAlign: 'center',
+                whiteSpace: 'pre-line',
+              }}
+            >
+              {activeSubCue.text}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* States */}
       {!resolvedSrc && (
@@ -2236,11 +2246,11 @@ EventDump: ${JSON.stringify(collected)}`;
                               />
                             ))}
                             <div className="flex items-center gap-1.5 ml-1">
-                              <input 
-                                type="color" 
+                              <input
+                                type="color"
                                 value={subtitleStyle.color.length >= 7 ? subtitleStyle.color.slice(0, 7) : "#FFFFFF"}
                                 onChange={e => updateSubtitleStyle({ ...subtitleStyle, color: e.target.value.toUpperCase() })}
-                                className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full" 
+                                className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full"
                               />
                             </div>
                           </div>
@@ -2324,8 +2334,8 @@ EventDump: ${JSON.stringify(collected)}`;
                               />
                             ))}
                             <div className="flex items-center gap-1.5 ml-1">
-                              <input 
-                                type="color" 
+                              <input
+                                type="color"
                                 value={subtitleStyle.bgColor.length >= 7 && subtitleStyle.bgColor !== "transparent" ? subtitleStyle.bgColor.slice(0, 7) : "#000000"}
                                 onChange={e => {
                                   updateSubtitleStyle({
@@ -2335,7 +2345,7 @@ EventDump: ${JSON.stringify(collected)}`;
                                     edge: "none",
                                   });
                                 }}
-                                className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full" 
+                                className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full"
                               />
                             </div>
                           </div>
