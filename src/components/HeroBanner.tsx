@@ -1,23 +1,25 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { tmdb, TMDB_IMAGE_BASE, TMDB_IMAGE_W500, TMDBMovie, TMDB_URLS, getGenreNames } from "@/lib/tmdb";
+import { TMDBMovie, resolveStremioIdToMovie } from "@/lib/tmdb";
+import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
 import { useRouter } from "next/navigation";
 import MovieModal from "./MovieModal";
+import { Info } from "lucide-react";
 
 let isHydrated = false;
 
 export default function HeroBanner() {
   const router = useRouter();
 
-  const [movies, setMovies] = useState<TMDBMovie[]>(() => {
+  const [movies, setMovies] = useState<CatalogMeta[]>(() => {
     if (typeof window !== "undefined" && isHydrated) {
       const cached = sessionStorage.getItem("nuvio_hero_banner");
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
           if (parsed && parsed.length > 0) return parsed;
-        } catch(e) {}
+        } catch (e) { }
       }
     }
     return [];
@@ -32,13 +34,14 @@ export default function HeroBanner() {
         try {
           const parsed = JSON.parse(cached);
           if (parsed && parsed.length > 0) return false;
-        } catch(e) {}
+        } catch (e) { }
       }
     }
     return true;
   });
 
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   useEffect(() => {
     isHydrated = true;
@@ -54,21 +57,23 @@ export default function HeroBanner() {
           setLoading(false);
           hasCache = true;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
-    tmdb.get(TMDB_URLS.trending).then((res) => {
-      if (cancelled) return;
-      const results: TMDBMovie[] = res.data.results || [];
-      const sliced = results.slice(0, 8);
-      if (sliced.length > 0) {
-        try { sessionStorage.setItem("nuvio_hero_banner", JSON.stringify(sliced)); } catch(e) {}
-      }
-      setMovies(sliced);
-      setLoading(false);
-    }).catch(() => {
-      if (!cancelled && !hasCache) setLoading(false);
-    });
+    // Use cinemeta-catalogs for Stremio fetching instead of TMDB directly
+    fetchCollectionCatalog("https://cinemeta-catalogs.strem.io/top/manifest.json", "movie", "top")
+      .then((items) => {
+        if (cancelled) return;
+        const sliced = items.filter(m => m.background).slice(0, 8); // Only use items with a backdrop
+        if (sliced.length > 0) {
+          try { sessionStorage.setItem("nuvio_hero_banner", JSON.stringify(sliced)); } catch (e) { }
+        }
+        setMovies(sliced);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled && !hasCache) setLoading(false);
+      });
 
     return () => { cancelled = true; };
   }, []);
@@ -101,24 +106,28 @@ export default function HeroBanner() {
   const movie = movies[currentIndex];
   if (!movie) return null;
 
-  const title = movie.title || movie.name || "";
-  const genres = getGenreNames(movie.genre_ids || []);
+  const title = movie.name || "";
+  const genres = (movie as any).genres || [];
 
-  const handlePlay = () => {
-    setSelectedMovie(movie);
+  const handlePlay = async () => {
+    setResolvingId(movie.id);
+    try {
+      const tmdbResolved = await resolveStremioIdToMovie(movie.id, movie.type);
+      if (tmdbResolved) setSelectedMovie(tmdbResolved);
+    } catch { /* ignore */ }
+    setResolvingId(null);
   };
 
   return (
     <>
       <div className="relative h-[70vh] overflow-hidden">
-        {movie.backdrop_path && (
+        {movie.background && (
           <img
             key={movie.id}
-            src={`${TMDB_IMAGE_BASE}${movie.backdrop_path}`}
+            src={movie.background}
             alt={title}
             className="absolute inset-0 w-full h-full object-cover transition-all duration-1000"
             style={{ objectPosition: "center 20%" }}
-            crossOrigin="anonymous"
           />
         )}
 
@@ -133,7 +142,7 @@ export default function HeroBanner() {
           {/* Genre tags */}
           {genres.length > 0 && (
             <div className="flex gap-2 mb-3">
-              {genres.map((g) => (
+              {genres.map((g: string) => (
                 <span key={g} className="text-xs text-[#bbb] font-medium">{g}</span>
               ))}
             </div>
@@ -145,9 +154,9 @@ export default function HeroBanner() {
           </h1>
 
           {/* Description */}
-          {movie.overview && (
+          {movie.description && (
             <p className="text-[#bbb] text-sm md:text-base max-w-xl line-clamp-3 mb-5 leading-relaxed">
-              {movie.overview}
+              {movie.description}
             </p>
           )}
 
@@ -155,16 +164,22 @@ export default function HeroBanner() {
           <div className="flex gap-3">
             <button
               onClick={handlePlay}
-              className="flex items-center gap-2 bg-white hover:bg-gray-200 text-black font-bold px-7 py-3 rounded-xl transition-all text-sm shadow-lg"
+              disabled={resolvingId === movie.id}
+              className="flex items-center gap-2 bg-white hover:bg-gray-200 text-black font-bold px-7 py-3 rounded-xl transition-all text-sm shadow-lg disabled:opacity-50"
             >
-              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                <path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-              </svg>
-              Play
+              {resolvingId === movie.id ? (
+                <div className="w-5 h-5 border-2 border-black/20 border-t-black animate-spin rounded-full" />
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                  <path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                </svg>
+              )}
+              {resolvingId === movie.id ? "Loading..." : "Play"}
             </button>
             <button
-              onClick={() => setSelectedMovie(movie)}
-              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold px-7 py-3 rounded-xl transition-all text-sm backdrop-blur-sm"
+              onClick={handlePlay}
+              disabled={resolvingId === movie.id}
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold px-7 py-3 rounded-xl transition-all text-sm backdrop-blur-sm disabled:opacity-50"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
@@ -179,9 +194,8 @@ export default function HeroBanner() {
               <button
                 key={i}
                 onClick={() => setCurrentIndex(i)}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  i === currentIndex ? "w-6 bg-white" : "w-1.5 bg-white/30 hover:bg-white/50"
-                }`}
+                className={`h-1.5 rounded-full transition-all duration-300 ${i === currentIndex ? "w-6 bg-white" : "w-1.5 bg-white/30 hover:bg-white/50"
+                  }`}
               />
             ))}
           </div>

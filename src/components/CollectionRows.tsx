@@ -8,17 +8,19 @@ import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
 import { fetchTmdbCollectionSource, resolveStremioIdToMovie } from "@/lib/tmdb";
 import { useRouter } from "next/navigation";
 
+import { SYSTEM_COLLECTIONS, getDynamicSystemCollections } from "@/lib/defaultCollections";
+
 let isHydrated = false;
 
 export default function CollectionRows({ onSelectMovie }: { onSelectMovie: (m: TMDBMovie) => void }) {
   const [collections, setCollections] = useState<Collection[]>(() => {
     if (typeof window !== "undefined" && isHydrated) {
       const local = loadLocalCollections();
-      if (local.length > 0) {
-        return [...local].sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop));
-      }
+      const merged = [...local, ...SYSTEM_COLLECTIONS];
+      const uniqueMerged = Array.from(new Map(merged.map(c => [c.id, c])).values());
+      return uniqueMerged.sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop));
     }
-    return [];
+    return [...SYSTEM_COLLECTIONS];
   });
   const router = useRouter();
 
@@ -26,21 +28,38 @@ export default function CollectionRows({ onSelectMovie }: { onSelectMovie: (m: T
     isHydrated = true;
     let cancelled = false;
 
-    // 1. Instantly load local collections after hydration
-    const local = loadLocalCollections();
-    if (local.length > 0) {
-      setCollections([...local].sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop)));
-    }
+    const load = async () => {
+      const local = loadLocalCollections();
+      const sys = await getDynamicSystemCollections();
+      if (cancelled) return;
 
-    // 2. Fetch fresh collections from server in background
-    (async () => {
-      const data = await pullCollections();
-      if (!cancelled && data && data.length > 0) {
-        // Pinned collections first, preserving order otherwise.
-        const ordered = [...data].sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop));
-        setCollections(ordered);
+      const merged = [...local, ...sys];
+      const uniqueMerged = Array.from(new Map(merged.map(c => [c.id, c])).values());
+      setCollections(uniqueMerged.sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop)));
+
+      // Only hit Supabase if we haven't already fetched this session
+      const cacheKey = "nuvio_collections_pulled";
+      const cached = sessionStorage.getItem(cacheKey);
+      let remoteCollections: any[] | null = null;
+      if (cached) {
+        try { remoteCollections = JSON.parse(cached); } catch { /* ignore */ }
       }
-    })();
+      if (!remoteCollections) {
+        const data = await pullCollections();
+        if (!cancelled && data) {
+          try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* ignore */ }
+          remoteCollections = data;
+        }
+      }
+
+      if (!cancelled && remoteCollections) {
+        const allData = [...local, ...remoteCollections, ...sys];
+        const uniqueData = Array.from(new Map(allData.map(c => [c.id, c])).values());
+        setCollections(uniqueData.sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop)));
+      }
+    };
+    load();
+
     return () => { cancelled = true; };
   }, []);
 
@@ -159,7 +178,6 @@ function CollectionRow({
                       alt={folder.title}
                       className="absolute inset-0 w-full h-full object-cover"
                       loading="lazy"
-                      crossOrigin="anonymous"
                     />
                   ) : null}
 
@@ -216,6 +234,11 @@ function FolderAsMovieRow({
   const [loading, setLoading] = useState(true);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
+  const handleHeaderClick = () => {
+    router.push(`/collection/${encodeURIComponent(folder.id)}`);
+  };
 
   useEffect(() => {
     let active = true;
@@ -226,8 +249,10 @@ function FolderAsMovieRow({
           ? folder.sources
           : (folder.catalogSources || []).map((c) => ({ provider: "addon", ...c }));
 
-        const hasAddonSources = sources.some((s) => !s.provider || s.provider === "addon");
-        if (hasAddonSources) {
+        const hasAddonSourcesNeedingLookup = sources.some(
+          (s: any) => (!s.provider || s.provider === "addon") && !s.url
+        );
+        if (hasAddonSourcesNeedingLookup) {
           const addons = await fetchAddons();
           await Promise.all(
             addons.map(async (a) => {
@@ -239,12 +264,20 @@ function FolderAsMovieRow({
 
         const metaLists = await Promise.all(
           sources.map(async (s: any) => {
+            let config = { ...s };
+            // Auto-upgrade legacy TMDB sources to cinemeta Stremio addons
             if (s.provider === "tmdb" || s.tmdbSourceType || (!s.provider && !s.addonId && !s.catalogId)) {
-              return fetchTmdbCollectionSource(s);
+              const sourceType = (s.tmdbSourceType || "DISCOVER").toUpperCase();
+              const mediaType = (s.mediaType || "movie").toLowerCase();
+              if (sourceType === "TOP_RATED" || sourceType === "TOPRATED") {
+                config = { type: mediaType, catalogId: "imdbRating", url: "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json" };
+              } else {
+                config = { type: mediaType, catalogId: "top", url: "https://cinemeta-catalogs.strem.io/top/manifest.json" };
+              }
             }
-            const url = s.addonId ? idToUrl.get(s.addonId) : undefined;
-            if (!url || !s.type || !s.catalogId) return [];
-            return fetchCollectionCatalog(url, s.type, s.catalogId, s.genre);
+            const url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
+            if (!url || !config.type || !config.catalogId) return [];
+            return fetchCollectionCatalog(url, config.type, config.catalogId, config.genre);
           }),
         );
 
@@ -264,7 +297,7 @@ function FolderAsMovieRow({
     };
     loadData();
     return () => { active = false; };
-  }, [folder]);
+  }, [folder.id]);
 
   const handleMovieClick = async (meta: CatalogMeta) => {
     setResolvingId(meta.id);
@@ -288,7 +321,19 @@ function FolderAsMovieRow({
 
   return (
     <div className="mb-8 relative group">
-      <h2 className="text-white font-semibold text-[17px] mb-3 ml-1">{folder.title}</h2>
+      <div
+        onClick={handleHeaderClick}
+        className="flex items-center gap-2 cursor-pointer group/header w-fit mb-3 ml-1"
+      >
+        <h2 className="text-white font-semibold text-[17px] group-hover/header:text-white/80 transition-colors">
+          {folder.title}
+        </h2>
+        <div className="w-6 h-6 rounded-full bg-white/10 group-hover/header:bg-white/25 flex items-center justify-center text-white transition-colors">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="w-3.5 h-3.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+        </div>
+      </div>
       <div className="relative">
         <button
           onClick={scrollLeft}
@@ -334,7 +379,6 @@ function FolderAsMovieRow({
                       alt={meta.name}
                       className="w-full h-full object-cover"
                       loading="lazy"
-                      crossOrigin="anonymous"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-[#555] text-xs px-2 text-center">
@@ -355,3 +399,4 @@ function FolderAsMovieRow({
     </div>
   );
 }
+

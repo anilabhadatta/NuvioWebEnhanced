@@ -35,8 +35,9 @@ export interface AddonManifest {
 const LOCAL_KEY = "nuvio_addons";
 
 const DEFAULT_ADDONS: ManagedAddon[] = [
-  { url: "https://v3-cinemeta.strem.io/manifest.json", name: "Cinemeta", enabled: true, sort_order: 0 },
-  { url: "https://opensubtitles-v3.strem.io/manifest.json", name: "OpenSubtitles v3", enabled: true, sort_order: 1 },
+  { url: "https://cinemeta-catalogs.strem.io/top/manifest.json", name: "Cinemeta Popular", enabled: true, sort_order: 0 },
+  { url: "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json", name: "Cinemeta Featured", enabled: true, sort_order: 1 },
+  { url: "https://opensubtitles-v3.strem.io/manifest.json", name: "OpenSubtitles v3", enabled: true, sort_order: 2 },
 ];
 
 /** Normalize a user-provided addon URL so it always points at manifest.json. */
@@ -54,14 +55,43 @@ export function normalizeManifestUrl(input: string): string {
   return base + query;
 }
 
+const manifestCache = new Map<string, AddonManifest | null>();
+const manifestFetchPromises = new Map<string, Promise<AddonManifest | null>>();
+
 export async function fetchAddonManifest(url: string): Promise<AddonManifest | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    return (await res.json()) as AddonManifest;
-  } catch {
-    return null;
-  }
+  if (manifestCache.has(url)) return manifestCache.get(url)!;
+  if (manifestFetchPromises.has(url)) return manifestFetchPromises.get(url)!;
+
+  const promise = (async (): Promise<AddonManifest | null> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { manifestCache.set(url, null); return null; }
+      const manifest = (await res.json()) as AddonManifest;
+
+      if (!manifest?.catalogs || manifest.catalogs.length === 0) {
+        manifestCache.set(url, null); return null;
+      }
+
+      if (manifest.resources && manifest.resources.length > 0) {
+        const names = manifest.resources.map((r: any) => typeof r === "string" ? r : r.name);
+        // Exclude stream providers (they may expose catalogs but aren't browse addons)
+        if (names.includes("stream") || !names.includes("catalog")) {
+          manifestCache.set(url, null); return null;
+        }
+      }
+
+      manifestCache.set(url, manifest);
+      return manifest;
+    } catch {
+      manifestCache.set(url, null);
+      return null;
+    } finally {
+      manifestFetchPromises.delete(url);
+    }
+  })();
+
+  manifestFetchPromises.set(url, promise);
+  return promise;
 }
 
 function readLocal(): ManagedAddon[] | null {
@@ -81,32 +111,47 @@ function writeLocal(addons: ManagedAddon[]) {
   } catch { /* ignore */ }
 }
 
+let activeFetchPromise: Promise<ManagedAddon[]> | null = null;
+
 /** Load addons for the active profile (Supabase first, then local cache, then defaults). */
 export async function fetchAddons(): Promise<ManagedAddon[]> {
-  const profileId = getActiveProfileId();
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      const { data, error } = await supabase
-        .from("addons")
-        .select("url, name, enabled, sort_order")
-        .eq("profile_id", profileId)
-        .order("sort_order", { ascending: true });
-      if (!error && data && data.length > 0) {
-        const addons = (data as any[]).map((a, i) => ({
-          url: a.url,
-          name: a.name || a.url,
-          enabled: a.enabled !== false,
-          sort_order: a.sort_order ?? i,
-        }));
-        writeLocal(addons);
-        return addons;
-      }
-    }
-  } catch (e) {
-    console.error("fetchAddons supabase error", e);
+  if (activeFetchPromise) {
+    return activeFetchPromise;
   }
-  return readLocal() ?? DEFAULT_ADDONS;
+
+  activeFetchPromise = (async () => {
+    const profileId = getActiveProfileId();
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data, error } = await supabase
+          .from("addons")
+          .select("url, name, enabled, sort_order")
+          .eq("profile_id", profileId)
+          .order("sort_order", { ascending: true });
+        if (!error && data && data.length > 0) {
+          const addons = (data as any[]).map((a, i) => ({
+            url: a.url,
+            name: a.name || a.url,
+            enabled: a.enabled !== false,
+            sort_order: a.sort_order ?? i,
+          }));
+          writeLocal(addons);
+          return addons;
+        }
+      }
+    } catch (e) {
+      console.error("fetchAddons supabase error", e);
+    }
+    return readLocal() ?? DEFAULT_ADDONS;
+  })();
+
+  const result = await activeFetchPromise;
+  setTimeout(() => {
+    activeFetchPromise = null;
+  }, 3000);
+
+  return result;
 }
 
 export async function pushAddons(addons: ManagedAddon[]): Promise<boolean> {

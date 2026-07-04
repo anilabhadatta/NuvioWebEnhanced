@@ -28,13 +28,21 @@ export async function fetchCollectionCatalog(
   type: string,
   catalogId: string,
   genre?: string,
+  skip?: number,
 ): Promise<CatalogMeta[]> {
   try {
     const { base, query } = baseFromManifest(manifestUrl);
-    const genrePart = genre && genre.trim() && genre.toLowerCase() !== "none"
-      ? `/genre=${encodeURIComponent(genre)}`
-      : "";
-    const url = `${base}/catalog/${encodeURIComponent(type)}/${encodeURIComponent(catalogId)}${genrePart}.json${query}`;
+    
+    const extraParts: string[] = [];
+    if (genre && genre.trim() && genre.toLowerCase() !== "none") {
+      extraParts.push(`genre=${encodeURIComponent(genre)}`);
+    }
+    if (skip && skip > 0) {
+      extraParts.push(`skip=${skip}`);
+    }
+
+    const extraPart = extraParts.length > 0 ? `/${extraParts.join("&")}` : "";
+    const url = `${base}/catalog/${encodeURIComponent(type)}/${encodeURIComponent(catalogId)}${extraPart}.json${query}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const data = await res.json();

@@ -83,38 +83,52 @@ export const fetchExternalIds = async (id: number | string, type: "movie" | "tv"
   return res.data;
 };
 
-/**
- * Resolve a Stremio catalog meta id (imdb ttXXXX, or tmdb:NNN) to a TMDBMovie so
- * it can be opened in the existing MovieModal. Returns null if it can't resolve.
- */
+const resolvePromises = new Map<string, Promise<TMDBMovie | null>>();
+
 export const resolveStremioIdToMovie = async (
   rawId: string,
   fallbackType?: string,
 ): Promise<TMDBMovie | null> => {
-  try {
-    const id = rawId.trim();
-    // Direct TMDB id form: tmdb:12345 or movie:12345 / series:12345
-    const tmdbMatch = id.match(/(?:tmdb|movie|series):(\d+)/i);
-    if (tmdbMatch) {
-      const tmdbId = parseInt(tmdbMatch[1]);
-      const type = fallbackType === "series" || fallbackType === "tv" ? "tv" : "movie";
-      return await fetchTmdbAsMovie(tmdbId, type);
-    }
-
-    // IMDb id form: ttXXXXX → /find
-    const imdbMatch = id.match(/tt\d+/);
-    if (imdbMatch) {
-      const res = await tmdb.get(`/find/${imdbMatch[0]}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
-      const movie = res.data?.movie_results?.[0];
-      const tv = res.data?.tv_results?.[0];
-      const chosen = (fallbackType === "series" || fallbackType === "tv") ? (tv || movie) : (movie || tv);
-      if (!chosen) return null;
-      return { ...chosen, media_type: chosen === tv ? "tv" : "movie" } as TMDBMovie;
-    }
-    return null;
-  } catch {
-    return null;
+  const cacheKey = `${rawId.trim()}_${fallbackType || "any"}`;
+  if (resolvePromises.has(cacheKey)) {
+    return resolvePromises.get(cacheKey)!;
   }
+
+  const promise = (async (): Promise<TMDBMovie | null> => {
+    try {
+      const id = rawId.trim();
+      // Direct TMDB id form: tmdb:12345 or movie:12345 / series:12345
+      const tmdbMatch = id.match(/(?:tmdb|movie|series):(\d+)/i);
+      if (tmdbMatch) {
+        const tmdbId = parseInt(tmdbMatch[1]);
+        const type = fallbackType === "series" || fallbackType === "tv" ? "tv" : "movie";
+        return await fetchTmdbAsMovie(tmdbId, type);
+      }
+
+      // IMDb id form: ttXXXXX â†’ /find
+      const imdbMatch = id.match(/tt\d+/);
+      if (imdbMatch) {
+        const res = await tmdb.get(`/find/${imdbMatch[0]}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
+        const movie = res.data?.movie_results?.[0];
+        const tv = res.data?.tv_results?.[0];
+        const chosen = (fallbackType === "series" || fallbackType === "tv") ? (tv || movie) : (movie || tv);
+        if (!chosen) return null;
+        return { ...chosen, media_type: chosen === tv ? "tv" : "movie" } as TMDBMovie;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      // Keep it in cache for a while, or just delete it so it can be re-fetched later if needed?
+      // Since it's just deduping concurrent calls, deleting it is fine.
+      // But keeping it slightly longer might act as an in-memory cache for the session.
+      // We'll just delete the promise after a short delay to allow subsequent synchronous misses to use it.
+      setTimeout(() => resolvePromises.delete(cacheKey), 5000);
+    }
+  })();
+
+  resolvePromises.set(cacheKey, promise);
+  return promise;
 };
 
 const fetchTmdbAsMovie = async (tmdbId: number, type: "movie" | "tv"): Promise<TMDBMovie | null> => {
@@ -175,16 +189,6 @@ export const searchTmdb = async (query: string, year?: string, type: "movie" | "
 
 export const TMDB_URLS = {
   trending: `/trending/all/week?api_key=${TMDB_API_KEY}&language=en-US`,
-  trendingMovies: `/trending/movie/week?api_key=${TMDB_API_KEY}&language=en-US`,
-  trendingSeries: `/trending/tv/week?api_key=${TMDB_API_KEY}&language=en-US`,
-  originals: `/discover/tv?api_key=${TMDB_API_KEY}&with_networks=213&sort_by=popularity.desc&language=en-US`,
-  topRated: `/movie/top_rated?api_key=${TMDB_API_KEY}&language=en-US`,
-  action: `/discover/movie?api_key=${TMDB_API_KEY}&with_genres=28`,
-  comedy: `/discover/movie?api_key=${TMDB_API_KEY}&with_genres=35`,
-  horror: `/discover/movie?api_key=${TMDB_API_KEY}&with_genres=27`,
-  scifi: `/discover/movie?api_key=${TMDB_API_KEY}&with_genres=878`,
-  animated: `/discover/movie?api_key=${TMDB_API_KEY}&with_genres=16`,
-  upcoming: `/movie/upcoming?api_key=${TMDB_API_KEY}&language=en-US`,
 };
 
 export interface TMDBMovie {

@@ -26,6 +26,7 @@ export interface CollectionSource {
   mediaType?: string;
   sortBy?: string;
   sortHow?: string;
+  url?: string;
 }
 
 export interface CollectionFolder {

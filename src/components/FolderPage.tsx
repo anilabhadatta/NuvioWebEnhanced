@@ -7,13 +7,15 @@ import { fetchTmdbCollectionSourcePage, fetchTmdbCollectionSource, resolveStremi
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
 import MovieModal from "@/components/MovieModal";
+import { getDynamicSystemCollections } from "@/lib/defaultCollections";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface TabState {
   metas: CatalogMeta[];
   page: number;
   totalPages: number;
+  nextSkip: number;
   loading: boolean;
   loadingMore: boolean;
   loaded: boolean;
@@ -23,6 +25,7 @@ const INITIAL_TAB: TabState = {
   metas: [],
   page: 0,
   totalPages: 1,
+  nextSkip: 0,
   loading: false,
   loadingMore: false,
   loaded: false,
@@ -31,45 +34,92 @@ const INITIAL_TAB: TabState = {
 // Special index for the "All" tab
 const ALL_TAB = -1;
 
-// ─── Source resolver ──────────────────────────────────────────────────────────
-
-/** Returns whether a source is TMDB-backed (supports pagination) or addon-backed (one-shot). */
-function isTmdbSource(source: any): boolean {
-  const provider = (source.provider || "tmdb").toLowerCase();
-  return provider === "tmdb" || !!source.tmdbSourceType;
-}
+// ——————————————————————————————————————————————————————————————————————————————————————————————————
 
 async function resolveSourcePage(
   source: CollectionSource & Record<string, any>,
   idToUrl: Map<string, string>,
   page: number,
-): Promise<{ items: CatalogMeta[]; totalPages: number }> {
-  const provider = (source.provider || "tmdb").toLowerCase();
-  if (provider === "trakt") return { items: [], totalPages: 0 };
+  currentSkip: number,
+): Promise<{ items: CatalogMeta[]; totalPages: number; nextSkip: number }> {
+  let config = { ...source };
+  const provider = (config.provider || "tmdb").toLowerCase();
+  if (provider === "trakt") return { items: [], totalPages: 0, nextSkip: 0 };
 
-  if (isTmdbSource(source)) {
-    const { items, totalPages } = await fetchTmdbCollectionSourcePage(source, page);
-    return { items, totalPages };
+  // Auto-upgrade legacy TMDB sources to cinemeta Stremio addons
+  if (provider === "tmdb" || !!config.tmdbSourceType) {
+    const sourceType = (config.tmdbSourceType || "DISCOVER").toUpperCase();
+    const mediaType = (config.mediaType || "movie").toLowerCase();
+    if (sourceType === "TOP_RATED" || sourceType === "TOPRATED") {
+      config = { ...config, type: mediaType, catalogId: "imdbRating", url: "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json" };
+    } else {
+      config = { ...config, type: mediaType, catalogId: "top", url: "https://cinemeta-catalogs.strem.io/top/manifest.json" };
+    }
   }
 
-  // Addon-backed: one-shot, no pagination
-  const url = source.addonId ? idToUrl.get(source.addonId) : undefined;
-  if (!url || !source.type || !source.catalogId) return { items: [], totalPages: 0 };
-  const items = await fetchCollectionCatalog(url, source.type, source.catalogId, (source as any).genre);
-  return { items, totalPages: 1 };
+  // Addon-backed
+  const url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
+  if (!url || !config.type || !config.catalogId) return { items: [], totalPages: 0, nextSkip: 0 };
+
+  try {
+    const items = await fetchCollectionCatalog(url, config.type, config.catalogId, (config as any).genre, currentSkip);
+    const hasMore = items.length > 0;
+    return {
+      items,
+      totalPages: hasMore ? page + 1 : page,
+      nextSkip: currentSkip + items.length,
+    };
+  } catch (e) {
+    return { items: [], totalPages: 0, nextSkip: 0 };
+  }
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function FolderPage() {
   const params = useParams();
   const router = useRouter();
-  const folderId = params?.folderId as string;
+  const rawFolderId = params?.folderId as string;
+  const folderId = rawFolderId ? decodeURIComponent(rawFolderId) : "";
 
-  const [folder, setFolder] = useState<CollectionFolder | null>(null);
-  const [collectionTitle, setCollectionTitle] = useState<string>("");
-  const [activeTabIdx, setActiveTabIdx] = useState<number>(ALL_TAB);
-  const [tabStates, setTabStates] = useState<Record<number, TabState>>({});
+  const [folder, setFolder] = useState<CollectionFolder | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = sessionStorage.getItem(`nuvio_folder_meta_${folderId}`);
+        if (cached) return JSON.parse(cached);
+      } catch { /* ignore */ }
+    }
+    return null;
+  });
+  const [collectionTitle, setCollectionTitle] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem(`nuvio_folder_title_${folderId}`) || "";
+    }
+    return "";
+  });
+  const [activeTabIdx, setActiveTabIdx] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = sessionStorage.getItem(`nuvio_folder_activeTab_${folderId}`);
+      if (saved) return parseInt(saved, 10);
+    }
+    return ALL_TAB;
+  });
+  const [tabStates, setTabStates] = useState<Record<number, TabState>>(() => {
+    if (typeof window !== "undefined") {
+      const saved = sessionStorage.getItem(`nuvio_folder_tabs_${folderId}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          Object.keys(parsed).forEach(k => {
+            parsed[k].loading = false;
+            parsed[k].loadingMore = false;
+          });
+          return parsed;
+        } catch { /* ignore */ }
+      }
+    }
+    return {};
+  });
   const [idToUrl, setIdToUrl] = useState<Map<string, string>>(new Map());
   const [addonsResolved, setAddonsResolved] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
@@ -108,22 +158,31 @@ export default function FolderPage() {
     }
   }, []);
 
-  // ── Find the folder ──────────────────────────────────────────────────────
+  // â”€â”€ Find the folder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     let active = true;
+    
     const findFolder = async () => {
       const processCollections = async (collections: Collection[]) => {
-        for (const col of collections) {
+        // Dynamic system collections are always included â€” no need to re-fetch addons for them
+        const sys = await getDynamicSystemCollections();
+        const allCollections = [...collections, ...sys];
+        for (const col of allCollections) {
           for (const f of col.folders || []) {
             if (f.id === folderId) {
               if (!active) return true;
               setFolder(f);
               setCollectionTitle(col.title);
+              try {
+                sessionStorage.setItem(`nuvio_folder_meta_${folderId}`, JSON.stringify(f));
+                sessionStorage.setItem(`nuvio_folder_title_${folderId}`, col.title);
+              } catch { /* ignore */ }
 
-              const needsAddon = (f.sources || []).some(
-                (s) => !s.provider || (s.provider as string) === "addon",
+              // For addon-backed sources that already have a direct url, no manifest lookup needed
+              const sourcesWithoutUrl = (f.sources || []).filter(
+                (s) => !s.url && (!s.provider || (s.provider as string) === "addon")
               );
-              if (needsAddon && idToUrl.size === 0) {
+              if (sourcesWithoutUrl.length > 0 && idToUrl.size === 0) {
                 const addons = await fetchAddons();
                 const map = new Map<string, string>();
                 await Promise.all(
@@ -140,23 +199,6 @@ export default function FolderPage() {
                 setAddonsResolved(true);
               }
 
-              // Restore tab state from session storage
-              const savedTabs = sessionStorage.getItem(`nuvio_folder_tabs_${folderId}`);
-              if (savedTabs) {
-                try {
-                  const parsed = JSON.parse(savedTabs);
-                  // Sanitize: clear stuck loading states from previous crashed sessions
-                  Object.keys(parsed).forEach(k => {
-                    parsed[k].loading = false;
-                    parsed[k].loadingMore = false;
-                  });
-                  setTabStates((prev) => Object.keys(prev).length > 0 ? prev : parsed);
-                } catch (e) { }
-              }
-              const savedActiveTab = sessionStorage.getItem(`nuvio_folder_activeTab_${folderId}`);
-              if (savedActiveTab) {
-                setActiveTabIdx(parseInt(savedActiveTab, 10));
-              }
               return true;
             }
           }
@@ -164,13 +206,32 @@ export default function FolderPage() {
         return false;
       };
 
-      const localCollections = loadLocalCollections();
-      if (localCollections.length > 0) {
-        await processCollections(localCollections);
+      // For system/addon folder IDs, resolve directly from dynamic collections â€” no Supabase needed
+      const isSystemFolder = folderId.startsWith("sys_") || folderId.includes(":");
+      if (isSystemFolder) {
+        await processCollections([]);
+        return;
       }
 
-      // Fetch fresh in background
-      const freshCollections = await pullCollections();
+      const localCollections = loadLocalCollections();
+      if (localCollections.length > 0) {
+        const found = await processCollections(localCollections);
+        if (found) return;
+      }
+
+      // Fetch fresh from Supabase only if not already cached this session
+      const cacheKey = "nuvio_collections_pulled";
+      const cachedRaw = sessionStorage.getItem(cacheKey);
+      let freshCollections: Collection[] = [];
+      if (cachedRaw) {
+        try { freshCollections = JSON.parse(cachedRaw); } catch { /* ignore */ }
+      }
+      if (!freshCollections || freshCollections.length === 0) {
+        freshCollections = await pullCollections();
+        if (freshCollections.length > 0) {
+          try { sessionStorage.setItem(cacheKey, JSON.stringify(freshCollections)); } catch { /* ignore */ }
+        }
+      }
       if (active) {
         await processCollections(freshCollections);
       }
@@ -183,7 +244,7 @@ export default function FolderPage() {
     (s) => (s.provider as string) !== "trakt",
   );
 
-  // ── Tab state helpers ────────────────────────────────────────────────────
+  // â”€â”€ Tab state helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const setTabState = useCallback((idx: number, patch: Partial<TabState>) => {
     setTabStates((prev) => {
       const next = {
@@ -196,7 +257,7 @@ export default function FolderPage() {
     });
   }, [folderId]);
 
-  // ── Load a specific source tab (paginated) ────────────────────────────────
+  // â”€â”€ Load a specific source tab (paginated) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const loadSourceTab = useCallback(
     async (idx: number, reset = false) => {
       if (idx < 0 || idx >= sources.length) return;
@@ -211,7 +272,12 @@ export default function FolderPage() {
       setTabState(idx, isFirstLoad ? { loading: true } : { loadingMore: true });
 
       try {
-        const { items, totalPages } = await resolveSourcePage(sources[idx] as any, idToUrl, nextPage);
+        const { items, totalPages, nextSkip } = await resolveSourcePage(
+          sources[idx] as any,
+          idToUrl,
+          nextPage,
+          isFirstLoad ? 0 : current.nextSkip || 0
+        );
 
         setTabStates((prev) => {
           const existing = prev[idx] || INITIAL_TAB;
@@ -223,6 +289,7 @@ export default function FolderPage() {
               metas: isFirstLoad ? items : [...existing.metas, ...newItems],
               page: nextPage,
               totalPages: totalPages || 1,
+              nextSkip: nextSkip,
               loading: false,
               loadingMore: false,
               loaded: true,
@@ -236,7 +303,7 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-  // ── Load "All" tab — fetches sources one by one in a circular manner ──────
+  // â”€â”€ Load "All" tab â€” fetches sources one by one in a circular manner â”€â”€â”€â”€â”€â”€
   const loadAllTab = useCallback(
     async (reset = false) => {
       const current = tabStates[ALL_TAB] || INITIAL_TAB;
@@ -253,8 +320,11 @@ export default function FolderPage() {
         const sourcePage = Math.floor((nextPage - 1) / sources.length) + 1;
         const source = sources[sourceIndex];
 
+        // Estimate skip as (sourcePage - 1) * 20
+        const calculatedSkip = (sourcePage - 1) * 20;
+
         // Fetch just this ONE source's page to keep it extremely fast
-        const res = await resolveSourcePage(source as any, idToUrl, sourcePage);
+        const res = await resolveSourcePage(source as any, idToUrl, sourcePage, calculatedSkip);
 
         // Virtually infinite scrolling (e.g. 50 pages deep per source max)
         const maxTotalPages = sources.length * 50;
@@ -270,6 +340,7 @@ export default function FolderPage() {
               metas: isFirstLoad ? newItems : [...existing.metas, ...newItems],
               page: nextPage,
               totalPages: maxTotalPages,
+              nextSkip: calculatedSkip + res.items.length,
               loading: false,
               loadingMore: false,
               loaded: true,
@@ -283,7 +354,7 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-  // ── Bootstrap: set initial active tab when folder is ready ───────────────
+  // â”€â”€ Bootstrap: set initial active tab when folder is ready â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     if (sources.length > 0 && folder && Object.keys(tabStates).length === 0) {
       setActiveTabIdx(ALL_TAB);
@@ -291,7 +362,7 @@ export default function FolderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder, sources.length]);
 
-  // ── Load active tab content ──────────────────────────────────────────────
+  // â”€â”€ Load active tab content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     if (!folder || sources.length === 0) return;
 
@@ -324,7 +395,7 @@ export default function FolderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabIdx, folder, idToUrl, loadAllTab, loadSourceTab, sources.length, addonsResolved]);
 
-  // ── IntersectionObserver for infinite scroll ─────────────────────────────
+  // â”€â”€ IntersectionObserver for infinite scroll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -348,7 +419,7 @@ export default function FolderPage() {
     return () => observer.disconnect();
   }, [activeTabIdx, tabStates, loadAllTab, loadSourceTab]);
 
-  // ── Tab click handler ────────────────────────────────────────────────────
+  // â”€â”€ Tab click handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleTabClick = useCallback(
     (idx: number) => {
       setActiveTabIdx(idx);
@@ -371,7 +442,7 @@ export default function FolderPage() {
     [tabStates, loadAllTab, loadSourceTab],
   );
 
-  // ── Card click ───────────────────────────────────────────────────────────
+  // â”€â”€ Card click â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleCardClick = async (meta: CatalogMeta) => {
     setResolvingId(meta.id);
     const movie = await resolveStremioIdToMovie(meta.id, meta.type);
@@ -379,7 +450,7 @@ export default function FolderPage() {
     if (movie) handleSelectMovie(movie);
   };
 
-  // ── Derived display state ────────────────────────────────────────────────
+  // â”€â”€ Derived display state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const currentTabState = tabStates[activeTabIdx] || INITIAL_TAB;
   const currentMetas = currentTabState.metas;
   const currentLoading = currentTabState.loading;
@@ -388,7 +459,7 @@ export default function FolderPage() {
     currentTabState.loaded &&
     currentTabState.page < currentTabState.totalPages;
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (!folder) {
     return (
       <div className="min-h-screen bg-[#111] flex items-center justify-center">
@@ -406,21 +477,19 @@ export default function FolderPage() {
         transition: "opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
       }}
     >
-      {/* ── Hero backdrop ─────────────────────────────────────────────────── */}
+      {/* â”€â”€ Hero backdrop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="relative h-[40vh] min-h-[260px] overflow-hidden flex-shrink-0">
         {folder.heroBackdropUrl ? (
           <img
             src={normalizeGithubUrl(folder.heroBackdropUrl)}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-top"
-            crossOrigin="anonymous"
           />
         ) : folder.coverImageUrl ? (
           <img
             src={normalizeGithubUrl(folder.coverImageUrl)}
             alt={folder.title}
             className="absolute inset-0 w-full h-full object-cover object-center"
-            crossOrigin="anonymous"
           />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#111]" />
@@ -463,7 +532,6 @@ export default function FolderPage() {
               src={normalizeGithubUrl(folder.titleLogoUrl)}
               alt={folder.title}
               className="h-12 max-w-[240px] object-contain drop-shadow-2xl"
-              crossOrigin="anonymous"
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
           ) : (
@@ -480,7 +548,7 @@ export default function FolderPage() {
         </div>
       </div>
 
-      {/* ── Tab bar ───────────────────────────────────────────────────────── */}
+      {/* â”€â”€ Tab bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div
         className="sticky top-0 z-20 border-b border-white/8"
         style={{ background: "rgba(17,17,17,0.96)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}
@@ -518,7 +586,7 @@ export default function FolderPage() {
         </div>
       </div>
 
-      {/* ── Content grid ─────────────────────────────────────────────────── */}
+      {/* â”€â”€ Content grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="flex-1 px-5 py-6">
         {(currentLoading || (currentLoadingMore && currentMetas.length === 0)) ? (
           /* Skeleton grid */
@@ -563,7 +631,6 @@ export default function FolderPage() {
                       className="w-full h-full object-cover"
                       loading="lazy"
                       decoding="async"
-                      crossOrigin="anonymous"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center p-3 text-center">
@@ -603,7 +670,7 @@ export default function FolderPage() {
         )}
       </div>
 
-      {/* ── Movie Modal ───────────────────────────────────────────────────── */}
+      {/* â”€â”€ Movie Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       {selectedMovie && (
         <MovieModal
           movie={selectedMovie}
@@ -629,3 +696,4 @@ export default function FolderPage() {
     </div>
   );
 }
+
