@@ -1495,23 +1495,6 @@ EventDump: ${JSON.stringify(collected)}`;
   // We must listen to both the standard event and the webkit-prefixed event
   // because Safari/iPadOS only fires webkitfullscreenchange.
   useEffect(() => {
-    // Restore fullscreen if the previous episode was in fullscreen
-    const shouldRestore = sessionStorage.getItem("nuvio.restoreFullscreen") === "1";
-    if (shouldRestore) {
-      sessionStorage.removeItem("nuvio.restoreFullscreen");
-      // Small delay to let the player initialize before requesting fullscreen
-      setTimeout(() => {
-        try {
-          const el: any = containerRef.current ?? document.documentElement;
-          if (typeof el.requestFullscreen === 'function') {
-            el.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
-          } else if (typeof el.webkitRequestFullscreen === 'function') {
-            el.webkitRequestFullscreen();
-          }
-        } catch (_) {}
-      }, 500);
-    }
-
     const onFs = () =>
       setIsFullscreen(
         Boolean(document.fullscreenElement) ||
@@ -1667,16 +1650,6 @@ EventDump: ${JSON.stringify(collected)}`;
       }
 
       const u = encodeURIComponent(stream.url);
-      // Persist fullscreen intent so the next page can re-enter it.
-      const wasFullscreen = Boolean(document.fullscreenElement) || Boolean((document as any).webkitFullscreenElement);
-      if (wasFullscreen) {
-        try { sessionStorage.setItem("nuvio.restoreFullscreen", "1"); } catch (_) {}
-        // Exit fullscreen before navigation (browser requirement)
-        try {
-          if (typeof document.exitFullscreen === 'function') document.exitFullscreen().catch(() => {});
-          else if (typeof (document as any).webkitExitFullscreen === 'function') (document as any).webkitExitFullscreen();
-        } catch (_) {}
-      }
       window.location.replace(
         `/player?id=${movieId}&type=${mediaType}&url=${u}&s=${nextEpisode.season}&e=${nextEpisode.episode}`
       );
