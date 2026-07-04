@@ -10,22 +10,11 @@ import { useRouter } from "next/navigation";
 
 import { SYSTEM_COLLECTIONS, getDynamicSystemCollections } from "@/lib/defaultCollections";
 
-let isHydrated = false;
-
 export default function CollectionRows({ onSelectMovie }: { onSelectMovie: (m: TMDBMovie) => void }) {
-  const [collections, setCollections] = useState<Collection[]>(() => {
-    if (typeof window !== "undefined" && isHydrated) {
-      const local = loadLocalCollections();
-      const merged = [...local, ...SYSTEM_COLLECTIONS];
-      const uniqueMerged = Array.from(new Map(merged.map(c => [c.id, c])).values());
-      return uniqueMerged.sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop));
-    }
-    return [...SYSTEM_COLLECTIONS];
-  });
+  const [collections, setCollections] = useState<Collection[]>([]);
   const router = useRouter();
 
   useEffect(() => {
-    isHydrated = true;
     let cancelled = false;
 
     const load = async () => {
@@ -265,15 +254,8 @@ function FolderAsMovieRow({
         const metaLists = await Promise.all(
           sources.map(async (s: any) => {
             let config = { ...s };
-            // Auto-upgrade legacy TMDB sources to cinemeta Stremio addons
             if (s.provider === "tmdb" || s.tmdbSourceType || (!s.provider && !s.addonId && !s.catalogId)) {
-              const sourceType = (s.tmdbSourceType || "DISCOVER").toUpperCase();
-              const mediaType = (s.mediaType || "movie").toLowerCase();
-              if (sourceType === "TOP_RATED" || sourceType === "TOPRATED") {
-                config = { type: mediaType, catalogId: "imdbRating", url: "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json" };
-              } else {
-                config = { type: mediaType, catalogId: "top", url: "https://cinemeta-catalogs.strem.io/top/manifest.json" };
-              }
+              return fetchTmdbCollectionSource(s);
             }
             let url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
             if (url && url.includes("v3-cinemeta.strem.io")) {

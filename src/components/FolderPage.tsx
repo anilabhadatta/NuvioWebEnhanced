@@ -36,6 +36,12 @@ const ALL_TAB = -1;
 
 // ——————————————————————————————————————————————————————————————————————————————————————————————————
 
+/** Returns whether a source is TMDB-backed (supports pagination) or addon-backed (one-shot). */
+function isTmdbSource(source: any): boolean {
+  const provider = (source.provider || "tmdb").toLowerCase();
+  return provider === "tmdb" || !!source.tmdbSourceType;
+}
+
 async function resolveSourcePage(
   source: CollectionSource & Record<string, any>,
   idToUrl: Map<string, string>,
@@ -46,20 +52,14 @@ async function resolveSourcePage(
   const provider = (config.provider || "tmdb").toLowerCase();
   if (provider === "trakt") return { items: [], totalPages: 0, nextSkip: 0 };
 
-  // Auto-upgrade legacy TMDB sources to cinemeta Stremio addons
-  if (provider === "tmdb" || !!config.tmdbSourceType) {
-    const sourceType = (config.tmdbSourceType || "DISCOVER").toUpperCase();
-    const mediaType = (config.mediaType || "movie").toLowerCase();
-    if (sourceType === "TOP_RATED" || sourceType === "TOPRATED") {
-      config = { ...config, type: mediaType, catalogId: "imdbRating", url: "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json" };
-    } else {
-      config = { ...config, type: mediaType, catalogId: "top", url: "https://cinemeta-catalogs.strem.io/top/manifest.json" };
-    }
+  if (isTmdbSource(source)) {
+    const { items, totalPages } = await fetchTmdbCollectionSourcePage(source, page);
+    return { items, totalPages, nextSkip: page + 1 };
   }
 
   // Addon-backed
   let url = config.url || (config.addonId ? idToUrl.get(config.addonId) : undefined);
-  
+
   if (url && url.includes("v3-cinemeta.strem.io")) {
     if (config.catalogId === "imdbRating" || config.catalogId === "featured") {
       url = "https://cinemeta-catalogs.strem.io/imdbRating/manifest.json";
@@ -172,7 +172,7 @@ export default function FolderPage() {
   // â”€â”€ Find the folder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     let active = true;
-    
+
     const findFolder = async () => {
       const processCollections = async (collections: Collection[]) => {
         // Dynamic system collections are always included â€” no need to re-fetch addons for them
@@ -314,59 +314,59 @@ export default function FolderPage() {
     [sources, idToUrl, tabStates, setTabState],
   );
 
-    const depletedSourcesRef = useRef<Set<number>>(new Set());
+  const depletedSourcesRef = useRef<Set<number>>(new Set());
 
-    // â”€â”€ Load "All" tab â€” fetches sources one by one in a circular manner â”€â”€â”€â”€â”€â”€
-    const loadAllTab = useCallback(
-      async (reset = false) => {
-        if (reset) depletedSourcesRef.current.clear();
-        
-        const current = tabStates[ALL_TAB] || INITIAL_TAB;
-        if (!reset && current.loaded && current.page >= current.totalPages) return;
-        if (!reset && (current.loading || current.loadingMore)) return;
+  // â”€â”€ Load "All" tab â€” fetches sources one by one in a circular manner â”€â”€â”€â”€â”€â”€
+  const loadAllTab = useCallback(
+    async (reset = false) => {
+      if (reset) depletedSourcesRef.current.clear();
 
-        let nextPage = reset ? 1 : current.page + 1;
-        const isFirstLoad = reset || !current.loaded;
+      const current = tabStates[ALL_TAB] || INITIAL_TAB;
+      if (!reset && current.loaded && current.page >= current.totalPages) return;
+      if (!reset && (current.loading || current.loadingMore)) return;
 
-        // Skip depleted sources
-        let sourceIndex = (nextPage - 1) % sources.length;
-        let loopCount = 0;
-        while (depletedSourcesRef.current.has(sourceIndex) && loopCount < sources.length) {
-          nextPage++;
-          sourceIndex = (nextPage - 1) % sources.length;
-          loopCount++;
-        }
+      let nextPage = reset ? 1 : current.page + 1;
+      const isFirstLoad = reset || !current.loaded;
 
-        if (loopCount >= sources.length) {
-          // All sources are depleted
+      // Skip depleted sources
+      let sourceIndex = (nextPage - 1) % sources.length;
+      let loopCount = 0;
+      while (depletedSourcesRef.current.has(sourceIndex) && loopCount < sources.length) {
+        nextPage++;
+        sourceIndex = (nextPage - 1) % sources.length;
+        loopCount++;
+      }
+
+      if (loopCount >= sources.length) {
+        // All sources are depleted
+        setTabStates((prev) => ({
+          ...prev,
+          [ALL_TAB]: { ...prev[ALL_TAB], totalPages: current.page, loading: false, loadingMore: false }
+        }));
+        return;
+      }
+
+      setTabState(ALL_TAB, isFirstLoad ? { loading: true } : { loadingMore: true });
+      try {
+        const sourcePage = Math.floor((nextPage - 1) / sources.length) + 1;
+        const source = sources[sourceIndex];
+
+        // Estimate skip as (sourcePage - 1) * 20
+        const calculatedSkip = (sourcePage - 1) * 20;
+
+        // Fetch just this ONE source's page to keep it extremely fast
+        const res = await resolveSourcePage(source as any, idToUrl, sourcePage, calculatedSkip);
+
+        if (res.items.length === 0) {
+          depletedSourcesRef.current.add(sourceIndex);
+          // Auto-advance to the next one if this one was empty
           setTabStates((prev) => ({
             ...prev,
-            [ALL_TAB]: { ...prev[ALL_TAB], totalPages: current.page, loading: false, loadingMore: false }
+            [ALL_TAB]: { ...(prev[ALL_TAB] || INITIAL_TAB), page: nextPage, loading: false, loadingMore: false }
           }));
+          setTimeout(() => loadAllTab(false), 50);
           return;
         }
-
-        setTabState(ALL_TAB, isFirstLoad ? { loading: true } : { loadingMore: true });
-        try {
-          const sourcePage = Math.floor((nextPage - 1) / sources.length) + 1;
-          const source = sources[sourceIndex];
-
-          // Estimate skip as (sourcePage - 1) * 20
-          const calculatedSkip = (sourcePage - 1) * 20;
-
-          // Fetch just this ONE source's page to keep it extremely fast
-          const res = await resolveSourcePage(source as any, idToUrl, sourcePage, calculatedSkip);
-
-          if (res.items.length === 0) {
-            depletedSourcesRef.current.add(sourceIndex);
-            // Auto-advance to the next one if this one was empty
-            setTabStates((prev) => ({
-              ...prev,
-              [ALL_TAB]: { ...(prev[ALL_TAB] || INITIAL_TAB), page: nextPage, loading: false, loadingMore: false }
-            }));
-            setTimeout(() => loadAllTab(false), 50);
-            return;
-          }
 
         // Virtually infinite scrolling (e.g. 50 pages deep per source max)
         const maxTotalPages = sources.length * 50;
@@ -395,6 +395,23 @@ export default function FolderPage() {
     },
     [sources, idToUrl, tabStates, setTabState],
   );
+
+  // Invalidate cache if sources config changed or if cached hash is missing but cache exists
+  useEffect(() => {
+    if (sources.length > 0 && typeof window !== "undefined") {
+      const currentHash = JSON.stringify(sources);
+      const cachedHash = sessionStorage.getItem(`nuvio_folder_sources_hash_${folderId}`);
+      const hasCachedTabs = !!sessionStorage.getItem(`nuvio_folder_tabs_${folderId}`);
+      if (hasCachedTabs && (!cachedHash || cachedHash !== currentHash)) {
+        sessionStorage.removeItem(`nuvio_folder_tabs_${folderId}`);
+        sessionStorage.removeItem(`nuvio_folder_activeTab_${folderId}`);
+        setTabStates({});
+        setActiveTabIdx(ALL_TAB);
+        fetchedTabsRef.current.clear();
+      }
+      sessionStorage.setItem(`nuvio_folder_sources_hash_${folderId}`, currentHash);
+    }
+  }, [sources, folderId]);
 
   // â”€â”€ Bootstrap: set initial active tab when folder is ready â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
