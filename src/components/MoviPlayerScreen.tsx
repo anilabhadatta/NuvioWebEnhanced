@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { fetchExternalIds, fetchNextEpisode, fetchTvDetails, fetchTvSeason, NextEpisodeMeta } from "@/lib/tmdb";
 import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
-import { saveWatchProgress } from "@/lib/watchProgress";
+import { WatchProgress, getWatchProgress, saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
 import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
 import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS, getLocalPlaybackSettings } from "@/lib/playbackSettings";
@@ -491,6 +491,7 @@ export default function MoviPlayerScreen() {
   };
 
   const playbackSettingsRef = useRef<PlaybackSettings>(getLocalPlaybackSettings());
+  const hasResumedRef = useRef(false);
   const audioPrefAppliedRef = useRef(false);
   const [subPrefApplied, setSubPrefApplied] = useState(false);
   const subPrefAppliedRef = useRef(false);
@@ -938,6 +939,22 @@ export default function MoviPlayerScreen() {
         const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
         setIsSoftwareDec(isSw);
       } catch (_) { }
+
+      // Resume watch progress logic
+      if (!hasResumedRef.current && rawMovieId) {
+        hasResumedRef.current = true;
+        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
+        const pType = mediaType || "movie";
+        const pSeason = season ? parseInt(season, 10) : undefined;
+        const pEpisode = episode ? parseInt(episode, 10) : undefined;
+
+        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
+        if (resumeTime > 5) {
+          try {
+            video.currentTime = resumeTime;
+          } catch (_) { }
+        }
+      }
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
@@ -1422,6 +1439,14 @@ EventDump: ${JSON.stringify(collected)}`;
     setIsPlaying(false);
     setUserPaused(false);
     setShowNextEpisodeCard(false);
+    hasResumedRef.current = false;
+    
+    // Clear out refs so tracks change events trigger correctly for new streams
+    audiosCache.current = JSON.stringify([{ id: 0, name: "Default" }]);
+    subtitlesCache.current = JSON.stringify([{ id: -1, name: "None" }]);
+    audioPrefAppliedRef.current = false;
+    subPrefAppliedRef.current = false;
+    
     // Reset subtitle timing offset — a new episode/file has its own sync.
     setSubtitleDelayState(0);
     subtitleDelayRef.current = 0;
