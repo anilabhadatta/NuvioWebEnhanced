@@ -251,14 +251,39 @@ function ensureVlcPlayerLoaded(): Promise<void> {
         this.video.addEventListener('playing', () => this.dispatchState('playing'));
         this.video.addEventListener('pause', () => this.dispatchState('paused'));
         this.video.addEventListener('waiting', () => this.dispatchState('buffering'));
-        this.video.addEventListener('error', () => this.dispatchState('error'));
+        this.video.addEventListener('error', () => {
+          console.error('[VlcPlayer] Native video error:', this.video.error);
+          this.dispatchState('error');
+        });
+        
         this.video.addEventListener('loadeddata', () => {
           this.dispatchState('ready');
+          
+          const audioList: any[] = [];
+          const videoAny = this.video as any;
+          if (videoAny.audioTracks) {
+            for (let i = 0; i < videoAny.audioTracks.length; i++) {
+              const t = videoAny.audioTracks[i];
+              audioList.push({ id: t.id || String(i), language: t.language, label: t.label, active: t.enabled });
+            }
+          }
+          if (audioList.length === 0) {
+            audioList.push({id: 0, language: 'unknown', label: 'Default/Unsupported', active: true});
+          }
+
+          const subList: any[] = [];
+          if (this.video.textTracks) {
+            for (let i = 0; i < this.video.textTracks.length; i++) {
+              const t = this.video.textTracks[i];
+              subList.push({ id: t.id || String(i), language: t.language, label: t.label, active: t.mode === 'showing' });
+            }
+          }
+
+          console.log('[VlcPlayer] 🎵 Audio tracks detected:', audioList.length, audioList);
+          console.log('[VlcPlayer] 📝 Subtitle tracks detected:', subList.length, subList);
+
           this.dispatchEvent(new CustomEvent('trackschange', { 
-            detail: { 
-              audio: [{id: 0, language: 'en', label: 'Default', active: true}], 
-              subtitle: [] 
-            } 
+            detail: { audio: audioList, subtitle: subList } 
           }));
         });
       }
@@ -280,8 +305,23 @@ function ensureVlcPlayerLoaded(): Promise<void> {
       set volume(v) { this.video.volume = v; }
       get playbackRate() { return this.video.playbackRate; }
       set playbackRate(v) { this.video.playbackRate = v; }
-      set audioId(v: any) { /* mocked */ }
-      set subtitleId(v: any) { /* mocked */ }
+      set audioId(id: any) { 
+        console.log('[VlcPlayer] User requested audio change to ID:', id);
+        const videoAny = this.video as any;
+        if (videoAny.audioTracks) {
+          for (let i = 0; i < videoAny.audioTracks.length; i++) {
+            videoAny.audioTracks[i].enabled = (videoAny.audioTracks[i].id === id || String(i) === String(id));
+          }
+        }
+      }
+      set subtitleId(id: any) {
+        console.log('[VlcPlayer] User requested subtitle change to ID:', id);
+        if (this.video.textTracks) {
+          for (let i = 0; i < this.video.textTracks.length; i++) {
+            this.video.textTracks[i].mode = (this.video.textTracks[i].id === id || String(i) === String(id)) ? 'showing' : 'hidden';
+          }
+        }
+      }
       play() { return this.video.play(); }
       pause() { this.video.pause(); }
       destroy() { this.video.src = ""; }
