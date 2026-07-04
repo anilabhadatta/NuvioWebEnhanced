@@ -8,6 +8,7 @@ import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
 import { saveWatchProgress } from "@/lib/watchProgress";
 import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
+import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS } from "@/lib/playbackSettings";
 import StreamPickerModal from "./StreamPickerModal";
 
 function formatTime(sec: number): string {
@@ -471,7 +472,60 @@ export default function MoviPlayerScreen() {
     applySubtitleStyleToPlayer(videoRef.current, newStyle);
     // Persist bgColor separately — movi-player's own save would overwrite our field
     try { localStorage.setItem("nuvio.subBgColor", newStyle.bgColor); } catch { /* ok */ }
+
+    // Sync to Nuvio backend
+    const prefs = playbackSettingsRef.current;
+    if (prefs) {
+      const alphaHex = Math.round((newStyle.bgPct / 100) * 255).toString(16).padStart(2, '0').toUpperCase();
+      const updatedPrefs: PlaybackSettings = {
+        ...prefs,
+        subtitleSize: newStyle.sizePct ? Math.round((newStyle.sizePct / 100) * 12) : 12,
+        subtitleTextColor: newStyle.color,
+        subtitleBackgroundColor: newStyle.bgColor === "transparent" ? "#00000000" : (newStyle.bgColor.length === 7 ? newStyle.bgColor + alphaHex : newStyle.bgColor),
+        subtitleOutline: newStyle.edge === "outline"
+      };
+      playbackSettingsRef.current = updatedPrefs;
+      pushPlaybackSettings(updatedPrefs).catch(() => {});
+    }
   };
+
+  const playbackSettingsRef = useRef<PlaybackSettings>(DEFAULT_PLAYBACK_SETTINGS);
+  const audioPrefAppliedRef = useRef(false);
+  const subPrefAppliedRef = useRef(false);
+
+  useEffect(() => {
+    let mounted = true;
+    pullPlaybackSettings().then(db => {
+      if (!mounted) return;
+      playbackSettingsRef.current = db;
+      setSubtitleStyle(prev => {
+        let edge: SubtitleEdge = "shadow";
+        let bgColor = db.subtitleBackgroundColor || "transparent";
+        let bgPct = 0;
+        
+        if (db.subtitleOutline) {
+          edge = "outline";
+        } else if (bgColor && bgColor !== "transparent" && bgColor !== "#00000000") {
+          bgPct = 75;
+          edge = "none";
+        } else {
+          bgColor = "transparent";
+        }
+
+        const newStyle = {
+          ...prev,
+          color: db.subtitleTextColor || prev.color,
+          bgColor: bgColor,
+          bgPct: bgPct !== 0 ? bgPct : prev.bgPct,
+          edge: edge,
+          sizePct: db.subtitleSize ? Math.round((db.subtitleSize / 12) * 100) : prev.sizePct,
+        };
+        updateSubtitleStyle(newStyle);
+        return newStyle;
+      });
+    });
+    return () => { mounted = false; };
+  }, []);
 
   const resetSubtitleStyle = () => updateSubtitleStyle(DEFAULT_SUBTITLE_STYLE);
 
@@ -501,13 +555,49 @@ export default function MoviPlayerScreen() {
   // External Subtitles
   const [addonSubtitles, setAddonSubtitles] = useState<any[]>([]);
   const [activeExternalSub, setActiveExternalSub] = useState<string | null>(null);
+  const activeExternalSubRef = useRef<string | null>(null);
+  useEffect(() => { activeExternalSubRef.current = activeExternalSub; }, [activeExternalSub]);
   // Subtitle timing offset in seconds. Positive = show subtitles LATER (mpv/VLC
   // convention), which fixes subtitles that appear ahead of the audio.
   const [subtitleDelay, setSubtitleDelayState] = useState(0);
   const subtitleDelayRef = useRef(0);
   // Parsed cues for the custom overlay renderer
   const [externalSubCues, setExternalSubCues] = useState<SubtitleCue[]>([]);
+  const autoSelectedAddonSubRef = useRef(false);
 
+  useEffect(() => {
+    if (addonSubtitles.length === 0) return;
+    if (autoSelectedAddonSubRef.current) return;
+    if (activeExternalSub) return;
+
+    // Only apply if built-in selection logic has run and we have no built-in subtitle selected
+    if (subPrefAppliedRef.current && selectedSub !== -1) return;
+
+    const prefs = playbackSettingsRef.current;
+    if (prefs.addonSubtitleStartup === "Always off" || prefs.addonSubtitleStartup === "None") return;
+
+    const prefSub = prefs.preferredSubtitleLanguage;
+    const secSub = prefs.secondarySubtitleLanguage;
+
+    let targetUrl: string | null = null;
+    if (prefSub && prefSub !== "None") {
+      const match = addonSubtitles.find(t => isLanguageMatch(t.language || t.id, t.label || t.name || t.id, prefSub));
+      if (match) targetUrl = match.url;
+    }
+    if (!targetUrl && secSub && secSub !== "None") {
+      const match = addonSubtitles.find(t => isLanguageMatch(t.language || t.id, t.label || t.name || t.id, secSub));
+      if (match) targetUrl = match.url;
+    }
+    if (!targetUrl && prefs.addonSubtitleStartup === "Always on") {
+      targetUrl = addonSubtitles[0]?.url;
+    }
+
+    if (targetUrl) {
+      setActiveExternalSub(targetUrl);
+      autoSelectedAddonSubRef.current = true;
+      try { videoRef.current?.selectSubtitleTrack(-1); } catch {}
+    }
+  }, [addonSubtitles, activeExternalSub, selectedSub]);
   // Modal & Overlays
   const [showStreamPicker, setShowStreamPicker] = useState(false);
   const [streamPickerSeason, setStreamPickerSeason] = useState<number | null>(null);
@@ -848,12 +938,73 @@ export default function MoviPlayerScreen() {
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
 
+  const isLanguageMatch = (trackLang: string, trackLabel: string, pref: string) => {
+    if (!pref || pref === "None") return false;
+    const p = pref.toLowerCase();
+    const l = trackLang?.toLowerCase() || "";
+    const n = trackLabel?.toLowerCase() || "";
+    if (l === p || n === p) return true;
+    const pShort3 = p.slice(0, 3);
+    const pShort2 = p.slice(0, 2);
+    if (l && (l.startsWith(pShort3) || l.startsWith(pShort2))) return true;
+    if (n && (n.startsWith(pShort3) || n.startsWith(pShort2))) return true;
+    return false;
+  };
+
   onTracksChangeRef.current = (e: any) => {
     const video = videoRef.current;
     if (!video || !resolvedSrc) return;
     if (video.getAttribute("src") !== resolvedSrc) return;
 
     const { audio, subtitle } = e.detail;
+    let didUpdateAudioPrefs = false;
+    let didUpdateSubPrefs = false;
+
+    const prefs = playbackSettingsRef.current;
+    
+    if (!audioPrefAppliedRef.current && audio?.length > 0) {
+      const prefAudio = prefs.preferredAudioLanguage;
+      const secAudio = prefs.secondaryAudioLanguage;
+      
+      if (prefAudio && prefAudio !== "None") {
+        let targetId = -1;
+        const exactMatch = audio.find((t: any) => isLanguageMatch(t.language, t.label, prefAudio));
+        if (exactMatch) targetId = exactMatch.id;
+        else if (secAudio && secAudio !== "None") {
+          const secMatch = audio.find((t: any) => isLanguageMatch(t.language, t.label, secAudio));
+          if (secMatch) targetId = secMatch.id;
+        }
+        
+        if (targetId !== -1) {
+          try { video.selectAudioTrack(targetId); didUpdateAudioPrefs = true; } catch { /* ok */ }
+        }
+      }
+      audioPrefAppliedRef.current = true;
+    }
+
+    if (!subPrefAppliedRef.current && subtitle?.length > 0) {
+      const prefSub = prefs.preferredSubtitleLanguage;
+      const secSub = prefs.secondarySubtitleLanguage;
+
+      if (prefSub && prefSub !== "None") {
+        let targetId = -1;
+        const exactMatch = subtitle.find((t: any) => isLanguageMatch(t.language, t.label, prefSub));
+        if (exactMatch) targetId = exactMatch.id;
+        else if (secSub && secSub !== "None") {
+          const secMatch = subtitle.find((t: any) => isLanguageMatch(t.language, t.label, secSub));
+          if (secMatch) targetId = secMatch.id;
+        }
+
+        if (targetId !== -1) {
+          if (!activeExternalSubRef.current) {
+            try { video.selectSubtitleTrack(targetId); didUpdateSubPrefs = true; } catch { /* ok */ }
+          }
+        } else if (prefs.addonSubtitleStartup === "Always off") {
+          try { video.selectSubtitleTrack(-1); didUpdateSubPrefs = true; } catch { /* ok */ }
+        }
+      }
+      subPrefAppliedRef.current = true;
+    }
     if (audio?.length > 0) {
       const newAudios = audio.map((t: any, i: number) => {
         const parts = [t.language, t.label, t.codec ? `[${t.codec}]` : '', t.channels ? `${t.channels}ch` : ''];
@@ -1976,6 +2127,14 @@ EventDump: ${JSON.stringify(collected)}`;
                                 style={{ backgroundColor: value }}
                               />
                             ))}
+                            <div className="flex items-center gap-1.5 ml-1">
+                              <input 
+                                type="color" 
+                                value={subtitleStyle.color.length >= 7 ? subtitleStyle.color.slice(0, 7) : "#FFFFFF"}
+                                onChange={e => updateSubtitleStyle({ ...subtitleStyle, color: e.target.value.toUpperCase() })}
+                                className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full" 
+                              />
+                            </div>
                           </div>
                         </div>
 
@@ -2056,6 +2215,21 @@ EventDump: ${JSON.stringify(collected)}`;
                                 }}
                               />
                             ))}
+                            <div className="flex items-center gap-1.5 ml-1">
+                              <input 
+                                type="color" 
+                                value={subtitleStyle.bgColor.length >= 7 && subtitleStyle.bgColor !== "transparent" ? subtitleStyle.bgColor.slice(0, 7) : "#000000"}
+                                onChange={e => {
+                                  updateSubtitleStyle({
+                                    ...subtitleStyle,
+                                    bgColor: e.target.value.toUpperCase(),
+                                    bgPct: subtitleStyle.bgPct === 0 ? 75 : subtitleStyle.bgPct,
+                                    edge: "none",
+                                  });
+                                }}
+                                className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full" 
+                              />
+                            </div>
                           </div>
                         </div>
 
