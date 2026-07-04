@@ -220,6 +220,8 @@ function configureShakaPerformance(moviElement: any) {
   }
 }
 
+const VLC_PLAYER_CDN_URL = "";
+
 let VlcPlayerLoadPromise: Promise<void> | null = null;
 function ensureVlcPlayerLoaded(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
@@ -238,6 +240,30 @@ function ensureVlcPlayerLoaded(): Promise<void> {
         this.video.style.backgroundColor = "black";
         this.video.controls = false;
         this.shadowRoot!.appendChild(this.video);
+
+        // Forward native events
+        ['timeupdate', 'loadedmetadata'].forEach(e => {
+          this.video.addEventListener(e, () => this.dispatchEvent(new Event(e)));
+        });
+
+        // Translate state events
+        this.video.addEventListener('play', () => this.dispatchState('playing'));
+        this.video.addEventListener('playing', () => this.dispatchState('playing'));
+        this.video.addEventListener('pause', () => this.dispatchState('paused'));
+        this.video.addEventListener('waiting', () => this.dispatchState('buffering'));
+        this.video.addEventListener('error', () => this.dispatchState('error'));
+        this.video.addEventListener('loadeddata', () => {
+          this.dispatchState('ready');
+          this.dispatchEvent(new CustomEvent('trackschange', { 
+            detail: { 
+              audio: [{id: 0, language: 'en', label: 'Default', active: true}], 
+              subtitle: [] 
+            } 
+          }));
+        });
+      }
+      dispatchState(s: string) {
+        this.dispatchEvent(new CustomEvent('statechange', { detail: { state: s } }));
       }
       static get observedAttributes() { return ["src"]; }
       attributeChangedCallback(name: string, oldVal: string, newVal: string) {
@@ -250,6 +276,12 @@ function ensureVlcPlayerLoaded(): Promise<void> {
       get currentTime() { return this.video.currentTime; }
       set currentTime(v) { this.video.currentTime = v; }
       get duration() { return this.video.duration; }
+      get volume() { return this.video.volume; }
+      set volume(v) { this.video.volume = v; }
+      get playbackRate() { return this.video.playbackRate; }
+      set playbackRate(v) { this.video.playbackRate = v; }
+      set audioId(v: any) { /* mocked */ }
+      set subtitleId(v: any) { /* mocked */ }
       play() { return this.video.play(); }
       pause() { this.video.pause(); }
       destroy() { this.video.src = ""; }
