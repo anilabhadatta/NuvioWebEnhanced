@@ -281,8 +281,14 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
       onInit(player);
     }
 
+    // Configure Shaka once after element is fully registered — calling this in
+    // the 'ready' event handler causes the player to re-emit 'ready', which
+    // breaks the autoplay gate in the separate autoplay useEffect.
     ensureMoviPlayerLoaded().then(() => {
-      if (!cancelled) setMoviReady(true);
+      if (!cancelled) {
+        setMoviReady(true);
+        try { configureShakaPerformance(player); } catch (_) { }
+      }
     });
 
     return () => {
@@ -935,9 +941,6 @@ export default function MoviPlayerScreen() {
     else if (state === 'ready') {
       setIsBuffering(false);
       setPlayerError(null);
-      // Configure Shaka for hardware-accelerated, high-res playback each time
-      // the player reports ready (fires once per source load).
-      configureShakaPerformance(video);
       try {
         const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
         setIsSoftwareDec(isSw);
@@ -966,6 +969,16 @@ export default function MoviPlayerScreen() {
         subPrefAppliedRef.current = true;
         setSubPrefApplied(true);
         setSelectedSub(-1);
+      }
+
+      // Robust autoplay failsafe: if the player is ready and the user hasn't
+      // intentionally paused, trigger play() directly here. The dedicated autoplay
+      // useEffect uses an 800ms delay which can miss cases where configureShakaPerformance
+      // or a seek caused a second 'ready' emission after the guard already fired.
+      if (!userPaused) {
+        setTimeout(() => {
+          try { if (!userPausedRef.current) video.play?.(); } catch (_) { }
+        }, 50);
       }
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
