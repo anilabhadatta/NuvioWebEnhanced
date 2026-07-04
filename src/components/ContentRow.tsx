@@ -159,7 +159,7 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
                         loading="lazy"
                         crossOrigin="anonymous"
                         onLoad={(e) => (e.currentTarget.style.opacity = '1')}
-                        ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
+                        ref={(img) => { if (img?.complete) { img.style.transition = 'none'; img.style.opacity = '1'; } }}
                       />
                     ) : (
                       <div className="w-full h-full bg-[#222] flex items-center justify-center text-[#555] text-xs">

@@ -810,7 +810,7 @@ export default function FolderPage() {
                       loading="lazy"
                       decoding="async"
                       onLoad={(e) => (e.currentTarget.style.opacity = '1')}
-                      ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
+                      ref={(img) => { if (img?.complete) { img.style.transition = 'none'; img.style.opacity = '1'; } }}
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center p-3 text-center">

@@ -129,7 +129,7 @@ export default function HeroBanner() {
             className="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 opacity-0"
             style={{ objectPosition: "center 20%" }}
             onLoad={(e) => (e.currentTarget.style.opacity = '1')}
-            ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
+            ref={(img) => { if (img?.complete) { img.style.transition = 'none'; img.style.opacity = '1'; } }}
           />
         )}
 

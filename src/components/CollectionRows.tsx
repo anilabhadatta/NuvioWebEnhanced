@@ -168,7 +168,7 @@ function CollectionRow({
                       className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700 opacity-0"
                       loading="lazy"
                       onLoad={(e) => (e.currentTarget.style.opacity = '1')}
-                      ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
+                      ref={(img) => { if (img?.complete) { img.style.transition = 'none'; img.style.opacity = '1'; } }}
                     />
                   ) : null}
 
@@ -373,7 +373,7 @@ function FolderAsMovieRow({
                       className="w-full h-full object-cover transition-opacity duration-700 opacity-0"
                       loading="lazy"
                       onLoad={(e) => (e.currentTarget.style.opacity = '1')}
-                      ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
+                      ref={(img) => { if (img?.complete) { img.style.transition = 'none'; img.style.opacity = '1'; } }}
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-[#555] text-xs px-2 text-center">
