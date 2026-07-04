@@ -87,6 +87,218 @@ async function resolveSourcePage(
 
 // â”€â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+const H_EXPANDED = 260;
+const H_COLLAPSED = 104;
+
+function FolderHeader({
+  folder,
+  sources,
+  collectionTitle,
+  activeTabIdx,
+  handleTabClick,
+  tabContainerRef,
+}: {
+  folder: CollectionFolder;
+  sources: CollectionSource[];
+  collectionTitle: string;
+  activeTabIdx: number;
+  handleTabClick: (idx: number) => void;
+  tabContainerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const router = useRouter();
+  const [scrollY, setScrollY] = useState(0);
+
+  useEffect(() => {
+    let ticking = false;
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setScrollY(window.scrollY);
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const scrollRange = H_EXPANDED - H_COLLAPSED;
+  const progress = Math.min(1, Math.max(0, scrollY / scrollRange));
+  const headerHeight = H_EXPANDED - progress * (H_EXPANDED - H_COLLAPSED);
+
+  const isAddonFolder = folder.id.startsWith("sys_") || folder.id.includes(":");
+
+  return (
+    <div
+      className="fixed top-0 left-0 right-0 z-20 overflow-hidden"
+      style={{
+        height: `${headerHeight}px`,
+        background: "#111",
+        borderBottom: `1px solid rgba(255, 255, 255, ${progress * 0.08})`,
+      }}
+    >
+      {/* Backdrop Image or Gradient */}
+      <div 
+        className="absolute inset-0 transition-opacity duration-300"
+        style={{ 
+          opacity: 1 - progress * 0.7,
+          filter: `blur(${progress * 8}px)`,
+        }}
+      >
+        {folder.heroBackdropUrl ? (
+          <img
+            src={normalizeGithubUrl(folder.heroBackdropUrl)}
+            alt={folder.title}
+            className="absolute inset-0 w-full h-full object-cover object-top"
+          />
+        ) : folder.coverImageUrl ? (
+          <img
+            src={normalizeGithubUrl(folder.coverImageUrl)}
+            alt={folder.title}
+            className="absolute inset-0 w-full h-full object-cover object-center"
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#111]" />
+        )}
+        {/* Gradient overlays */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#111] via-black/40 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#111]/70 via-transparent to-transparent" />
+      </div>
+
+      {/* Glassmorphic Solid Color Overlay that fades in as we scroll */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: `rgba(17, 17, 17, ${progress * 0.96})`,
+          backdropFilter: progress > 0 ? `blur(${progress * 16}px)` : "none",
+          WebkitBackdropFilter: progress > 0 ? `blur(${progress * 16}px)` : "none",
+        }}
+      />
+
+      {/* Row 1: Top Nav (Back Button, Mini Title/Logo, Collection Title) */}
+      <div className="absolute top-0 left-0 right-0 h-14 flex items-center justify-between px-5 z-10">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => { router.push("/dashboard"); }}
+            className="folder-back-btn flex items-center gap-2 text-white font-medium text-xs px-3 py-1.5 bg-black/35 hover:bg-white/12 border border-white/12 rounded-full transition-all cursor-pointer"
+            style={{
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-3.5 h-3.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+            </svg>
+            Back
+          </button>
+          
+          {/* Mini Title/Logo (fades in as we scroll) */}
+          <div 
+            className="flex items-center gap-2 min-w-0 transition-all duration-300"
+            style={{
+              opacity: progress,
+              transform: `translateY(${(1 - progress) * 8}px)`,
+              pointerEvents: progress > 0.5 ? "auto" : "none",
+            }}
+          >
+            {folder.titleLogoUrl ? (
+              <img
+                src={normalizeGithubUrl(folder.titleLogoUrl)}
+                alt={folder.title}
+                className="h-5 max-w-[120px] object-contain drop-shadow-md"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+            ) : (
+              <span className="font-extrabold text-sm tracking-tight truncate">
+                {folder.coverEmoji && <span className="mr-1">{folder.coverEmoji}</span>}
+                {folder.title}
+              </span>
+            )}
+            {sources.length > 0 && (
+              <span className="text-white/30 text-[10px] whitespace-nowrap hidden sm:inline">
+                • {sources.length} source{sources.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+        </div>
+        
+        <span className="text-white/40 text-xs font-medium truncate ml-4">{collectionTitle}</span>
+      </div>
+
+      {/* Large Folder Identity (fades out as we scroll) */}
+      <div 
+        className="absolute left-5 right-5 z-10 flex items-end gap-4 pointer-events-none"
+        style={{
+          bottom: "64px", // sits right above the tabs
+          opacity: Math.max(0, 1 - progress * 1.8),
+          transform: `translateY(${progress * -15}px) scale(${1 - progress * 0.05})`,
+          transformOrigin: "left bottom",
+        }}
+      >
+        {folder.titleLogoUrl ? (
+          <img
+            src={normalizeGithubUrl(folder.titleLogoUrl)}
+            alt={folder.title}
+            className="h-12 max-w-[240px] object-contain drop-shadow-2xl"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <h1 className="text-3xl font-black tracking-tight drop-shadow-2xl">
+            {folder.coverEmoji && <span className="mr-3">{folder.coverEmoji}</span>}
+            {folder.title}
+          </h1>
+        )}
+        {sources.length > 0 && (
+          <span className="text-white/40 text-xs mb-0.5 whitespace-nowrap">
+            {sources.length} source{sources.length !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+
+      {/* Row 2: Tab buttons container (positioned at bottom of the header) */}
+      <div 
+        ref={tabContainerRef} 
+        className="absolute bottom-0 left-0 right-0 flex gap-1 overflow-x-auto hide-scrollbar px-5 py-2 z-10"
+        style={{
+          height: "48px",
+        }}
+      >
+        {/* All tab */}
+        <button
+          data-tab={ALL_TAB}
+          onClick={() => handleTabClick(ALL_TAB)}
+          className="shrink-0 px-4 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap"
+          style={{
+            background: activeTabIdx === ALL_TAB ? "#fff" : "transparent",
+            color: activeTabIdx === ALL_TAB ? "#000" : "rgba(255,255,255,0.55)",
+            transition: "background 0.2s ease, color 0.2s ease",
+          }}
+        >
+          All
+        </button>
+
+        {!isAddonFolder && sources.map((source, idx) => (
+          <button
+            key={idx}
+            data-tab={idx}
+            onClick={() => handleTabClick(idx)}
+            className="shrink-0 px-4 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap"
+            style={{
+              background: activeTabIdx === idx ? "#fff" : "transparent",
+              color: activeTabIdx === idx ? "#000" : "rgba(255,255,255,0.55)",
+              transition: "background 0.2s ease, color 0.2s ease",
+            }}
+          >
+            {(source as any).title || `Source ${idx + 1}`}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function FolderPage() {
   const params = useParams();
   const router = useRouter();
@@ -137,7 +349,6 @@ export default function FolderPage() {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [showContent, setShowContent] = useState(false);
-  const [scrollY, setScrollY] = useState(0);
 
   const tabContainerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -155,12 +366,6 @@ export default function FolderPage() {
       setTimeout(() => setShowContent(true), 50);
     });
 
-    const handleScroll = () => {
-      setScrollY(window.scrollY);
-    };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
-
     // Restore scroll position slightly after mount to ensure DOM is ready
     setTimeout(() => {
       const savedScroll = sessionStorage.getItem(`nuvio_folder_scroll_${folderId}`);
@@ -169,10 +374,6 @@ export default function FolderPage() {
         sessionStorage.removeItem(`nuvio_folder_scroll_${folderId}`); // Clean up
       }
     }, 100);
-
-    return () => {
-      window.removeEventListener("scroll", handleScroll);
-    };
   }, [folderId]);
 
   const handleSelectMovie = useCallback((m: TMDBMovie | null) => {
@@ -533,14 +734,6 @@ export default function FolderPage() {
     currentTabState.loaded &&
     currentTabState.page < currentTabState.totalPages;
 
-  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const H_EXPANDED = 260;
-  const H_COLLAPSED = 104;
-  const scrollRange = H_EXPANDED - H_COLLAPSED;
-  const progress = Math.min(1, Math.max(0, scrollY / scrollRange));
-
-  const headerHeight = H_EXPANDED - progress * (H_EXPANDED - H_COLLAPSED);
-
   if (!mounted || !folder) {
     return (
       <div className="min-h-screen bg-[#111] flex items-center justify-center">
@@ -562,171 +755,14 @@ export default function FolderPage() {
       <div style={{ height: `${H_EXPANDED}px` }} className="flex-shrink-0 w-full" />
 
       {/* Sticky/Fixed minimizable header container */}
-      <div
-        className="fixed top-0 left-0 right-0 z-20 overflow-hidden"
-        style={{
-          height: `${headerHeight}px`,
-          background: "#111",
-          borderBottom: `1px solid rgba(255, 255, 255, ${progress * 0.08})`,
-        }}
-      >
-        {/* Backdrop Image or Gradient */}
-        <div 
-          className="absolute inset-0 transition-opacity duration-300"
-          style={{ 
-            opacity: 1 - progress * 0.7,
-            filter: `blur(${progress * 8}px)`,
-          }}
-        >
-          {folder.heroBackdropUrl ? (
-            <img
-              src={normalizeGithubUrl(folder.heroBackdropUrl)}
-              alt={folder.title}
-              className="absolute inset-0 w-full h-full object-cover object-top"
-            />
-          ) : folder.coverImageUrl ? (
-            <img
-              src={normalizeGithubUrl(folder.coverImageUrl)}
-              alt={folder.title}
-              className="absolute inset-0 w-full h-full object-cover object-center"
-            />
-          ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#111]" />
-          )}
-          {/* Gradient overlays */}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#111] via-black/40 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#111]/70 via-transparent to-transparent" />
-        </div>
-
-        {/* Glassmorphic Solid Color Overlay that fades in as we scroll */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: `rgba(17, 17, 17, ${progress * 0.96})`,
-            backdropFilter: progress > 0 ? `blur(${progress * 16}px)` : "none",
-            WebkitBackdropFilter: progress > 0 ? `blur(${progress * 16}px)` : "none",
-          }}
-        />
-
-        {/* Row 1: Top Nav (Back Button, Mini Title/Logo, Collection Title) */}
-        <div className="absolute top-0 left-0 right-0 h-14 flex items-center justify-between px-5 z-10">
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => { router.push("/dashboard"); }}
-              className="folder-back-btn flex items-center gap-2 text-white font-medium text-xs px-3 py-1.5 bg-black/35 hover:bg-white/12 border border-white/12 rounded-full transition-all cursor-pointer"
-              style={{
-                backdropFilter: "blur(12px)",
-                WebkitBackdropFilter: "blur(12px)",
-              }}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-3.5 h-3.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-              </svg>
-              Back
-            </button>
-            
-            {/* Mini Title/Logo (fades in as we scroll) */}
-            <div 
-              className="flex items-center gap-2 min-w-0 transition-all duration-300"
-              style={{
-                opacity: progress,
-                transform: `translateY(${(1 - progress) * 8}px)`,
-                pointerEvents: progress > 0.5 ? "auto" : "none",
-              }}
-            >
-              {folder.titleLogoUrl ? (
-                <img
-                  src={normalizeGithubUrl(folder.titleLogoUrl)}
-                  alt={folder.title}
-                  className="h-5 max-w-[120px] object-contain drop-shadow-md"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-              ) : (
-                <span className="font-extrabold text-sm tracking-tight truncate">
-                  {folder.coverEmoji && <span className="mr-1">{folder.coverEmoji}</span>}
-                  {folder.title}
-                </span>
-              )}
-              {sources.length > 0 && (
-                <span className="text-white/30 text-[10px] whitespace-nowrap hidden sm:inline">
-                  • {sources.length} source{sources.length !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-          </div>
-          
-          <span className="text-white/40 text-xs font-medium truncate ml-4">{collectionTitle}</span>
-        </div>
-
-        {/* Large Folder Identity (fades out as we scroll) */}
-        <div 
-          className="absolute left-5 right-5 z-10 flex items-end gap-4 pointer-events-none"
-          style={{
-            bottom: "64px", // sits right above the tabs
-            opacity: Math.max(0, 1 - progress * 1.8),
-            transform: `translateY(${progress * -15}px) scale(${1 - progress * 0.05})`,
-            transformOrigin: "left bottom",
-          }}
-        >
-          {folder.titleLogoUrl ? (
-            <img
-              src={normalizeGithubUrl(folder.titleLogoUrl)}
-              alt={folder.title}
-              className="h-12 max-w-[240px] object-contain drop-shadow-2xl"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-            />
-          ) : (
-            <h1 className="text-3xl font-black tracking-tight drop-shadow-2xl">
-              {folder.coverEmoji && <span className="mr-3">{folder.coverEmoji}</span>}
-              {folder.title}
-            </h1>
-          )}
-          {sources.length > 0 && (
-            <span className="text-white/40 text-xs mb-0.5 whitespace-nowrap">
-              {sources.length} source{sources.length !== 1 ? "s" : ""}
-            </span>
-          )}
-        </div>
-
-        {/* Row 2: Tab buttons container (positioned at bottom of the header) */}
-        <div 
-          ref={tabContainerRef} 
-          className="absolute bottom-0 left-0 right-0 flex gap-1 overflow-x-auto hide-scrollbar px-5 py-2 z-10"
-          style={{
-            height: "48px",
-          }}
-        >
-          {/* All tab */}
-          <button
-            data-tab={ALL_TAB}
-            onClick={() => handleTabClick(ALL_TAB)}
-            className="shrink-0 px-4 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap"
-            style={{
-              background: activeTabIdx === ALL_TAB ? "#fff" : "transparent",
-              color: activeTabIdx === ALL_TAB ? "#000" : "rgba(255,255,255,0.55)",
-              transition: "background 0.2s ease, color 0.2s ease",
-            }}
-          >
-            All
-          </button>
-
-          {sources.map((source, idx) => (
-            <button
-              key={idx}
-              data-tab={idx}
-              onClick={() => handleTabClick(idx)}
-              className="shrink-0 px-4 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap"
-              style={{
-                background: activeTabIdx === idx ? "#fff" : "transparent",
-                color: activeTabIdx === idx ? "#000" : "rgba(255,255,255,0.55)",
-                transition: "background 0.2s ease, color 0.2s ease",
-              }}
-            >
-              {(source as any).title || `Source ${idx + 1}`}
-            </button>
-          ))}
-        </div>
-      </div>
+      <FolderHeader
+        folder={folder}
+        sources={sources}
+        collectionTitle={collectionTitle}
+        activeTabIdx={activeTabIdx}
+        handleTabClick={handleTabClick}
+        tabContainerRef={tabContainerRef}
+      />
 
       {/* â”€â”€ Content grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="flex-1 px-5 py-6">
@@ -770,9 +806,11 @@ export default function FolderPage() {
                     <img
                       src={normalizeGithubUrl(meta.poster)}
                       alt={meta.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover transition-opacity duration-700 opacity-0"
                       loading="lazy"
                       decoding="async"
+                      onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+                      ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center p-3 text-center">

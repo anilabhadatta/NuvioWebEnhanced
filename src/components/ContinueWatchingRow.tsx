@@ -322,9 +322,11 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
                       <img
                         src={imgSrc}
                         alt={title_}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover transition-opacity duration-700 opacity-0"
                         loading="lazy"
                         crossOrigin="anonymous"
+                        onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+                        ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
                       />
                     ) : isTorbox ? (
                       <div className="w-full h-full bg-gradient-to-br from-[#0f172a] to-[#020617] flex flex-col items-center justify-center text-white border border-white/5">

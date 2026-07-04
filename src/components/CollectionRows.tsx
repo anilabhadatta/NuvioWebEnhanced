@@ -165,8 +165,10 @@ function CollectionRow({
                     <img
                       src={normalizeGithubUrl(folder.coverImageUrl)}
                       alt={folder.title}
-                      className="absolute inset-0 w-full h-full object-cover"
+                      className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700 opacity-0"
                       loading="lazy"
+                      onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+                      ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
                     />
                   ) : null}
 
@@ -368,8 +370,10 @@ function FolderAsMovieRow({
                     <img
                       src={normalizeGithubUrl(meta.poster)}
                       alt={meta.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover transition-opacity duration-700 opacity-0"
                       loading="lazy"
+                      onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+                      ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-[#555] text-xs px-2 text-center">

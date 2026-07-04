@@ -155,9 +155,11 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
                       <img
                         src={imgSrc}
                         alt={title_}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover transition-opacity duration-700 opacity-0"
                         loading="lazy"
                         crossOrigin="anonymous"
+                        onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+                        ref={(img) => { if (img?.complete) img.style.opacity = '1'; }}
                       />
                     ) : (
                       <div className="w-full h-full bg-[#222] flex items-center justify-center text-[#555] text-xs">
