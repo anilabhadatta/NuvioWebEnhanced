@@ -567,6 +567,8 @@ export default function MoviPlayerScreen() {
   // Parsed cues for the custom overlay renderer
   const [externalSubCues, setExternalSubCues] = useState<SubtitleCue[]>([]);
   const autoSelectedAddonSubRef = useRef(false);
+  // Stored as a ref so the early useEffect (before loadExternalSubtitle is defined) can call it
+  const loadExternalSubtitleRef = useRef<((id: string, url: string, name: string) => void) | null>(null);
 
   useEffect(() => {
     if (addonSubtitles.length === 0) return;
@@ -584,23 +586,24 @@ export default function MoviPlayerScreen() {
     const prefSub = prefs.preferredSubtitleLanguage;
     const secSub = prefs.secondarySubtitleLanguage;
 
-    let targetUrl: string | null = null;
+    let targetMatch: any = null;
     if (prefSub && prefSub !== "None") {
-      const match = addonSubtitles.find(t => isLanguageMatch(t.language || t.id, t.label || t.name || t.id, prefSub));
-      if (match) targetUrl = match.url;
+      // SubtitleItem uses .lang (not .language)
+      const match = addonSubtitles.find(t => isLanguageMatch(t.lang || t.id, t.name || t.id, prefSub));
+      if (match) targetMatch = match;
     }
-    if (!targetUrl && secSub && secSub !== "None") {
-      const match = addonSubtitles.find(t => isLanguageMatch(t.language || t.id, t.label || t.name || t.id, secSub));
-      if (match) targetUrl = match.url;
+    if (!targetMatch && secSub && secSub !== "None") {
+      const match = addonSubtitles.find(t => isLanguageMatch(t.lang || t.id, t.name || t.id, secSub));
+      if (match) targetMatch = match;
     }
-    if (!targetUrl && prefs.addonSubtitleStartup === "Always on") {
-      targetUrl = addonSubtitles[0]?.url;
+    if (!targetMatch && prefs.addonSubtitleStartup === "Always on") {
+      targetMatch = addonSubtitles[0];
     }
 
-    if (targetUrl) {
-      setActiveExternalSub(targetUrl);
+    if (targetMatch && loadExternalSubtitleRef.current) {
+      console.log(`[MoviPlayer] Auto-selecting addon subtitle: ${targetMatch.name}`);
       autoSelectedAddonSubRef.current = true;
-      try { videoRef.current?.selectSubtitleTrack(-1); } catch {}
+      loadExternalSubtitleRef.current(targetMatch.id, targetMatch.url, targetMatch.name);
     }
   }, [addonSubtitles, activeExternalSub, selectedSub, subPrefApplied]);
   // Modal & Overlays
@@ -955,6 +958,15 @@ export default function MoviPlayerScreen() {
           } catch (_) { }
         }
       }
+
+      // Fallback: if trackschange never fired subtitle tracks (pure HLS/stream with
+      // no embedded subs), unlock subPrefApplied here so addon subtitles can run.
+      if (!subPrefAppliedRef.current) {
+        console.log("[MoviPlayer] ready fired before any subtitle tracks — unlocking addon subtitle selection.");
+        subPrefAppliedRef.current = true;
+        setSubPrefApplied(true);
+        setSelectedSub(-1);
+      }
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
@@ -1021,62 +1033,71 @@ export default function MoviPlayerScreen() {
       audioPrefAppliedRef.current = true;
     }
 
-    if (!subPrefAppliedRef.current && subtitle?.length > 0) {
-      const prefSub = prefs.preferredSubtitleLanguage;
-      const secSub = prefs.secondarySubtitleLanguage;
+    if (!subPrefAppliedRef.current) {
+      if (subtitle?.length > 0) {
+        const prefSub = prefs.preferredSubtitleLanguage;
+        const secSub = prefs.secondarySubtitleLanguage;
 
-      console.log("[MoviPlayer] Evaluating Subtitle Preferences:", { prefSub, secSub, addonStartup: prefs.addonSubtitleStartup });
+        console.log("[MoviPlayer] Evaluating Subtitle Preferences:", { prefSub, secSub, addonStartup: prefs.addonSubtitleStartup });
 
-      if (prefSub && prefSub.toLowerCase() !== "none") {
-        let targetId = -1;
-        const exactMatch = subtitle.find((t: any) => {
-          const match = isLanguageMatch(t.language, t.label, prefSub);
-          if (match) console.log(`[MoviPlayer] Found primary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
-          return match;
-        });
-        
-        if (exactMatch) targetId = exactMatch.id;
-        else if (secSub && secSub.toLowerCase() !== "none") {
-          const secMatch = subtitle.find((t: any) => {
-            const match = isLanguageMatch(t.language, t.label, secSub);
-            if (match) console.log(`[MoviPlayer] Found secondary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
+        if (prefSub && prefSub.toLowerCase() !== "none") {
+          let targetId = -1;
+          const exactMatch = subtitle.find((t: any) => {
+            const match = isLanguageMatch(t.language, t.label, prefSub);
+            if (match) console.log(`[MoviPlayer] Found primary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
             return match;
           });
-          if (secMatch) targetId = secMatch.id;
-        }
+          
+          if (exactMatch) targetId = exactMatch.id;
+          else if (secSub && secSub.toLowerCase() !== "none") {
+            const secMatch = subtitle.find((t: any) => {
+              const match = isLanguageMatch(t.language, t.label, secSub);
+              if (match) console.log(`[MoviPlayer] Found secondary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
+              return match;
+            });
+            if (secMatch) targetId = secMatch.id;
+          }
 
-        if (targetId !== -1) {
-          if (!activeExternalSubRef.current) {
-            console.log(`[MoviPlayer] Selecting subtitle track ID: ${targetId}`);
+          if (targetId !== -1) {
+            if (!activeExternalSubRef.current) {
+              console.log(`[MoviPlayer] Selecting subtitle track ID: ${targetId}`);
+              try { 
+                const player = video.player;
+                if (player && typeof player.selectSubtitleTrack === 'function') {
+                  player.selectSubtitleTrack(targetId);
+                }
+                if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
+                
+                didUpdateSubPrefs = true; 
+                setSelectedSub(targetId);
+              } catch { /* ok */ }
+            } else {
+              console.log(`[MoviPlayer] Skipping subtitle auto-selection because an external subtitle is active.`);
+            }
+          } else if (prefs.addonSubtitleStartup === "Always off") {
+            console.log(`[MoviPlayer] No matching subtitle found, turning off subtitles (Always off setting).`);
             try { 
               const player = video.player;
               if (player && typeof player.selectSubtitleTrack === 'function') {
-                player.selectSubtitleTrack(targetId);
+                player.selectSubtitleTrack(null);
               }
               if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
               
               didUpdateSubPrefs = true; 
-              setSelectedSub(targetId);
             } catch { /* ok */ }
           } else {
-            console.log(`[MoviPlayer] Skipping subtitle auto-selection because an external subtitle is active.`);
+            console.log("[MoviPlayer] No built-in match found — will try addon subtitles.");
+            didUpdateSubPrefs = true;
+            setSelectedSub(-1);
           }
-        } else if (prefs.addonSubtitleStartup === "Always off") {
-          console.log(`[MoviPlayer] No matching subtitle found, turning off subtitles (Always off setting).`);
-          try { 
-            const player = video.player;
-            if (player && typeof player.selectSubtitleTrack === 'function') {
-              player.selectSubtitleTrack(null);
-            }
-            if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
-            
-            didUpdateSubPrefs = true; 
-          } catch { /* ok */ }
         } else {
-          console.log("[MoviPlayer] No matching subtitle track found.");
+          console.log("[MoviPlayer] Subtitle preference is 'None', skipping auto-selection.");
         }
       } else {
-        console.log("[MoviPlayer] Subtitle preference is 'None', skipping auto-selection.");
+        // No built-in tracks at all — unlock so addon subtitles can take over
+        console.log("[MoviPlayer] No built-in subtitle tracks in stream — unlocking for addon subtitles.");
+        didUpdateSubPrefs = true;
+        setSelectedSub(-1);
       }
       subPrefAppliedRef.current = true;
       setSubPrefApplied(true);
@@ -1930,6 +1951,9 @@ EventDump: ${JSON.stringify(collected)}`;
       // Silently fail external subtitle load
     }
   };
+  // Register this function in the ref so the addon-subtitle useEffect (defined earlier) can call it
+  loadExternalSubtitleRef.current = loadExternalSubtitle;
+
 
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
