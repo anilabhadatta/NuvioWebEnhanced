@@ -472,6 +472,9 @@ export default function MoviPlayerScreen() {
   });
 
   const subtitleStyleRef = useRef(subtitleStyle);
+  // Pending colors while the picker is open — no DOM writes until the picker closes.
+  const [pendingTextColor, setPendingTextColor] = useState<string | null>(null);
+  const [pendingBgColor, setPendingBgColor] = useState<string | null>(null);
 
   const updateSubtitleStyle = (newStyle: SubtitleStyle) => {
     subtitleStyleRef.current = newStyle;
@@ -1650,7 +1653,7 @@ EventDump: ${JSON.stringify(collected)}`;
       }
 
       const u = encodeURIComponent(stream.url);
-      window.location.replace(
+      router.replace(
         `/player?id=${movieId}&type=${mediaType}&url=${u}&s=${nextEpisode.season}&e=${nextEpisode.episode}`
       );
     } catch (err) {
@@ -2261,8 +2264,14 @@ EventDump: ${JSON.stringify(collected)}`;
                             <div className="flex items-center gap-1.5 ml-1">
                               <input
                                 type="color"
-                                value={subtitleStyle.color.length >= 7 ? subtitleStyle.color.slice(0, 7) : "#FFFFFF"}
-                                onChange={e => updateSubtitleStyle({ ...subtitleStyle, color: e.target.value.toUpperCase() })}
+                                value={pendingTextColor ?? (subtitleStyle.color.length >= 7 ? subtitleStyle.color.slice(0, 7) : "#FFFFFF")}
+                                onChange={e => setPendingTextColor(e.target.value.toUpperCase())}
+                                onBlur={() => {
+                                  if (pendingTextColor) {
+                                    updateSubtitleStyle({ ...subtitleStyle, color: pendingTextColor });
+                                  }
+                                  setPendingTextColor(null);
+                                }}
                                 className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full"
                               />
                             </div>
@@ -2349,14 +2358,18 @@ EventDump: ${JSON.stringify(collected)}`;
                             <div className="flex items-center gap-1.5 ml-1">
                               <input
                                 type="color"
-                                value={subtitleStyle.bgColor.length >= 7 && subtitleStyle.bgColor !== "transparent" ? subtitleStyle.bgColor.slice(0, 7) : "#000000"}
-                                onChange={e => {
-                                  updateSubtitleStyle({
-                                    ...subtitleStyle,
-                                    bgColor: e.target.value.toUpperCase(),
-                                    bgPct: subtitleStyle.bgPct === 0 ? 75 : subtitleStyle.bgPct,
-                                    edge: "none",
-                                  });
+                                value={pendingBgColor ?? (subtitleStyle.bgColor.length >= 7 && subtitleStyle.bgColor !== "transparent" ? subtitleStyle.bgColor.slice(0, 7) : "#000000")}
+                                onChange={e => setPendingBgColor(e.target.value.toUpperCase())}
+                                onBlur={() => {
+                                  if (pendingBgColor) {
+                                    updateSubtitleStyle({
+                                      ...subtitleStyle,
+                                      bgColor: pendingBgColor,
+                                      bgPct: subtitleStyle.bgPct === 0 ? 75 : subtitleStyle.bgPct,
+                                      edge: "none",
+                                    });
+                                  }
+                                  setPendingBgColor(null);
                                 }}
                                 className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full"
                               />
@@ -2728,7 +2741,7 @@ EventDump: ${JSON.stringify(collected)}`;
               if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
               else sessionStorage.removeItem("nuvio.currentAddonUrl");
             } catch { /* ok */ }
-            window.location.replace(route);
+            router.replace(route);
             setShowStreamPicker(false);
             setStreamPickerSeason(null);
             setStreamPickerEpisode(null);
