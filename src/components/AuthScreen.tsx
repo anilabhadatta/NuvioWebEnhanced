@@ -151,7 +151,7 @@ export default function AuthScreen() {
             {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
             <button
               onClick={() => { setIsSignUp(!isSignUp); setError(""); }}
-              className="text-white hover:underline font-semibold"
+              className="text-white hover:underline font-semibold cursor-pointer"
             >
               {isSignUp ? "Sign In" : "Sign Up"}
             </button>
@@ -167,7 +167,7 @@ export default function AuthScreen() {
           {/* Anonymous */}
           <button
             onClick={handleAnonymous}
-            className="w-full bg-transparent hover:bg-white/5 border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white font-medium py-3 rounded-xl transition-all text-sm"
+            className="w-full bg-transparent hover:bg-white/5 border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white font-medium py-3 rounded-xl transition-all text-sm cursor-pointer"
           >
             Continue without account
           </button>
