@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { fetchExternalIds, fetchNextEpisode, fetchTvDetails, fetchTvSeason, NextEpisodeMeta } from "@/lib/tmdb";
 import { fetchSkipIntervals, fetchAnimeSkipIntervals, SkipInterval } from "@/lib/introDb";
-import { WatchProgress, getWatchProgress, saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
+import { WatchProgress, getWatchProgress, saveWatchProgress, getResumeTime, syncWatchProgressFromCloud } from "@/lib/watchProgress";
 import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
 import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS, getLocalPlaybackSettings } from "@/lib/playbackSettings";
@@ -350,8 +350,18 @@ export default function MoviPlayerScreen() {
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [userPaused, setUserPaused] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [mutedByAutoplay, setMutedByAutoplay] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => {
+    if (typeof navigator !== 'undefined' && (navigator as any).userActivation) {
+      return !(navigator as any).userActivation.hasBeenActive;
+    }
+    return false;
+  });
+  const [mutedByAutoplay, setMutedByAutoplay] = useState(() => {
+    if (typeof navigator !== 'undefined' && (navigator as any).userActivation) {
+      return !(navigator as any).userActivation.hasBeenActive;
+    }
+    return false;
+  });
 
   const [isBuffering, setIsBuffering] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
@@ -498,6 +508,7 @@ export default function MoviPlayerScreen() {
 
   const playbackSettingsRef = useRef<PlaybackSettings>(getLocalPlaybackSettings());
   const hasResumedRef = useRef(false);
+  const autoplayTriggeredRef = useRef(false);
   const audioPrefAppliedRef = useRef(false);
   const [subPrefApplied, setSubPrefApplied] = useState(false);
   const subPrefAppliedRef = useRef(false);
@@ -927,6 +938,90 @@ export default function MoviPlayerScreen() {
   const onStateChangeRef = useRef<((e: any) => void) | null>(null);
   const onTracksChangeRef = useRef<((e: any) => void) | null>(null);
   const onTimeUpdateRef = useRef<(() => void) | null>(null);
+  const onPlayerErrorRef = useRef<((e: any) => void) | null>(null);
+
+  // Autoplay coordination: play only after BOTH the player is ready AND tracks
+  // have been configured (or we've confirmed there are no tracks to configure).
+  // This prevents the corrective-seek in trackschange from interrupting play().
+  const playerReadyRef = useRef(false);
+  const tracksSettledRef = useRef(false);
+  const autoplayScheduledRef = useRef<any>(null);
+
+  // Called from both 'ready' and 'trackschange'. Fires play() only when both
+  // signals have arrived, OR as a 600ms fallback if trackschange never fires
+  // (some streams have no tracks at all).
+  const scheduleAutoplay = (video: any) => {
+    if (autoplayTriggeredRef.current || userPausedRef.current) return;
+    if (!playerReadyRef.current) return;
+
+    if (!tracksSettledRef.current) {
+      // Tracks not yet confirmed — start a fallback timer so we don't wait forever
+      if (!autoplayScheduledRef.current) {
+        autoplayScheduledRef.current = setTimeout(() => {
+          autoplayScheduledRef.current = null;
+          // Mark tracks as settled via timeout path so the next call proceeds
+          tracksSettledRef.current = true;
+          scheduleAutoplay(video);
+        }, 600);
+      }
+      return;
+    }
+
+    // Both ready + tracks settled: cancel any pending fallback and play.
+    clearTimeout(autoplayScheduledRef.current);
+    autoplayScheduledRef.current = null;
+
+    if (autoplayTriggeredRef.current || userPausedRef.current) return;
+    autoplayTriggeredRef.current = true;
+
+    // Async wrapper: fetch fresh cloud resume time before seeking + playing.
+    const doResumeAndPlay = async () => {
+      // Fetch the latest resume position from cloud (Supabase). This is async but
+      // fast: it populates nuvio_cloud_progress so getResumeTime() picks it up.
+      if (!hasResumedRef.current && rawMovieId) {
+        try { await syncWatchProgressFromCloud(); } catch (_) { /* no-op if offline */ }
+      }
+
+      // Double-check user hasn't paused/navigated away while we were fetching.
+      if (userPausedRef.current) return;
+
+      // Apply resume seek.
+      if (!hasResumedRef.current && rawMovieId) {
+        hasResumedRef.current = true;
+        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
+        const pType = mediaType || "movie";
+        const pSeason = season ? parseInt(season, 10) : undefined;
+        const pEpisode = episode ? parseInt(episode, 10) : undefined;
+        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
+        if (resumeTime > 5) {
+          try { video.currentTime = resumeTime; } catch (_) { }
+        }
+      }
+
+      const handlePlayError = (err?: any) => {
+        console.log("[MoviPlayer] Autoplay blocked, falling back to muted", err);
+        setIsMuted(true);
+        setMutedByAutoplay(true);
+        if (typeof video.muted !== 'undefined') video.muted = true;
+        if (video.player && typeof video.player.setMuted === 'function') video.player.setMuted(true);
+        setTimeout(() => {
+          if (!userPausedRef.current) typeof video.play === 'function' && video.play();
+        }, 100);
+      };
+
+      const p = typeof video.play === 'function' ? video.play() : null;
+      if (p && typeof p.catch === 'function') p.catch((err: any) => handlePlayError(err));
+
+      // Failsafe for silent failures (audio context suspended, video stays paused)
+      setTimeout(() => {
+        if (!userPausedRef.current && (video.paused || (video.player?.audioRenderer?.audioContext?.state === "suspended" && !video.muted))) {
+          handlePlayError("Failsafe: video still paused after play()");
+        }
+      }, 1500);
+    };
+
+    doResumeAndPlay();
+  };
 
   // Track state refs for deep comparison to prevent infinite loop re-renders
   const audiosCache = useRef(JSON.stringify([{ id: 0, name: "Default" }]));
@@ -962,8 +1057,6 @@ export default function MoviPlayerScreen() {
       setPlayerError(null);
 
       // Configure Shaka for hardware-accelerated, high-res playback.
-      // We only do this once per player instance to avoid infinite loops,
-      // but doing it here guarantees the internal Shaka instance actually exists.
       if (!video.__shakaConfigured) {
         try {
           if (video.player && typeof video.player.configure === 'function') {
@@ -985,6 +1078,11 @@ export default function MoviPlayerScreen() {
         setSubPrefApplied(true);
         setSelectedSub(-1);
       }
+
+      // Signal that the player is ready. scheduleAutoplay will fire play() once
+      // tracks have also been configured (or timed out).
+      playerReadyRef.current = true;
+      scheduleAutoplay(video);
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
@@ -1039,7 +1137,8 @@ export default function MoviPlayerScreen() {
             } else if (typeof video.selectAudioTrack === 'function') {
               video.selectAudioTrack(targetId);
             }
-            if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
+            // NOTE: Do NOT do video.currentTime = video.currentTime here — that flushes the
+            // decoder pipeline and re-emits 'ready', which races with autoplay.
 
             didUpdateAudioPrefs = true;
             setSelectedAudio(targetId);
@@ -1088,7 +1187,8 @@ export default function MoviPlayerScreen() {
                 if (player && typeof player.selectSubtitleTrack === 'function') {
                   player.selectSubtitleTrack(targetId);
                 }
-                if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
+                // NOTE: Do NOT do video.currentTime = video.currentTime here — that flushes the
+                // decoder pipeline and re-emits 'ready', which races with autoplay.
 
                 didUpdateSubPrefs = true;
                 setSelectedSub(targetId);
@@ -1103,7 +1203,7 @@ export default function MoviPlayerScreen() {
               if (player && typeof player.selectSubtitleTrack === 'function') {
                 player.selectSubtitleTrack(null);
               }
-              if (typeof video.currentTime === 'number') video.currentTime = video.currentTime;
+              // NOTE: Do NOT do video.currentTime = video.currentTime here — re-emits 'ready'
 
               didUpdateSubPrefs = true;
             } catch { /* ok */ }
@@ -1124,6 +1224,10 @@ export default function MoviPlayerScreen() {
       subPrefAppliedRef.current = true;
       setSubPrefApplied(true);
     }
+
+    // Signal tracks are settled; fire autoplay if player is already ready.
+    tracksSettledRef.current = true;
+    scheduleAutoplay(video);
     if (audio?.length > 0) {
       const newAudios = audio.map((t: any, i: number) => {
         const parts = [t.language, t.label, t.codec ? `[${t.codec}]` : '', t.channels ? `${t.channels}ch` : ''];
@@ -1182,9 +1286,49 @@ export default function MoviPlayerScreen() {
     } catch (_) { }
   };
 
+  onPlayerErrorRef.current = (e: any) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const errObj = video.error || (video.video && video.video.error);
+    const detail = e.detail || {};
+
+    // Shaka Player error fields
+    const shakaCode = detail.code || e.code || e.detail?.code;
+    const shakaCategory = detail.category || e.detail?.category;
+    const shakaSeverity = detail.severity || e.detail?.severity;
+    const shakaData = detail.data || e.detail?.data;
+    const msg = detail.message || e.message || errObj?.message || 'none';
+
+    // Gather all top-level keys
+    const collected: any = {};
+    const target = e.detail || e;
+    if (target) {
+      const keys = Object.getOwnPropertyNames(target);
+      for (const key of keys) {
+        try {
+          const val = target[key];
+          if (typeof val !== 'function' && typeof val !== 'object') {
+            collected[key] = val;
+          }
+        } catch { }
+      }
+    }
+
+    const errMsg = `[Player Error]
+NativeCode: ${errObj?.code || 'none'}
+NativeMsg: ${errObj?.message || 'none'}
+ShakaCode: ${shakaCode || 'none'} (Cat: ${shakaCategory || 'none'}, Sev: ${shakaSeverity || 'none'})
+Msg: ${msg}
+ShakaData: ${JSON.stringify(shakaData || [])}
+EventDump: ${JSON.stringify(collected)}`;
+
+    console.error(errMsg);
+  };
+
   const stableStateChange = useCallback((e: any) => onStateChangeRef.current?.(e), []);
   const stableTracksChange = useCallback((e: any) => onTracksChangeRef.current?.(e), []);
   const stableTimeUpdate = useCallback(() => onTimeUpdateRef.current?.(), []);
+  const stableError = useCallback((e: any) => onPlayerErrorRef.current?.(e), []);
 
   // Attach strictly once to the player element
   const playerListenersAttached = useRef(false);
@@ -1197,15 +1341,17 @@ export default function MoviPlayerScreen() {
     player.addEventListener("loadedmetadata", stableTimeUpdate);
     player.addEventListener("statechange", stableStateChange);
     player.addEventListener("trackschange", stableTracksChange);
+    player.addEventListener("error", stableError);
 
     return () => {
       player.removeEventListener("timeupdate", stableTimeUpdate);
       player.removeEventListener("loadedmetadata", stableTimeUpdate);
       player.removeEventListener("statechange", stableStateChange);
       player.removeEventListener("trackschange", stableTracksChange);
+      player.removeEventListener("error", stableError);
       playerListenersAttached.current = false;
     };
-  }, [resolvedSrc, stableTimeUpdate, stableStateChange, stableTracksChange]);
+  }, [resolvedSrc, stableTimeUpdate, stableStateChange, stableTracksChange, stableError]);
 
 
   // --------------------------------------------------------------------------------
@@ -1347,129 +1493,7 @@ export default function MoviPlayerScreen() {
     userPausedRef.current = false;
   }, [resolvedSrc]);
 
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-
-    let playTimeout: any = null;
-
-    const triggerPlay = () => {
-      if (userPausedRef.current) return;
-
-      clearTimeout(playTimeout);
-      playTimeout = setTimeout(() => {
-        if (userPausedRef.current) return;
-        
-        // Handle resume time seeking right before we play.
-        // Doing this here ensures the pipeline has stabilized after any Shaka reconfigurations,
-        // preventing the seek from being aborted and leaving the player stuck buffering.
-        if (!hasResumedRef.current && rawMovieId) {
-          hasResumedRef.current = true;
-          const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
-          const pType = mediaType || "movie";
-          const pSeason = season ? parseInt(season, 10) : undefined;
-          const pEpisode = episode ? parseInt(episode, 10) : undefined;
-          
-          const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
-          if (resumeTime > 5) {
-            try { v.currentTime = resumeTime; } catch (_) { }
-          }
-        }
-
-        const p = typeof v.play === 'function' ? v.play() : null;
-        if (p && typeof p.catch === 'function') {
-          p.catch((err: any) => {
-            // Unmuted play failed. Fallback to muted autoplay!
-            setIsMuted(true);
-            setMutedByAutoplay(true);
-            if (typeof v.muted !== 'undefined') v.muted = true;
-            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
-            setTimeout(() => {
-              if (!userPausedRef.current) {
-                typeof v.play === 'function' && v.play();
-              }
-            }, 100);
-          });
-        }
-
-        // Custom player autoplay block detection: Check if the audio context is suspended.
-        // If it is suspended and the player is not muted, the browser blocked unmuted autoplay.
-        // Switch to muted autoplay so it continues playing instead of remaining stuck on black screen.
-        setTimeout(() => {
-          if (userPausedRef.current) return;
-          const isSuspended = v.player?.audioRenderer?.audioContext?.state === "suspended";
-          if (isSuspended && !v.player?.muted) {
-            setIsMuted(true);
-            setMutedByAutoplay(true);
-            if (typeof v.muted !== 'undefined') v.muted = true;
-            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
-            setTimeout(() => {
-              if (!userPausedRef.current) {
-                typeof v.play === 'function' && v.play();
-              }
-            }, 100);
-          }
-        }, 150);
-      }, 800); // 800ms delay to let the decoder pipeline warm up fully before play
-    };
-
-    const onStateChange = (e: any) => {
-      if (e.detail === 'ready' && !userPausedRef.current) {
-        triggerPlay();
-      }
-    };
-    const onCanPlay = () => {
-      if (!userPausedRef.current) {
-        triggerPlay();
-      }
-    };
-    const onError = (e: any) => {
-      const errObj = v.error || (v.video && v.video.error);
-      const detail = e.detail || {};
-
-      // Shaka Player error fields
-      const shakaCode = detail.code || e.code || e.detail?.code;
-      const shakaCategory = detail.category || e.detail?.category;
-      const shakaSeverity = detail.severity || e.detail?.severity;
-      const shakaData = detail.data || e.detail?.data;
-      const msg = detail.message || e.message || errObj?.message || 'none';
-
-      // Gather all top-level keys
-      const collected: any = {};
-      const target = e.detail || e;
-      if (target) {
-        const keys = Object.getOwnPropertyNames(target);
-        for (const key of keys) {
-          try {
-            const val = target[key];
-            if (typeof val !== 'function' && typeof val !== 'object') {
-              collected[key] = val;
-            }
-          } catch { }
-        }
-      }
-
-      const errMsg = `[Player Error]
-NativeCode: ${errObj?.code || 'none'}
-NativeMsg: ${errObj?.message || 'none'}
-ShakaCode: ${shakaCode || 'none'} (Cat: ${shakaCategory || 'none'}, Sev: ${shakaSeverity || 'none'})
-Msg: ${msg}
-ShakaData: ${JSON.stringify(shakaData || [])}
-EventDump: ${JSON.stringify(collected)}`;
-
-      console.error(errMsg);
-    };
-
-    v.addEventListener('statechange', onStateChange);
-    v.addEventListener('canplay', onCanPlay);
-    v.addEventListener('error', onError);
-    return () => {
-      clearTimeout(playTimeout);
-      v.removeEventListener('statechange', onStateChange);
-      v.removeEventListener('canplay', onCanPlay);
-      v.removeEventListener('error', onError);
-    };
-  }, [resolvedSrc]);
+  // Redundant autoplay effect removed. Autoplay is now managed via the stable statechange listener for 100% reliability.
 
   // Reflect playback rate on the player.
   useEffect(() => {
@@ -1498,6 +1522,13 @@ EventDump: ${JSON.stringify(collected)}`;
     setUserPaused(false);
     setShowNextEpisodeCard(false);
     hasResumedRef.current = false;
+    autoplayTriggeredRef.current = false;
+
+    // Reset autoplay coordination gates for the new stream
+    playerReadyRef.current = false;
+    tracksSettledRef.current = false;
+    clearTimeout(autoplayScheduledRef.current);
+    autoplayScheduledRef.current = null;
 
     // Clear out refs so tracks change events trigger correctly for new streams
     audiosCache.current = JSON.stringify([{ id: 0, name: "Default" }]);
