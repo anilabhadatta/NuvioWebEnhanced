@@ -4,7 +4,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { fetchExternalIds, fetchNextEpisode, fetchTvDetails, fetchTvSeason, NextEpisodeMeta } from "@/lib/tmdb";
-import { fetchSkipIntervals, SkipInterval } from "@/lib/introDb";
+import { fetchSkipIntervals, fetchAnimeSkipIntervals, SkipInterval } from "@/lib/introDb";
 import { WatchProgress, getWatchProgress, saveWatchProgress, getResumeTime } from "@/lib/watchProgress";
 import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
@@ -830,7 +830,21 @@ export default function MoviPlayerScreen() {
           if (externalIds?.imdb_id) imdbId = externalIds.imdb_id;
         }
         if (imdbId) {
-          const intervals = await fetchSkipIntervals(imdbId, parseInt(season!), parseInt(episode!));
+          let intervals: SkipInterval[] = [];
+          
+          if (playbackSettingsRef.current.skipIntroEnabled) {
+            const introDbSkips = await fetchSkipIntervals(imdbId, parseInt(season!), parseInt(episode!));
+            intervals.push(...introDbSkips);
+          }
+          
+          if (playbackSettingsRef.current.animeSkipEnabled) {
+            const animeSkips = await fetchAnimeSkipIntervals(imdbId, parseInt(episode!));
+            intervals.push(...animeSkips);
+          }
+          
+          // Sort by start time just in case there are overlapping or unsorted segments
+          intervals.sort((a, b) => a.startTime - b.startTime);
+          
           setSkipIntervals(intervals);
         }
       } catch (e) {
