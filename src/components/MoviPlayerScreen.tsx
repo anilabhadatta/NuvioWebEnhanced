@@ -281,13 +281,10 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
       onInit(player);
     }
 
-    // Configure Shaka once after element is fully registered — calling this in
-    // the 'ready' event handler causes the player to re-emit 'ready', which
-    // breaks the autoplay gate in the separate autoplay useEffect.
+    // Wait for movi-player definition to load
     ensureMoviPlayerLoaded().then(() => {
       if (!cancelled) {
         setMoviReady(true);
-        try { configureShakaPerformance(player); } catch (_) { }
       }
     });
 
@@ -472,6 +469,9 @@ export default function MoviPlayerScreen() {
   });
 
   const subtitleStyleRef = useRef(subtitleStyle);
+  // Pending colors while the picker is open — no DOM writes until the picker closes.
+  const [pendingTextColor, setPendingTextColor] = useState<string | null>(null);
+  const [pendingBgColor, setPendingBgColor] = useState<string | null>(null);
 
   const updateSubtitleStyle = (newStyle: SubtitleStyle) => {
     subtitleStyleRef.current = newStyle;
@@ -593,13 +593,15 @@ export default function MoviPlayerScreen() {
     const secSub = prefs.secondarySubtitleLanguage;
 
     let targetMatch: any = null;
+    const isForcedAddon = (t: any) => t.name?.toLowerCase().includes("forced") || t.id?.toLowerCase().includes("forced");
+
     if (prefSub && prefSub !== "None") {
       // SubtitleItem uses .lang (not .language)
-      const match = addonSubtitles.find(t => isLanguageMatch(t.lang || t.id, t.name || t.id, prefSub));
+      const match = addonSubtitles.find(t => !isForcedAddon(t) && isLanguageMatch(t.lang || t.id, t.name || t.id, prefSub));
       if (match) targetMatch = match;
     }
     if (!targetMatch && secSub && secSub !== "None") {
-      const match = addonSubtitles.find(t => isLanguageMatch(t.lang || t.id, t.name || t.id, secSub));
+      const match = addonSubtitles.find(t => !isForcedAddon(t) && isLanguageMatch(t.lang || t.id, t.name || t.id, secSub));
       if (match) targetMatch = match;
     }
     if (!targetMatch && prefs.addonSubtitleStartup === "Always on") {
@@ -941,44 +943,30 @@ export default function MoviPlayerScreen() {
     else if (state === 'ready') {
       setIsBuffering(false);
       setPlayerError(null);
+
+      // Configure Shaka for hardware-accelerated, high-res playback.
+      // We only do this once per player instance to avoid infinite loops,
+      // but doing it here guarantees the internal Shaka instance actually exists.
+      if (!video.__shakaConfigured) {
+        try {
+          if (video.player && typeof video.player.configure === 'function') {
+            configureShakaPerformance(video);
+            video.__shakaConfigured = true;
+          }
+        } catch (_) {}
+      }
+
       try {
         const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
         setIsSoftwareDec(isSw);
       } catch (_) { }
 
-      // Resume watch progress logic
-      if (!hasResumedRef.current && rawMovieId) {
-        hasResumedRef.current = true;
-        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
-        const pType = mediaType || "movie";
-        const pSeason = season ? parseInt(season, 10) : undefined;
-        const pEpisode = episode ? parseInt(episode, 10) : undefined;
-
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
-        if (resumeTime > 5) {
-          try {
-            video.currentTime = resumeTime;
-          } catch (_) { }
-        }
-      }
-
-      // Fallback: if trackschange never fired subtitle tracks (pure HLS/stream with
-      // no embedded subs), unlock subPrefApplied here so addon subtitles can run.
+      // Fallback: if trackschange never fired subtitle tracks, unlock subPrefApplied
       if (!subPrefAppliedRef.current) {
         console.log("[MoviPlayer] ready fired before any subtitle tracks — unlocking addon subtitle selection.");
         subPrefAppliedRef.current = true;
         setSubPrefApplied(true);
         setSelectedSub(-1);
-      }
-
-      // Robust autoplay failsafe: if the player is ready and the user hasn't
-      // intentionally paused, trigger play() directly here. The dedicated autoplay
-      // useEffect uses an 800ms delay which can miss cases where configureShakaPerformance
-      // or a seek caused a second 'ready' emission after the guard already fired.
-      if (!userPaused) {
-        setTimeout(() => {
-          try { if (!userPausedRef.current) video.play?.(); } catch (_) { }
-        }, 50);
       }
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
@@ -1055,7 +1043,10 @@ export default function MoviPlayerScreen() {
 
         if (prefSub && prefSub.toLowerCase() !== "none") {
           let targetId = -1;
+          const isForcedTrack = (t: any) => t.forced === true || t.label?.toLowerCase().includes("forced") || t.language?.toLowerCase().includes("forced");
+          
           const exactMatch = subtitle.find((t: any) => {
+            if (isForcedTrack(t)) return false;
             const match = isLanguageMatch(t.language, t.label, prefSub);
             if (match) console.log(`[MoviPlayer] Found primary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
             return match;
@@ -1064,6 +1055,7 @@ export default function MoviPlayerScreen() {
           if (exactMatch) targetId = exactMatch.id;
           else if (secSub && secSub.toLowerCase() !== "none") {
             const secMatch = subtitle.find((t: any) => {
+              if (isForcedTrack(t)) return false;
               const match = isLanguageMatch(t.language, t.label, secSub);
               if (match) console.log(`[MoviPlayer] Found secondary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
               return match;
@@ -1343,15 +1335,30 @@ export default function MoviPlayerScreen() {
     if (!v) return;
 
     let playTimeout: any = null;
-    let autoplayTriggered = false;
 
     const triggerPlay = () => {
-      if (autoplayTriggered || userPausedRef.current) return;
-      autoplayTriggered = true;
+      if (userPausedRef.current) return;
 
       clearTimeout(playTimeout);
       playTimeout = setTimeout(() => {
         if (userPausedRef.current) return;
+        
+        // Handle resume time seeking right before we play.
+        // Doing this here ensures the pipeline has stabilized after any Shaka reconfigurations,
+        // preventing the seek from being aborted and leaving the player stuck buffering.
+        if (!hasResumedRef.current && rawMovieId) {
+          hasResumedRef.current = true;
+          const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
+          const pType = mediaType || "movie";
+          const pSeason = season ? parseInt(season, 10) : undefined;
+          const pEpisode = episode ? parseInt(episode, 10) : undefined;
+          
+          const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
+          if (resumeTime > 5) {
+            try { v.currentTime = resumeTime; } catch (_) { }
+          }
+        }
+
         const p = typeof v.play === 'function' ? v.play() : null;
         if (p && typeof p.catch === 'function') {
           p.catch((err: any) => {
@@ -1650,7 +1657,7 @@ EventDump: ${JSON.stringify(collected)}`;
       }
 
       const u = encodeURIComponent(stream.url);
-      window.location.replace(
+      router.replace(
         `/player?id=${movieId}&type=${mediaType}&url=${u}&s=${nextEpisode.season}&e=${nextEpisode.episode}`
       );
     } catch (err) {
@@ -1977,6 +1984,31 @@ EventDump: ${JSON.stringify(collected)}`;
   const adjustedSubTime = currentTime - subtitleDelay;
   const activeSubCue = externalSubCues.find(c => adjustedSubTime >= c.start && adjustedSubTime <= c.end) ?? null;
 
+  const prefs = playbackSettingsRef.current;
+  const showOnlyPref = prefs.showOnlyPreferredLanguages;
+  const prefAudio = prefs.preferredAudioLanguage;
+  const secAudio = prefs.secondaryAudioLanguage;
+  const prefSub = prefs.preferredSubtitleLanguage;
+  const secSub = prefs.secondarySubtitleLanguage;
+
+  const filteredAudios = audios.filter(a => {
+    if (!showOnlyPref) return true;
+    if (a.id === selectedAudio) return true;
+    return isLanguageMatch(a.name, a.name, prefAudio) || isLanguageMatch(a.name, a.name, secAudio);
+  });
+
+  const filteredSubtitles = subtitles.filter(s => {
+    if (!showOnlyPref) return true;
+    if (s.id === -1 || s.id === selectedSub) return true;
+    return isLanguageMatch(s.name, s.name, prefSub) || isLanguageMatch(s.name, s.name, secSub);
+  });
+
+  const filteredAddonSubtitles = addonSubtitles.filter(s => {
+    if (!showOnlyPref) return true;
+    if (s.id === activeExternalSub) return true;
+    return isLanguageMatch(s.lang || s.id, s.name || s.id, prefSub) || isLanguageMatch(s.lang || s.id, s.name || s.id, secSub);
+  });
+
   return (
     <div
       ref={containerRef}
@@ -2207,7 +2239,7 @@ EventDump: ${JSON.stringify(collected)}`;
                 </button>
                 {openMenu === "audio" && (
                   <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-48 max-h-64 overflow-y-auto z-50">
-                    {audios.map(a => (
+                    {filteredAudios.map(a => (
                       <button key={a.id} onClick={() => handleAudioChange(a.id)} className={`block w-full text-left px-4 py-3 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
                         {a.name}
                       </button>
@@ -2261,8 +2293,14 @@ EventDump: ${JSON.stringify(collected)}`;
                             <div className="flex items-center gap-1.5 ml-1">
                               <input
                                 type="color"
-                                value={subtitleStyle.color.length >= 7 ? subtitleStyle.color.slice(0, 7) : "#FFFFFF"}
-                                onChange={e => updateSubtitleStyle({ ...subtitleStyle, color: e.target.value.toUpperCase() })}
+                                value={pendingTextColor ?? (subtitleStyle.color.length >= 7 ? subtitleStyle.color.slice(0, 7) : "#FFFFFF")}
+                                onChange={e => setPendingTextColor(e.target.value.toUpperCase())}
+                                onBlur={() => {
+                                  if (pendingTextColor) {
+                                    updateSubtitleStyle({ ...subtitleStyle, color: pendingTextColor });
+                                  }
+                                  setPendingTextColor(null);
+                                }}
                                 className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full"
                               />
                             </div>
@@ -2349,14 +2387,18 @@ EventDump: ${JSON.stringify(collected)}`;
                             <div className="flex items-center gap-1.5 ml-1">
                               <input
                                 type="color"
-                                value={subtitleStyle.bgColor.length >= 7 && subtitleStyle.bgColor !== "transparent" ? subtitleStyle.bgColor.slice(0, 7) : "#000000"}
-                                onChange={e => {
-                                  updateSubtitleStyle({
-                                    ...subtitleStyle,
-                                    bgColor: e.target.value.toUpperCase(),
-                                    bgPct: subtitleStyle.bgPct === 0 ? 75 : subtitleStyle.bgPct,
-                                    edge: "none",
-                                  });
+                                value={pendingBgColor ?? (subtitleStyle.bgColor.length >= 7 && subtitleStyle.bgColor !== "transparent" ? subtitleStyle.bgColor.slice(0, 7) : "#000000")}
+                                onChange={e => setPendingBgColor(e.target.value.toUpperCase())}
+                                onBlur={() => {
+                                  if (pendingBgColor) {
+                                    updateSubtitleStyle({
+                                      ...subtitleStyle,
+                                      bgColor: pendingBgColor,
+                                      bgPct: subtitleStyle.bgPct === 0 ? 75 : subtitleStyle.bgPct,
+                                      edge: "none",
+                                    });
+                                  }
+                                  setPendingBgColor(null);
                                 }}
                                 className="w-6 h-6 p-0 border-0 rounded cursor-pointer bg-transparent [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-full"
                               />
@@ -2450,10 +2492,10 @@ EventDump: ${JSON.stringify(collected)}`;
                           </button>
 
                           {/* Built-in tracks */}
-                          {subtitles.filter(s => s.id !== -1).length > 0 && (
+                          {filteredSubtitles.filter(s => s.id !== -1).length > 0 && (
                             <>
                               <div className="px-4 py-1.5 text-[10px] font-bold text-white/40 uppercase tracking-widest border-b border-white/5">Built-in</div>
-                              {subtitles.filter(s => s.id !== -1).map(s => (
+                              {filteredSubtitles.filter(s => s.id !== -1).map(s => (
                                 <button
                                   key={s.id}
                                   onClick={() => handleSubtitleChange(s.id)}
@@ -2467,10 +2509,10 @@ EventDump: ${JSON.stringify(collected)}`;
                           )}
 
                           {/* Addon tracks */}
-                          {addonSubtitles.length > 0 && (
+                          {filteredAddonSubtitles.length > 0 && (
                             <>
                               <div className="px-4 py-1.5 text-[10px] font-bold text-white/40 uppercase tracking-widest border-b border-white/5">Addons</div>
-                              {addonSubtitles.map(s => (
+                              {filteredAddonSubtitles.map(s => (
                                 <button
                                   key={s.id}
                                   onClick={() => loadExternalSubtitle(s.id, s.url, s.name)}
@@ -2483,7 +2525,7 @@ EventDump: ${JSON.stringify(collected)}`;
                             </>
                           )}
 
-                          {addonSubtitles.length === 0 && subtitles.filter(s => s.id !== -1).length === 0 && (
+                          {filteredAddonSubtitles.length === 0 && filteredSubtitles.filter(s => s.id !== -1).length === 0 && (
                             <div className="px-4 py-6 text-xs text-[#888] text-center">No subtitles available</div>
                           )}
                         </div>
@@ -2728,7 +2770,7 @@ EventDump: ${JSON.stringify(collected)}`;
               if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
               else sessionStorage.removeItem("nuvio.currentAddonUrl");
             } catch { /* ok */ }
-            window.location.replace(route);
+            router.replace(route);
             setShowStreamPicker(false);
             setStreamPickerSeason(null);
             setStreamPickerEpisode(null);
