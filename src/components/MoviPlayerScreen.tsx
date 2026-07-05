@@ -809,12 +809,15 @@ export default function MoviPlayerScreen() {
     loadSubtitles();
   }, [movieId, hasValidTmdbId, resolvedTmdbId, mediaType, season, episode, streamHash]);
 
-  // Load skip intervals exactly once
+  // Load skip intervals exactly once per episode
   const lastFetchedSkipsId = useRef<string | null>(null);
   useEffect(() => {
     if (!movieId) return;
     const isSeries = mediaType === "series" || mediaType === "tv" || season;
     if (!isSeries || !season || !episode) return;
+    
+    // Do not attempt to fetch skips until TMDB ID is resolved (unless we already have an IMDb ID)
+    if (!hasValidTmdbId && !movieId.startsWith("tt")) return;
 
     const fetchId = `${movieId}:${season}:${episode}`;
     if (lastFetchedSkipsId.current === fetchId) return;
