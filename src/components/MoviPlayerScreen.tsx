@@ -1984,6 +1984,31 @@ EventDump: ${JSON.stringify(collected)}`;
   const adjustedSubTime = currentTime - subtitleDelay;
   const activeSubCue = externalSubCues.find(c => adjustedSubTime >= c.start && adjustedSubTime <= c.end) ?? null;
 
+  const prefs = playbackSettingsRef.current;
+  const showOnlyPref = prefs.showOnlyPreferredLanguages;
+  const prefAudio = prefs.preferredAudioLanguage;
+  const secAudio = prefs.secondaryAudioLanguage;
+  const prefSub = prefs.preferredSubtitleLanguage;
+  const secSub = prefs.secondarySubtitleLanguage;
+
+  const filteredAudios = audios.filter(a => {
+    if (!showOnlyPref) return true;
+    if (a.id === selectedAudio) return true;
+    return isLanguageMatch(a.name, a.name, prefAudio) || isLanguageMatch(a.name, a.name, secAudio);
+  });
+
+  const filteredSubtitles = subtitles.filter(s => {
+    if (!showOnlyPref) return true;
+    if (s.id === -1 || s.id === selectedSub) return true;
+    return isLanguageMatch(s.name, s.name, prefSub) || isLanguageMatch(s.name, s.name, secSub);
+  });
+
+  const filteredAddonSubtitles = addonSubtitles.filter(s => {
+    if (!showOnlyPref) return true;
+    if (s.id === activeExternalSub) return true;
+    return isLanguageMatch(s.lang || s.id, s.name || s.id, prefSub) || isLanguageMatch(s.lang || s.id, s.name || s.id, secSub);
+  });
+
   return (
     <div
       ref={containerRef}
@@ -2214,7 +2239,7 @@ EventDump: ${JSON.stringify(collected)}`;
                 </button>
                 {openMenu === "audio" && (
                   <div className="absolute bottom-full right-0 mb-2 bg-[#1e1e1e] border border-white/10 rounded-xl overflow-hidden shadow-2xl min-w-48 max-h-64 overflow-y-auto z-50">
-                    {audios.map(a => (
+                    {filteredAudios.map(a => (
                       <button key={a.id} onClick={() => handleAudioChange(a.id)} className={`block w-full text-left px-4 py-3 text-sm transition-colors ${selectedAudio === a.id ? "bg-white/10 text-white font-bold" : "text-[#bbb] hover:bg-white/5 hover:text-white"}`}>
                         {a.name}
                       </button>
@@ -2467,10 +2492,10 @@ EventDump: ${JSON.stringify(collected)}`;
                           </button>
 
                           {/* Built-in tracks */}
-                          {subtitles.filter(s => s.id !== -1).length > 0 && (
+                          {filteredSubtitles.filter(s => s.id !== -1).length > 0 && (
                             <>
                               <div className="px-4 py-1.5 text-[10px] font-bold text-white/40 uppercase tracking-widest border-b border-white/5">Built-in</div>
-                              {subtitles.filter(s => s.id !== -1).map(s => (
+                              {filteredSubtitles.filter(s => s.id !== -1).map(s => (
                                 <button
                                   key={s.id}
                                   onClick={() => handleSubtitleChange(s.id)}
@@ -2484,10 +2509,10 @@ EventDump: ${JSON.stringify(collected)}`;
                           )}
 
                           {/* Addon tracks */}
-                          {addonSubtitles.length > 0 && (
+                          {filteredAddonSubtitles.length > 0 && (
                             <>
                               <div className="px-4 py-1.5 text-[10px] font-bold text-white/40 uppercase tracking-widest border-b border-white/5">Addons</div>
-                              {addonSubtitles.map(s => (
+                              {filteredAddonSubtitles.map(s => (
                                 <button
                                   key={s.id}
                                   onClick={() => loadExternalSubtitle(s.id, s.url, s.name)}
@@ -2500,7 +2525,7 @@ EventDump: ${JSON.stringify(collected)}`;
                             </>
                           )}
 
-                          {addonSubtitles.length === 0 && subtitles.filter(s => s.id !== -1).length === 0 && (
+                          {filteredAddonSubtitles.length === 0 && filteredSubtitles.filter(s => s.id !== -1).length === 0 && (
                             <div className="px-4 py-6 text-xs text-[#888] text-center">No subtitles available</div>
                           )}
                         </div>
