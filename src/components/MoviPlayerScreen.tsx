@@ -593,13 +593,15 @@ export default function MoviPlayerScreen() {
     const secSub = prefs.secondarySubtitleLanguage;
 
     let targetMatch: any = null;
+    const isForcedAddon = (t: any) => t.name?.toLowerCase().includes("forced") || t.id?.toLowerCase().includes("forced");
+
     if (prefSub && prefSub !== "None") {
       // SubtitleItem uses .lang (not .language)
-      const match = addonSubtitles.find(t => isLanguageMatch(t.lang || t.id, t.name || t.id, prefSub));
+      const match = addonSubtitles.find(t => !isForcedAddon(t) && isLanguageMatch(t.lang || t.id, t.name || t.id, prefSub));
       if (match) targetMatch = match;
     }
     if (!targetMatch && secSub && secSub !== "None") {
-      const match = addonSubtitles.find(t => isLanguageMatch(t.lang || t.id, t.name || t.id, secSub));
+      const match = addonSubtitles.find(t => !isForcedAddon(t) && isLanguageMatch(t.lang || t.id, t.name || t.id, secSub));
       if (match) targetMatch = match;
     }
     if (!targetMatch && prefs.addonSubtitleStartup === "Always on") {
@@ -1041,7 +1043,10 @@ export default function MoviPlayerScreen() {
 
         if (prefSub && prefSub.toLowerCase() !== "none") {
           let targetId = -1;
+          const isForcedTrack = (t: any) => t.forced === true || t.label?.toLowerCase().includes("forced") || t.language?.toLowerCase().includes("forced");
+          
           const exactMatch = subtitle.find((t: any) => {
+            if (isForcedTrack(t)) return false;
             const match = isLanguageMatch(t.language, t.label, prefSub);
             if (match) console.log(`[MoviPlayer] Found primary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
             return match;
@@ -1050,6 +1055,7 @@ export default function MoviPlayerScreen() {
           if (exactMatch) targetId = exactMatch.id;
           else if (secSub && secSub.toLowerCase() !== "none") {
             const secMatch = subtitle.find((t: any) => {
+              if (isForcedTrack(t)) return false;
               const match = isLanguageMatch(t.language, t.label, secSub);
               if (match) console.log(`[MoviPlayer] Found secondary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
               return match;
