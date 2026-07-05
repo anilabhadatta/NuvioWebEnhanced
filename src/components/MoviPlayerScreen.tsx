@@ -222,6 +222,37 @@ function configureShakaPerformance(moviElement: any) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Force a clean stereo downmix for the audio pipeline.
+// ---------------------------------------------------------------------------
+// movi-player decodes DTS / TrueHD / AC3 / EAC3 and any >2-channel audio with
+// its FFmpeg-WASM software decoder (correct), but then decides its output
+// channel layout from AudioContext.destination.maxChannelCount:
+//
+//   sourceCh > 2 && maxChannelCount >= sourceCh
+//       ? emit discrete 5.1/7.1 (setDownmix(false), setOutputChannelCount(N))
+//       : downmix to stereo       (setDownmix(true),  setOutputChannelCount(2))
+//
+// On Windows/HDMI (and some drivers) maxChannelCount is reported as 6/8 even
+// when the real output is stereo. movi then emits discrete surround channels
+// and copies the decoded planes channel-by-channel — on an actual stereo
+// device this comes out as the "electronic noise / jitter" heard on TrueHD/DTS
+// content. Stereo downmix is the correct, stable path for browser playback and
+// is a no-op for content that is already stereo, so we force it unconditionally
+// rather than trying to detect specific codecs.
+function forceStereoDownmix(moviElement: any) {
+  try {
+    const core = moviElement?.player;
+    if (!core) return;
+    if (core.audioDecoder && typeof core.audioDecoder.setDownmix === "function") {
+      core.audioDecoder.setDownmix(true);
+    }
+    if (core.audioRenderer && typeof core.audioRenderer.setOutputChannelCount === "function") {
+      core.audioRenderer.setOutputChannelCount(2);
+    }
+  } catch { /* movi internals not ready yet — will be re-applied on next hook */ }
+}
+
 // Singleton promise that resolves once movi-player has been loaded into the
 // page. We bypass Next.js's bundler for this dependency because the SWC
 // minifier produces invalid JavaScript ("octal escape sequences are not
@@ -229,7 +260,7 @@ function configureShakaPerformance(moviElement: any) {
 // bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
 // code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
 // cross-origin so it's compatible with our COEP: require-corp headers.
-const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.2/dist/element.js";
+const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.3/dist/element.js";
 
 let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
@@ -1042,6 +1073,9 @@ export default function MoviPlayerScreen() {
       // NOTE: Do NOT sync volume/muted here — doing so on every buffering→playing
       // transition causes audio jitter. Volume is synced only on explicit user actions
       // (togglePlay, handleVolumeChange, keyboard shortcuts).
+      // Safety net: ensure the audio pipeline stays on a stable stereo downmix
+      // (guards against discrete multichannel noise on TrueHD/DTS sources).
+      forceStereoDownmix(video);
       try {
         const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
         setIsSoftwareDec(isSw);
@@ -1243,6 +1277,14 @@ export default function MoviPlayerScreen() {
       if (!didUpdateAudioPrefs && active && selectedAudio !== active.id) {
         setSelectedAudio(active.id);
       }
+
+      // Force stereo downmix once tracks are configured. Re-apply on short
+      // delays so it lands AFTER movi-player's own async decoder configuration
+      // (which otherwise re-enables discrete multichannel output → noise on
+      // TrueHD/DTS with stereo output devices).
+      forceStereoDownmix(video);
+      setTimeout(() => forceStereoDownmix(video), 250);
+      setTimeout(() => forceStereoDownmix(video), 1000);
     }
     if (subtitle?.length > 0) {
       const newSubs = [{ id: -1, name: 'None' }, ...subtitle.map((t: any, i: number) => {
@@ -1947,6 +1989,12 @@ EventDump: ${JSON.stringify(collected)}`;
           const curr = video.currentTime;
           video.currentTime = curr;
         }
+
+        // Switching tracks reconfigures the audio decoder, which resets the
+        // channel layout — re-force stereo downmix after it settles.
+        forceStereoDownmix(video);
+        setTimeout(() => forceStereoDownmix(video), 250);
+        setTimeout(() => forceStereoDownmix(video), 800);
       } catch (_) {
         // Silently fail track switch
       }
