@@ -28,7 +28,7 @@ export default function PlaybackSection() {
     if (!settings) return;
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
-    
+
     // Auto save with debounce or immediately
     setSaving(true);
     pushPlaybackSettings(newSettings).then(() => setSaving(false));
@@ -44,7 +44,7 @@ export default function PlaybackSection() {
         <h2 className="text-2xl font-bold text-white">Playback</h2>
         {saving && <span className="text-xs text-[#888]">Saving...</span>}
       </div>
-      
+
       {/* Engine Selection */}
       <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-8">
         <p className="text-white font-semibold text-sm">Player Engine</p>
@@ -57,15 +57,14 @@ export default function PlaybackSection() {
               localStorage.setItem("nuvio.player_engine", "movi-player");
               setPlayerEngine("movi-player");
             }}
-            className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
-              playerEngine === "movi-player"
+            className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${playerEngine === "movi-player"
                 ? "bg-white text-black border-white"
                 : "bg-white/5 text-white border-white/10 hover:bg-white/10"
-            }`}
+              }`}
           >
             movi-player (Default)
           </button>
-          <button
+          {/* <button
             onClick={() => {
               localStorage.setItem("nuvio.player_engine", "PlaysVideo");
               setPlayerEngine("PlaysVideo");
@@ -90,20 +89,20 @@ export default function PlaybackSection() {
             }`}
           >
             vlc.js
-          </button>
+          </button> */}
         </div>
       </div>
 
       <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Subtitle and Audio</p>
       <p className="text-[#888] text-xs mb-4">Preferred audio and subtitle language behavior</p>
-      
+
       <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl divide-y divide-white/5 mb-8">
         {/* Preferred Audio */}
         <div className="px-5 py-4 flex items-center justify-between">
           <div>
             <p className="text-white font-semibold text-sm">Preferred Audio Language</p>
           </div>
-          <select 
+          <select
             className="bg-[#222] border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none w-48"
             value={settings.preferredAudioLanguage}
             onChange={e => updateSetting("preferredAudioLanguage", e.target.value)}
@@ -118,7 +117,7 @@ export default function PlaybackSection() {
           <div>
             <p className="text-white font-semibold text-sm">Secondary Audio Language</p>
           </div>
-          <select 
+          <select
             className="bg-[#222] border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none w-48"
             value={settings.secondaryAudioLanguage}
             onChange={e => updateSetting("secondaryAudioLanguage", e.target.value)}
@@ -133,7 +132,7 @@ export default function PlaybackSection() {
           <div>
             <p className="text-white font-semibold text-sm">Preferred subtitle language</p>
           </div>
-          <select 
+          <select
             className="bg-[#222] border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none w-48"
             value={settings.preferredSubtitleLanguage}
             onChange={e => updateSetting("preferredSubtitleLanguage", e.target.value)}
@@ -148,7 +147,7 @@ export default function PlaybackSection() {
           <div>
             <p className="text-white font-semibold text-sm">Secondary Preferred Language</p>
           </div>
-          <select 
+          <select
             className="bg-[#222] border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none w-48"
             value={settings.secondarySubtitleLanguage}
             onChange={e => updateSetting("secondarySubtitleLanguage", e.target.value)}
@@ -175,7 +174,7 @@ export default function PlaybackSection() {
           <div>
             <p className="text-white font-semibold text-sm">Addon Subtitle Startup</p>
           </div>
-          <select 
+          <select
             className="bg-[#222] border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none w-48"
             value={settings.addonSubtitleStartup}
             onChange={e => updateSetting("addonSubtitleStartup", e.target.value)}
@@ -195,9 +194,9 @@ export default function PlaybackSection() {
             <p className="text-white font-semibold text-sm">Subtitle Size</p>
           </div>
           <div className="flex items-center gap-4">
-            <input 
-              type="range" min="8" max="48" 
-              value={settings.subtitleSize} 
+            <input
+              type="range" min="8" max="48"
+              value={settings.subtitleSize}
               onChange={e => updateSetting("subtitleSize", Number(e.target.value))}
               className="w-48 accent-white cursor-pointer"
             />
@@ -211,9 +210,9 @@ export default function PlaybackSection() {
             <p className="text-white font-semibold text-sm">Vertical Offset</p>
           </div>
           <div className="flex items-center gap-4">
-            <input 
-              type="range" min="0" max="100" 
-              value={settings.verticalOffset} 
+            <input
+              type="range" min="0" max="100"
+              value={settings.verticalOffset}
               onChange={e => updateSetting("verticalOffset", Number(e.target.value))}
               className="w-48 accent-white cursor-pointer"
             />
@@ -239,8 +238,8 @@ export default function PlaybackSection() {
             <p className="text-[#888] text-xs mt-0.5">Use app color strings such as #FFFFFFFF.</p>
           </div>
           <div className="flex items-center gap-2">
-            <input 
-              type="color" 
+            <input
+              type="color"
               value={settings.subtitleTextColor.length >= 7 ? settings.subtitleTextColor.slice(0, 7) : "#FFFFFF"}
               onChange={e => {
                 const alpha = settings.subtitleTextColor.length === 9 ? settings.subtitleTextColor.slice(7) : "FF";
@@ -248,8 +247,8 @@ export default function PlaybackSection() {
               }}
               className="w-8 h-8 rounded cursor-pointer bg-transparent border-0 p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-md"
             />
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={settings.subtitleTextColor}
               onChange={e => updateSetting("subtitleTextColor", e.target.value)}
               className="bg-[#222] border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none w-36 font-mono"
@@ -263,8 +262,8 @@ export default function PlaybackSection() {
             <p className="text-white font-semibold text-sm">Background Color</p>
           </div>
           <div className="flex items-center gap-2">
-            <input 
-              type="color" 
+            <input
+              type="color"
               value={settings.subtitleBackgroundColor.length >= 7 ? settings.subtitleBackgroundColor.slice(0, 7) : "#000000"}
               onChange={e => {
                 const alpha = settings.subtitleBackgroundColor.length === 9 ? settings.subtitleBackgroundColor.slice(7) : "00";
@@ -272,8 +271,8 @@ export default function PlaybackSection() {
               }}
               className="w-8 h-8 rounded cursor-pointer bg-transparent border-0 p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch]:rounded-md"
             />
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={settings.subtitleBackgroundColor}
               onChange={e => updateSetting("subtitleBackgroundColor", e.target.value)}
               className="bg-[#222] border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none w-36 font-mono"
@@ -292,7 +291,7 @@ export default function PlaybackSection() {
           </label>
         </div>
       </div>
-      
+
       <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-8">
         <p className="text-white font-semibold text-sm">External player</p>
         <p className="text-[#888] text-xs mt-1">

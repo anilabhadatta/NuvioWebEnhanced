@@ -17,6 +17,7 @@ export default function PlayerScreen() {
     return <div className="w-full h-screen bg-black" />;
   }
 
+  /*
   if (engine === "PlaysVideo") {
     return <PlaysVideoPlayerScreen />;
   }
@@ -24,6 +25,7 @@ export default function PlayerScreen() {
   if (engine === "vlc.js") {
     return <VlcPlayerScreen />;
   }
+  */
 
   return <MoviPlayerScreen />;
 }
