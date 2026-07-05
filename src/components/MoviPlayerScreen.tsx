@@ -281,13 +281,10 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
       onInit(player);
     }
 
-    // Configure Shaka once after element is fully registered — calling this in
-    // the 'ready' event handler causes the player to re-emit 'ready', which
-    // breaks the autoplay gate in the separate autoplay useEffect.
+    // Wait for movi-player definition to load
     ensureMoviPlayerLoaded().then(() => {
       if (!cancelled) {
         setMoviReady(true);
-        try { configureShakaPerformance(player); } catch (_) { }
       }
     });
 
@@ -944,44 +941,30 @@ export default function MoviPlayerScreen() {
     else if (state === 'ready') {
       setIsBuffering(false);
       setPlayerError(null);
+
+      // Configure Shaka for hardware-accelerated, high-res playback.
+      // We only do this once per player instance to avoid infinite loops,
+      // but doing it here guarantees the internal Shaka instance actually exists.
+      if (!video.__shakaConfigured) {
+        try {
+          if (video.player && typeof video.player.configure === 'function') {
+            configureShakaPerformance(video);
+            video.__shakaConfigured = true;
+          }
+        } catch (_) {}
+      }
+
       try {
         const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
         setIsSoftwareDec(isSw);
       } catch (_) { }
 
-      // Resume watch progress logic
-      if (!hasResumedRef.current && rawMovieId) {
-        hasResumedRef.current = true;
-        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
-        const pType = mediaType || "movie";
-        const pSeason = season ? parseInt(season, 10) : undefined;
-        const pEpisode = episode ? parseInt(episode, 10) : undefined;
-
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
-        if (resumeTime > 5) {
-          try {
-            video.currentTime = resumeTime;
-          } catch (_) { }
-        }
-      }
-
-      // Fallback: if trackschange never fired subtitle tracks (pure HLS/stream with
-      // no embedded subs), unlock subPrefApplied here so addon subtitles can run.
+      // Fallback: if trackschange never fired subtitle tracks, unlock subPrefApplied
       if (!subPrefAppliedRef.current) {
         console.log("[MoviPlayer] ready fired before any subtitle tracks — unlocking addon subtitle selection.");
         subPrefAppliedRef.current = true;
         setSubPrefApplied(true);
         setSelectedSub(-1);
-      }
-
-      // Robust autoplay failsafe: if the player is ready and the user hasn't
-      // intentionally paused, trigger play() directly here. The dedicated autoplay
-      // useEffect uses an 800ms delay which can miss cases where configureShakaPerformance
-      // or a seek caused a second 'ready' emission after the guard already fired.
-      if (!userPaused) {
-        setTimeout(() => {
-          try { if (!userPausedRef.current) video.play?.(); } catch (_) { }
-        }, 50);
       }
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
@@ -1346,15 +1329,30 @@ export default function MoviPlayerScreen() {
     if (!v) return;
 
     let playTimeout: any = null;
-    let autoplayTriggered = false;
 
     const triggerPlay = () => {
-      if (autoplayTriggered || userPausedRef.current) return;
-      autoplayTriggered = true;
+      if (userPausedRef.current) return;
 
       clearTimeout(playTimeout);
       playTimeout = setTimeout(() => {
         if (userPausedRef.current) return;
+        
+        // Handle resume time seeking right before we play.
+        // Doing this here ensures the pipeline has stabilized after any Shaka reconfigurations,
+        // preventing the seek from being aborted and leaving the player stuck buffering.
+        if (!hasResumedRef.current && rawMovieId) {
+          hasResumedRef.current = true;
+          const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
+          const pType = mediaType || "movie";
+          const pSeason = season ? parseInt(season, 10) : undefined;
+          const pEpisode = episode ? parseInt(episode, 10) : undefined;
+          
+          const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
+          if (resumeTime > 5) {
+            try { v.currentTime = resumeTime; } catch (_) { }
+          }
+        }
+
         const p = typeof v.play === 'function' ? v.play() : null;
         if (p && typeof p.catch === 'function') {
           p.catch((err: any) => {
