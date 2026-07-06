@@ -260,11 +260,31 @@ function forceStereoDownmix(moviElement: any) {
 // bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
 // code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
 // cross-origin so it's compatible with our COEP: require-corp headers.
-const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.3/dist/element.js";
+const MOVI_PLAYER_CDN_URL = "/element.js";
 
 let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
+
+  // WASM Resizable Memory Fix: Newer Emscripten builds export WebAssembly.Memory 
+  // as a resizable ArrayBuffer. TextDecoder in Chromium throws an error if it is
+  // passed a view of a resizable buffer. We monkey-patch TextDecoder to automatically
+  // create a non-resizable copy of the buffer slice before decoding.
+  if (!(window as any).__nuvio_textdecoder_patched) {
+    (window as any).__nuvio_textdecoder_patched = true;
+    const OriginalTextDecoder = window.TextDecoder;
+    if (OriginalTextDecoder) {
+      const originalDecode = OriginalTextDecoder.prototype.decode;
+      OriginalTextDecoder.prototype.decode = function(input?: BufferSource, options?: TextDecodeOptions) {
+        if (input && ArrayBuffer.isView(input)) {
+          // Copy the view into a new static Uint8Array to detach it from the resizable WASM memory
+          input = new Uint8Array((input as ArrayBufferView).buffer, (input as ArrayBufferView).byteOffset, (input as ArrayBufferView).byteLength).slice();
+        }
+        return originalDecode.call(this, input, options);
+      };
+    }
+  }
+
   if (moviPlayerLoadPromise) return moviPlayerLoadPromise;
   if (customElements.get("movi-player")) return Promise.resolve();
   moviPlayerLoadPromise = new Promise<void>((resolve, reject) => {
