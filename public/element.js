@@ -74,12 +74,12 @@ function E(t2) {
 }
 const u = /* @__PURE__ */ new Set();
 function d(A2, t2) {
-  const v2 = new DataView(A2.HEAPU8.buffer, t2, f), n2 = A2.HEAPU8.subarray(t2 + 12, t2 + 12 + 32), b2 = new TextDecoder().decode(n2.subarray(0, n2.indexOf(0))), j2 = A2.HEAPU8.subarray(t2 + 100, t2 + 100 + 8), s2 = new TextDecoder().decode(j2.subarray(0, j2.indexOf(0))), l2 = A2.HEAPU8.subarray(t2 + 108, t2 + 108 + 64), E2 = new TextDecoder().decode(l2.subarray(0, l2.indexOf(0)));
+  const v2 = new DataView(A2.HEAPU8.buffer, t2, f), n2 = A2.HEAPU8.subarray(t2 + 12, t2 + 12 + 32), b2 = new TextDecoder().decode(n2.slice(0, n2.indexOf(0))), j2 = A2.HEAPU8.subarray(t2 + 100, t2 + 100 + 8), s2 = new TextDecoder().decode(j2.slice(0, j2.indexOf(0))), l2 = A2.HEAPU8.subarray(t2 + 108, t2 + 108 + 64), E2 = new TextDecoder().decode(l2.slice(0, l2.indexOf(0)));
   return { index: v2.getInt32(0, true), type: v2.getInt32(4, true), codecId: v2.getInt32(8, true), codecName: b2, width: v2.getInt32(44, true), height: v2.getInt32(48, true), frameRate: v2.getFloat64(56, true), channels: v2.getInt32(64, true), sampleRate: v2.getInt32(68, true), duration: v2.getFloat64(72, true), bitRate: Number(v2.getBigInt64(80, true)), extradataSize: v2.getInt32(88, true), profile: v2.getInt32(92, true), level: v2.getInt32(96, true), language: s2 || "", label: E2 || "", rotation: v2.getInt32(172, true), colorPrimaries: c(A2, t2 + 176, 32), colorTransfer: c(A2, t2 + 208, 32), colorMatrix: c(A2, t2 + 240, 32), pixelFormat: c(A2, t2 + 272, 32), colorRange: c(A2, t2 + 304, 32), projection: v2.getInt32(336, true), isAttachedPic: 0 !== v2.getInt32(340, true) };
 }
 function c(A2, t2, v2) {
   const n2 = A2.HEAPU8.subarray(t2, t2 + v2), b2 = n2.indexOf(0);
-  return new TextDecoder().decode(n2.subarray(0, b2 >= 0 ? b2 : v2));
+  return new TextDecoder().decode(n2.slice(0, b2 >= 0 ? b2 : v2));
 }
 class WasmBindings {
   module;
@@ -250,7 +250,7 @@ class WasmBindings {
       for (let n2 = 0; n2 < A2; n2++) {
         const A3 = this.module._movi_get_chapter_start(this.contextPtr, n2), b2 = this.module._movi_get_chapter_end(this.contextPtr, n2);
         this.module.HEAPU8.fill(0, v2, v2 + 256), this.module._movi_get_chapter_title(this.contextPtr, n2, v2, 256);
-        const j2 = this.module.HEAPU8.subarray(v2, v2 + 256), s2 = j2.indexOf(0), f2 = new TextDecoder().decode(j2.subarray(0, s2 > 0 ? s2 : 256));
+        const j2 = this.module.HEAPU8.subarray(v2, v2 + 256), s2 = j2.indexOf(0), f2 = new TextDecoder().decode(j2.slice(0, s2 > 0 ? s2 : 256));
         t2.push({ title: f2 || `Chapter ${n2 + 1}`, start: A3 >= 0 ? A3 : 0, end: b2 >= 0 ? b2 : 0 });
       }
     } finally {
@@ -335,7 +335,7 @@ class WasmBindings {
       const t2 = this.module.ccall("movi_get_subtitle_text", "number", ["number", "number", "number"], [this.contextPtr, A2, 4096], { async: false });
       if (v.debug(l, `getSubtitleText: C function returned ${t2}`), t2 < 0) return v.warn(l, `getSubtitleText: C function returned error ${t2}`), null;
       if (0 === t2) return v.debug(l, "getSubtitleText: No text extracted (result=0) - might be empty subtitle or no rectangles"), null;
-      const n2 = this.module.HEAPU8.subarray(A2, A2 + t2), b2 = new TextDecoder().decode(n2), j2 = b2?.trim();
+      const n2 = this.module.HEAPU8.slice(A2, A2 + t2), b2 = new TextDecoder().decode(n2), j2 = b2?.trim();
       return j2 && 0 !== j2.length ? (v.debug(l, `getSubtitleText: Extracted text length=${t2}, trimmed length=${j2.length}, text="${j2.substring(0, 50)}..."`), j2) : (v.debug(l, `getSubtitleText: Extracted text is empty after trimming (raw length=${t2})`), null);
     } finally {
       this.module._free(A2);
@@ -365,7 +365,7 @@ class WasmBindings {
       for (let A3 = 0; A3 < t2; A3++) {
         const t3 = this.module.ccall("movi_get_prefetched_cue", "number", ["number", "number", "number", "number", "number", "number"], [this.contextPtr, A3, b2, j2, s2, 8192], { async: false });
         if (t3 < 0) continue;
-        const v2 = new DataView(this.module.HEAPU8.buffer, b2, 8).getFloat64(0, true), f2 = new DataView(this.module.HEAPU8.buffer, j2, 8).getFloat64(0, true), l2 = this.module.HEAPU8.subarray(s2, s2 + t3), E2 = new TextDecoder().decode(l2).trim();
+        const v2 = new DataView(this.module.HEAPU8.buffer, b2, 8).getFloat64(0, true), f2 = new DataView(this.module.HEAPU8.buffer, j2, 8).getFloat64(0, true), l2 = this.module.HEAPU8.slice(s2, s2 + t3), E2 = new TextDecoder().decode(l2).trim();
         E2 && n2.push({ start: v2, end: f2, text: E2 });
       }
     } finally {
