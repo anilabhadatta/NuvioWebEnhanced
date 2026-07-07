@@ -50727,6 +50727,9 @@ class MoviAudioDecoder {
   setBindings(A2) {
     this.bindings = A2;
   }
+  get usesSoftware() {
+    return this.useSoftware;
+  }
   async configure(A2, t2) {
     if (this.currentTrack = A2, this.useSoftware = false, this.hasTriedSoftwareFallback = false, this.swDecoder && (this.swDecoder.close(), this.swDecoder = null), this.needsSoftwareDecoding(A2.codec)) return v.info(z, `Forcing software decoding for codec: ${A2.codec}`), this.initSoftwareDecoder();
     if (A2.channels > 2) return v.info(z, `Forcing software decoding for multi-channel audio: ${A2.channels} channels`), this.initSoftwareDecoder();
@@ -52109,7 +52112,7 @@ class AudioRenderer {
     }
     const f2 = this.audioContext.createBufferSource();
     f2.buffer = j2, f2.connect(this.gainNode), f2.playbackRate.value = s2 ? 1 : this._playbackRate;
-    const l2 = this.audioContext.currentTime, E2 = l2 + (this.hasFirstBuffer ? 5e-3 : 0.5);
+    const l2 = this.audioContext.currentTime, E2 = l2 + 5e-3;
     if (this.scheduledTime < l2) {
       if (this._stableAudio && this.hasFirstBuffer && this.audioContext) {
         const A3 = l2 - this.scheduledTime;
@@ -108331,7 +108334,7 @@ class MoviPlayer extends j {
     const A2 = this.stateManager.getState();
     if ("buffering" === A2 || "seeking" === A2) return this.wasPlayingBeforeRebuffer = true, void v.info(bj, `Play requested during ${A2} — will resume when ready`);
     if ("ended" === A2 && this.demuxer) {
-      v.debug(bj, "Replaying from beginning after ended state"), this.requestWakeLock(), this.wasPlayingBeforeSeek = true;
+      v.debug(bj, "Replaying from beginning after ended state"), this.requestWakeLock(), this.wasPlayingBeforeSeek = true, this._playStartTime = performance.now();
       try {
         if (await this.seek(0, { suppressSpinner: true }), this.nativeAudioEl && this.nativeAudioEl.paused) {
           this.nativeAudioEl.playbackRate = this.clock.getPlaybackRate();
@@ -108433,8 +108436,8 @@ class MoviPlayer extends j {
     if ((this.wasPlayingBeforeSeek || this.wasPlayingBeforeRebuffer) && b2) v.info(bj, "Seek forced-complete with no video frame yet — buffering until first frame"), this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), 0 === this._playStartTime && (this._playStartTime = performance.now());
     else if (this.wasPlayingBeforeSeek || this.wasPlayingBeforeRebuffer) {
       this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = false, 0 === this._playStartTime && (this._playStartTime = performance.now());
-      const A3 = !this.disableAudio && !!this.trackManager.getActiveAudioTrack();
-      if (!this._coldAudioPrimed && A3) {
+      const A3 = (this.trackManager.getActiveAudioTrack()?.codec ?? "").toLowerCase(), t3 = /truehd|mlp|dts|dca/.test(A3), n3 = !this.disableAudio && t3 && this.audioDecoder.usesSoftware;
+      if (!this._coldAudioPrimed && n3) {
         if (this._coldAudioPrimed = true, this.audioRenderer.play(), this.pendingAudioPackets.length > 0) {
           for (const A4 of this.pendingAudioPackets) this.audioDecoder.decode(A4.data, A4.timestamp, A4.keyframe);
           this.pendingAudioPackets = [];
