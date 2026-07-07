@@ -44,3 +44,37 @@ export async function fetchSkipIntervals(imdbId: string, season: number, episode
     return [];
   }
 }
+
+export async function fetchAnimeSkipIntervals(imdbId: string, episode: number): Promise<SkipInterval[]> {
+  try {
+    const url = `/api/aniskip?imdb_id=${imdbId}&episode=${episode}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    
+    const data = await res.json();
+    if (!data.results || !Array.isArray(data.results)) return [];
+    
+    const intervals: SkipInterval[] = [];
+    
+    for (const item of data.results) {
+      if (item.interval && Number.isFinite(item.interval.startTime) && Number.isFinite(item.interval.endTime)) {
+        let mappedType: SkipInterval["type"] = "intro";
+        if (item.skipType === "ed" || item.skipType === "mixed-ed") {
+          mappedType = "outro";
+        } else if (item.skipType === "recap") {
+          mappedType = "recap";
+        }
+        intervals.push({
+          startTime: item.interval.startTime,
+          endTime: item.interval.endTime,
+          type: mappedType
+        });
+      }
+    }
+    
+    return intervals.sort((a, b) => a.startTime - b.startTime);
+  } catch (err) {
+    console.error("Failed to fetch AniSkip segments", err);
+    return [];
+  }
+}

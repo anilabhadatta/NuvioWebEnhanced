@@ -16,6 +16,9 @@ export interface PlaybackSettings {
   subtitleTextColor: string;
   subtitleBackgroundColor: string;
   subtitleOutline: boolean;
+
+  skipIntroEnabled: boolean;
+  animeSkipEnabled: boolean;
 }
 
 export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
@@ -33,6 +36,9 @@ export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
   subtitleTextColor: "#FFFFFFFF",
   subtitleBackgroundColor: "#00000000",
   subtitleOutline: false,
+
+  skipIntroEnabled: true,
+  animeSkipEnabled: false,
 };
 
 export function getLocalPlaybackSettings(): PlaybackSettings {
@@ -82,6 +88,9 @@ export async function pullPlaybackSettings(): Promise<PlaybackSettings> {
       subtitleTextColor: getValue("subtitle_text_color", DEFAULT_PLAYBACK_SETTINGS.subtitleTextColor),
       subtitleBackgroundColor: getValue("subtitle_background_color", DEFAULT_PLAYBACK_SETTINGS.subtitleBackgroundColor),
       subtitleOutline: getValue("subtitle_outline_enabled", DEFAULT_PLAYBACK_SETTINGS.subtitleOutline),
+
+      skipIntroEnabled: getValue("skip_intro_enabled", DEFAULT_PLAYBACK_SETTINGS.skipIntroEnabled),
+      animeSkipEnabled: getValue("anime_skip_enabled", DEFAULT_PLAYBACK_SETTINGS.animeSkipEnabled),
     };
     
     localStorage.setItem(`nuvio_playback_settings_${profileId}`, JSON.stringify(finalSettings));
@@ -142,6 +151,9 @@ export async function pushPlaybackSettings(settings: PlaybackSettings): Promise<
     ps["subtitle_text_color"] = encodeString(settings.subtitleTextColor);
     ps["subtitle_background_color"] = encodeString(settings.subtitleBackgroundColor);
     ps["subtitle_outline_enabled"] = encodeBoolean(settings.subtitleOutline);
+
+    ps["skip_intro_enabled"] = encodeBoolean(settings.skipIntroEnabled);
+    ps["anime_skip_enabled"] = encodeBoolean(settings.animeSkipEnabled);
 
     const { error } = await supabase.rpc("sync_push_profile_settings_blob", {
       p_platform: "mobile",
