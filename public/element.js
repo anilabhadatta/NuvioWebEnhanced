@@ -335,7 +335,7 @@ class WasmBindings {
       const t2 = this.module.ccall("movi_get_subtitle_text", "number", ["number", "number", "number"], [this.contextPtr, A2, 4096], { async: false });
       if (v.debug(l, `getSubtitleText: C function returned ${t2}`), t2 < 0) return v.warn(l, `getSubtitleText: C function returned error ${t2}`), null;
       if (0 === t2) return v.debug(l, "getSubtitleText: No text extracted (result=0) - might be empty subtitle or no rectangles"), null;
-      const n2 = this.module.HEAPU8.slice(A2, A2 + t2), b2 = new TextDecoder().decode(n2), j2 = b2?.trim();
+      const n2 = this.module.HEAPU8.subarray(A2, A2 + t2), b2 = new TextDecoder().decode(n2.slice()), j2 = b2?.trim();
       return j2 && 0 !== j2.length ? (v.debug(l, `getSubtitleText: Extracted text length=${t2}, trimmed length=${j2.length}, text="${j2.substring(0, 50)}..."`), j2) : (v.debug(l, `getSubtitleText: Extracted text is empty after trimming (raw length=${t2})`), null);
     } finally {
       this.module._free(A2);
@@ -365,7 +365,7 @@ class WasmBindings {
       for (let A3 = 0; A3 < t2; A3++) {
         const t3 = this.module.ccall("movi_get_prefetched_cue", "number", ["number", "number", "number", "number", "number", "number"], [this.contextPtr, A3, b2, j2, s2, 8192], { async: false });
         if (t3 < 0) continue;
-        const v2 = new DataView(this.module.HEAPU8.buffer, b2, 8).getFloat64(0, true), f2 = new DataView(this.module.HEAPU8.buffer, j2, 8).getFloat64(0, true), l2 = this.module.HEAPU8.slice(s2, s2 + t3), E2 = new TextDecoder().decode(l2).trim();
+        const v2 = new DataView(this.module.HEAPU8.buffer, b2, 8).getFloat64(0, true), f2 = new DataView(this.module.HEAPU8.buffer, j2, 8).getFloat64(0, true), l2 = this.module.HEAPU8.subarray(s2, s2 + t3), E2 = new TextDecoder().decode(l2.slice()).trim();
         E2 && n2.push({ start: v2, end: f2, text: E2 });
       }
     } finally {
