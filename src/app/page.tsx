@@ -5,10 +5,30 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/useAuth";
 import { supabase } from "@/lib/supabase";
+import Toast from "@/components/Toast";
 
 export default function Home() {
   const router = useRouter();
   const { isAuthenticated, loading, displayName } = useAuth();
+  const [showToast, setShowToast] = React.useState(false);
+
+  React.useEffect(() => {
+    if (showToast) {
+      const timer = setTimeout(() => {
+        try { localStorage.setItem("nuvio_anon", "1"); } catch { /* ignore */ }
+        router.push("/dashboard");
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [showToast, router]);
+
+  const handleLaunchDashboard = () => {
+    if (isAuthenticated) {
+      router.push("/dashboard");
+    } else {
+      setShowToast(true);
+    }
+  };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -71,11 +91,8 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row items-center gap-3">
           <button
-            onClick={() => {
-              try { localStorage.setItem("nuvio_anon", "1"); } catch { /* ignore */ }
-              router.push("/dashboard");
-            }}
-            className="px-8 py-3.5 rounded-xl bg-white hover:bg-gray-100 text-black font-bold text-base transition-all shadow-lg"
+            onClick={handleLaunchDashboard}
+            className="px-8 py-3.5 rounded-xl bg-white hover:bg-gray-100 text-black font-bold text-base transition-all shadow-lg cursor-pointer"
           >
             Launch Dashboard
           </button>
@@ -97,6 +114,14 @@ export default function Home() {
       <footer className="text-center text-[#555] text-xs py-6">
         Powered by Nuvio · Tapframe &amp; friends
       </footer>
+
+      {showToast && (
+        <Toast
+          message="Entering Guest Mode. Redirecting..."
+          duration={1500}
+          onClose={() => setShowToast(false)}
+        />
+      )}
     </div>
   );
 }

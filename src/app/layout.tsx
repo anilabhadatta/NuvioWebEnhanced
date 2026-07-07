@@ -16,7 +16,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full">
+    <html lang="en" className="h-full" suppressHydrationWarning>
       <body className="min-h-full bg-[#111111] text-[#f5f5f5]" suppressHydrationWarning>
         {/*
           Load the COI service worker on every page.

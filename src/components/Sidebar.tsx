@@ -67,7 +67,7 @@ export default function Sidebar() {
   const avatarColor = activeProfile?.avatar_color_hex;
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-[220px] bg-[#111111] border-r border-white/5 flex flex-col z-40">
+    <aside className="fixed left-0 top-0 h-full w-55 bg-[#111111] border-r border-white/5 flex flex-col z-40">
       {/* User profile at top - with profile quick-switcher */}
       <div className="relative border-b border-white/5">
         <div className="flex items-center gap-3 p-5 pb-4">
@@ -92,7 +92,7 @@ export default function Sidebar() {
         </div>
 
         {profileMenuOpen && profiles.length > 0 && (
-          <div className="absolute left-3 right-3 top-[68px] z-50 bg-[#1d1d1d] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
+          <div className="absolute left-3 right-3 top-17 z-50 bg-[#1d1d1d] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
             {profiles.map((p) => (
               <button
                 key={p.profile_index}
@@ -126,7 +126,7 @@ export default function Sidebar() {
       {/* Nav items */}
       <nav className="flex flex-col gap-1 p-3 mt-2 flex-1">
         {NAV_ITEMS.map((item) => {
-          const isActive = pathname === item.href || (item.href === "/dashboard" && pathname === "/");
+          const isActive = pathname === item.href || (item.href === "/dashboard" && (pathname === "/" || pathname?.startsWith("/collection")));
           return (
             <Link
               key={item.href}

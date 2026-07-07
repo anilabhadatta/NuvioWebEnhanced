@@ -14,6 +14,20 @@
   box-sizing: border-box;
 }
 
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"]:disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
+
 html, body {
   background: var(--nuvio-bg);
   color: var(--nuvio-text);

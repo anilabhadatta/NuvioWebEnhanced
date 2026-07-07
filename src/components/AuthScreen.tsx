@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -49,7 +50,7 @@ export default function AuthScreen() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center relative"
+      className="h-screen w-screen flex items-center justify-center relative overflow-hidden px-4"
       style={{
         background: `linear-gradient(135deg, #0d0d0d 0%, #1a0a1a 50%, #0a0d1a 100%)`,
       }}
@@ -63,16 +64,26 @@ export default function AuthScreen() {
         }}
       />
 
-      <div className="relative z-10 w-full max-w-md mx-4">
+      {/* Top bar */}
+      <header className="absolute top-0 left-0 right-0 flex items-center justify-end px-6 sm:px-10 py-5 z-20">
+        <Link
+          href="/"
+          className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-semibold transition-colors cursor-pointer"
+        >
+          Home
+        </Link>
+      </header>
+
+      <div className="relative z-10 w-full max-w-md">
         {/* Logo */}
-        <div className="text-center mb-10">
+        <div className="text-center mb-6">
           <h1 className="text-5xl font-black tracking-tight text-white mb-2">Nuvio</h1>
           <p className="text-[#888] text-sm">Stream anything. Everywhere.</p>
         </div>
 
         {/* Card */}
-        <div className="bg-[#1a1a1a]/90 border border-white/10 backdrop-blur-xl rounded-2xl p-8 shadow-2xl">
-          <h2 className="text-xl font-bold text-white mb-6">
+        <div className="bg-[#1a1a1a]/90 border border-white/10 backdrop-blur-xl rounded-2xl p-6 sm:p-8 shadow-2xl">
+          <h2 className="text-xl font-bold text-white mb-5">
             {isSignUp ? "Create Account" : "Sign In"}
           </h2>
 
@@ -128,7 +139,7 @@ export default function AuthScreen() {
 
             {/* Error message */}
             {error && (
-              <div className="bg-red-500/15 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-xl">
+              <div className="bg-red-500/15 border border-red-500/30 text-red-400 text-sm px-4 py-2.5 rounded-xl">
                 {error}
               </div>
             )}
@@ -137,7 +148,7 @@ export default function AuthScreen() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-white hover:bg-gray-100 text-black font-bold py-3 rounded-xl transition-all text-sm mt-2 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full bg-white hover:bg-gray-100 text-black font-bold py-3 rounded-xl transition-all text-sm mt-1 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {loading ? (
                 <span className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
@@ -147,18 +158,18 @@ export default function AuthScreen() {
           </form>
 
           {/* Toggle mode */}
-          <p className="text-center text-[#888] text-sm mt-5">
+          <p className="text-center text-[#888] text-sm mt-4">
             {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
             <button
               onClick={() => { setIsSignUp(!isSignUp); setError(""); }}
-              className="text-white hover:underline font-semibold"
+              className="text-white hover:underline font-semibold cursor-pointer"
             >
               {isSignUp ? "Sign In" : "Sign Up"}
             </button>
           </p>
 
           {/* Divider */}
-          <div className="flex items-center gap-3 my-5">
+          <div className="flex items-center gap-3 my-4">
             <div className="flex-1 h-px bg-white/10" />
             <span className="text-[#555] text-xs uppercase tracking-widest">or</span>
             <div className="flex-1 h-px bg-white/10" />
@@ -167,13 +178,13 @@ export default function AuthScreen() {
           {/* Anonymous */}
           <button
             onClick={handleAnonymous}
-            className="w-full bg-transparent hover:bg-white/5 border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white font-medium py-3 rounded-xl transition-all text-sm"
+            className="w-full bg-transparent hover:bg-white/5 border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white font-medium py-3 rounded-xl transition-all text-sm cursor-pointer"
           >
             Continue without account
           </button>
         </div>
 
-        <p className="text-center text-[#555] text-xs mt-6">
+        <p className="text-center text-[#555] text-xs mt-4">
           Powered by Nuvio · Tapframe & friends
         </p>
       </div>
