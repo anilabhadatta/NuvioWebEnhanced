@@ -48904,8 +48904,8 @@ class HttpSource {
       if (this.streamError) throw this.streamError;
       throw new Error("Server does not support range requests.");
     }
-    const n2 = this.atomicGetBufferStart(), b2 = A2 - this.bufferEnd, j2 = 2097152, s2 = this.atomicIsStreaming() && A2 >= n2 && A2 < n2 + this.bufferSize && b2 <= j2;
-    if (v.debug(T, `Read: isCoveredByStream=${s2}, gap=${(b2 / 1024).toFixed(0)}KB`), s2) {
+    const n2 = this.atomicGetBufferStart(), b2 = A2 - this.bufferEnd, j2 = this.atomicIsStreaming() && A2 >= n2 && A2 < n2 + this.bufferSize && b2 <= 2097152;
+    if (v.debug(T, `Read: isCoveredByStream=${j2}, gap=${(b2 / 1024).toFixed(0)}KB`), j2) {
       v.debug(T, "Read: waiting for data from active stream...");
       const n3 = await this.waitForData(A2, t2);
       if (v.debug(T, `Read: waitForData returned ${n3}`), n3) return this.consecutiveForceRestarts = 0, this.readFromBuffer(A2, t2);
@@ -48917,15 +48917,23 @@ class HttpSource {
         v.warn(T, `Read timeout for ${A2} but stream is active. Force restarting after ${b3}ms (attempt ${this.consecutiveForceRestarts + 1}/${this.MAX_FORCE_RESTARTS}).`), await new Promise((A3) => setTimeout(A3, b3)), this.consecutiveForceRestarts++, this.lastForceRestartTime = n4;
       }
     }
-    if (this.size > 0 && this.bufferSize >= this.size && this.atomicIsStreaming() && b2 > j2) {
-      v.info(T, `Read: one-off range fetch for offset=${A2}, length=${t2} (gap=${(b2 / 1024).toFixed(0)}KB, main stream continues)`);
+    const s2 = t2 < 15728640;
+    if (!j2 && this.atomicIsStreaming() && s2) {
+      v.info(T, `Read: one-off range fetch for offset=${A2}, length=${t2} (outside stream, main stream continues)`);
       try {
-        const v2 = Math.min(A2 + t2 - 1, this.size - 1) - A2 + 1, n3 = await fetch(this.url, { headers: await this.buildRequestHeaders({ offset: A2, length: v2 }) });
-        if (n3.ok || 206 === n3.status) {
-          const t3 = await n3.arrayBuffer(), v3 = new Uint8Array(t3), b3 = this.getBuffer(), j3 = A2 - this.atomicGetBufferStart();
-          j3 >= 0 && j3 + v3.length <= b3.length && (b3.set(v3, j3), v3.length, this.atomicGetWritePos());
-          const s3 = new Uint8Array(v3.length);
-          return s3.set(v3), this.position = A2 + v3.length, this.consecutiveForceRestarts = 0, s3.buffer;
+        const v2 = (this.size > 0 ? Math.min(A2 + t2 - 1, this.size - 1) : A2 + t2 - 1) - A2 + 1, n3 = await fetch(this.url, { headers: await this.buildRequestHeaders({ offset: A2, length: v2 }) });
+        if (206 === n3.status || n3.ok) {
+          const t3 = n3.headers.get("content-length");
+          if (t3) {
+            const A3 = parseInt(t3, 10);
+            if (A3 > 1.5 * v2) throw new Error(`Server ignored range request (returned ${A3} bytes instead of ${v2})`);
+          }
+          const b3 = await n3.arrayBuffer();
+          if (206 !== n3.status && b3.byteLength > 1.5 * v2) throw new Error(`Server ignored range request (returned ${b3.byteLength} bytes)`);
+          const j3 = new Uint8Array(b3), s3 = this.getBuffer(), f3 = A2 - this.atomicGetBufferStart();
+          f3 >= 0 && f3 + j3.length <= s3.length && s3.set(j3, f3);
+          const l2 = new Uint8Array(j3.length);
+          return l2.set(j3), this.position = A2 + j3.length, this.consecutiveForceRestarts = 0, l2.buffer;
         }
       } catch (A3) {
         v.warn(T, "One-off range fetch failed, falling back to stream restart", A3);
@@ -108343,7 +108351,7 @@ class MoviPlayer extends j {
     }
     if ((this.wasPlayingBeforeSeek || this.wasPlayingBeforeRebuffer) && b2) v.info(ij, "Seek forced-complete with no video frame yet — buffering until first frame"), this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.activeAudioNeedsColdPrime() && this.beginAudioPrime(), 0 === this._playStartTime && (this._playStartTime = performance.now());
     else if (this.wasPlayingBeforeSeek || this.wasPlayingBeforeRebuffer) {
-      if (this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = false, 0 === this._playStartTime && (this._playStartTime = performance.now()), this.activeAudioNeedsColdPrime()) return this.beginAudioPrime(), this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.clock.pause(), this.videoRenderer && this.videoRenderer.stopPresentationLoop(), void v.info(ij, "Audio cold-prime: buffering until cushion");
+      if (this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = false, 0 === this._playStartTime && (this._playStartTime = performance.now()), this.activeAudioNeedsColdPrime()) return this.beginAudioPrime(), this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.clock.pause(), this.videoRenderer && this.videoRenderer.stopPresentationLoop(), v.info(ij, "Audio cold-prime: buffering until cushion"), void this.emit("seeked", Math.max(0, A2 - this.startTime));
       if (v.info(ij, "Resuming playback after seek"), this.stateManager.setState("playing"), 0 === this._playStartTime && (this._playStartTime = performance.now()), this.clock.start(), this.disableAudio || this.audioRenderer.isAudioPlaying() || this.audioRenderer.play(), this.pendingAudioPackets.length > 0) {
         v.debug(ij, `Flushing ${this.pendingAudioPackets.length} buffered audio packets after seek sync`);
         for (const A3 of this.pendingAudioPackets) this.audioDecoder.decode(A3.data, A3.timestamp, A3.keyframe);
