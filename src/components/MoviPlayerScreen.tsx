@@ -1018,19 +1018,6 @@ export default function MoviPlayerScreen() {
       // Double-check user hasn't paused/navigated away while we were fetching.
       if (userPausedRef.current) return;
 
-      // Apply resume seek.
-      if (!hasResumedRef.current && rawMovieId) {
-        hasResumedRef.current = true;
-        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
-        const pType = mediaType || "movie";
-        const pSeason = season ? parseInt(season, 10) : undefined;
-        const pEpisode = episode ? parseInt(episode, 10) : undefined;
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
-        if (resumeTime > 5) {
-          try { video.currentTime = resumeTime; } catch (_) { }
-        }
-      }
-
       const handlePlayError = (err?: any) => {
         console.log("[MoviPlayer] Autoplay blocked, falling back to muted", err);
         setIsMuted(true);
@@ -1042,8 +1029,38 @@ export default function MoviPlayerScreen() {
         }, 100);
       };
 
-      const p = typeof video.play === 'function' ? video.play() : null;
-      if (p && typeof p.catch === 'function') p.catch((err: any) => handlePlayError(err));
+      // Apply resume seek.
+      let isSeekingResume = false;
+      if (!hasResumedRef.current && rawMovieId) {
+        hasResumedRef.current = true;
+        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
+        const pType = mediaType || "movie";
+        const pSeason = season ? parseInt(season, 10) : undefined;
+        const pEpisode = episode ? parseInt(episode, 10) : undefined;
+        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
+        if (resumeTime > 5) {
+          if (video.player) {
+            isSeekingResume = true;
+            const player = video.player;
+            const onSeeked = () => {
+              const p = typeof video.play === 'function' ? video.play() : null;
+              if (p && typeof p.catch === 'function') p.catch((err: any) => handlePlayError(err));
+            };
+            player.once("seeked", onSeeked);
+            player.seek(resumeTime).catch((err: any) => {
+              player.off("seeked", onSeeked);
+              handlePlayError(err);
+            });
+          } else {
+            try { video.currentTime = resumeTime; } catch (_) { }
+          }
+        }
+      }
+
+      if (!isSeekingResume) {
+        const p = typeof video.play === 'function' ? video.play() : null;
+        if (p && typeof p.catch === 'function') p.catch((err: any) => handlePlayError(err));
+      }
 
       // Failsafe for silent failures (audio context suspended, video stays paused)
       setTimeout(() => {
