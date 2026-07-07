@@ -108351,7 +108351,7 @@ class MoviPlayer extends j {
     }
     if ((this.wasPlayingBeforeSeek || this.wasPlayingBeforeRebuffer) && b2) v.info(ij, "Seek forced-complete with no video frame yet — buffering until first frame"), this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.activeAudioNeedsColdPrime() && this.beginAudioPrime(), 0 === this._playStartTime && (this._playStartTime = performance.now());
     else if (this.wasPlayingBeforeSeek || this.wasPlayingBeforeRebuffer) {
-      if (this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = false, 0 === this._playStartTime && (this._playStartTime = performance.now()), this.activeAudioNeedsColdPrime()) return this.beginAudioPrime(), this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.clock.pause(), this.videoRenderer && this.videoRenderer.stopPresentationLoop(), v.info(ij, "Audio cold-prime: buffering until cushion"), void this.emit("seeked", Math.max(0, A2 - this.startTime));
+      if (this.wasPlayingBeforeSeek = false, this.wasPlayingBeforeRebuffer = false, 0 === this._playStartTime && (this._playStartTime = performance.now()), this.activeAudioNeedsColdPrime()) return this.beginAudioPrime(), this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.clock.pause(), this.videoRenderer && this.videoRenderer.stopPresentationLoop(), void v.info(ij, "Audio cold-prime: buffering until cushion");
       if (v.info(ij, "Resuming playback after seek"), this.stateManager.setState("playing"), 0 === this._playStartTime && (this._playStartTime = performance.now()), this.clock.start(), this.disableAudio || this.audioRenderer.isAudioPlaying() || this.audioRenderer.play(), this.pendingAudioPackets.length > 0) {
         v.debug(ij, `Flushing ${this.pendingAudioPackets.length} buffered audio packets after seek sync`);
         for (const A3 of this.pendingAudioPackets) this.audioDecoder.decode(A3.data, A3.timestamp, A3.keyframe);
@@ -108389,13 +108389,13 @@ class MoviPlayer extends j {
       t3 > 0 && this.source.updatePreloadPosition(A3, t3);
     }
     this.emit("timeUpdate", this.getCurrentTime());
-    const n2 = this.mediaInfo && this.clock.getTime() >= this.mediaInfo.duration + this.startTime - 3, b2 = this.clock.getPlaybackRate(), j2 = this.mediaInfo?.videoFrameRate ?? 30, s2 = b2 < 0.99 && j2 >= 50 ? 2e3 : 500, f2 = this._playStartTime > 0 && performance.now() - this._playStartTime < 3e3, l2 = !!this.videoDecoder && this.videoDecoder.isRecentlyRecovering();
-    if ("playing" !== this.stateManager.getState() || this.eofReached || this.waitingForVideoSync || n2 || this.isBackgrounded || f2 || l2) this._stallStartTime = 0;
+    const n2 = this.mediaInfo && this.clock.getTime() >= this.mediaInfo.duration + this.startTime - 3, b2 = this.clock.getPlaybackRate(), j2 = this.mediaInfo?.videoFrameRate ?? 30, s2 = b2 < 0.99 && j2 >= 50, f2 = this.activeAudioNeedsColdPrime(), l2 = s2 ? 2e3 : f2 ? 1500 : 500, E2 = this._playStartTime > 0 && performance.now() - this._playStartTime < 3e3, u2 = !!this.videoDecoder && this.videoDecoder.isRecentlyRecovering();
+    if ("playing" !== this.stateManager.getState() || this.eofReached || this.waitingForVideoSync || n2 || this.isBackgrounded || E2 || u2) this._stallStartTime = 0;
     else {
       const A3 = !!this.videoRenderer && 0 === this.videoRenderer.getQueueSize(), t3 = !(this.trackManager.getActiveAudioTrack() && !this.disableAudio) || this.audioRenderer.getBufferedDuration() < 0.05;
-      A3 && t3 ? this._stallStartTime ? performance.now() - this._stallStartTime > s2 && (v.warn(ij, "Stall detected: buffers empty for 500ms, entering buffering state"), this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.clock.pause(), this.audioRenderer && this.audioRenderer.suspendForBuffering(), this.videoRenderer && this.videoRenderer.stopPresentationLoop(), this._stallStartTime = 0) : this._stallStartTime = performance.now() : this._stallStartTime = 0;
+      A3 && t3 ? this._stallStartTime ? performance.now() - this._stallStartTime > l2 && (v.warn(ij, "Stall detected: buffers empty for 500ms, entering buffering state"), this.wasPlayingBeforeRebuffer = true, this._bufferingEntryTime = performance.now(), this.stateManager.setState("buffering"), this.clock.pause(), this.audioRenderer && this.audioRenderer.suspendForBuffering(), this.videoRenderer && this.videoRenderer.stopPresentationLoop(), this._stallStartTime = 0) : this._stallStartTime = performance.now() : this._stallStartTime = 0;
     }
-    if ("playing" === this.stateManager.getState() && !this.disableAudio && !this.muted && !f2 && Math.abs(this.clock.getPlaybackRate() - 1) < 0.01) {
+    if ("playing" === this.stateManager.getState() && !this.disableAudio && !this.muted && !E2 && Math.abs(this.clock.getPlaybackRate() - 1) < 0.01) {
       const A3 = this.audioRenderer.getAudioClock(), t3 = this.videoRenderer ? this.videoRenderer.currentTime ?? -1 : -1;
       if (A3 >= 0 && t3 > 0) {
         const n3 = t3 - A3, b3 = performance.now() - this._lastDesyncSeekTime;
@@ -108417,38 +108417,38 @@ class MoviPlayer extends j {
       } else if (n3) return void this.handleEnded();
       return;
     }
-    const E2 = this.isSoftwareDecoding(), u2 = performance.now() - this.seekTime, d2 = this.justSeeked && u2 < MoviPlayer.POST_SEEK_THROTTLE_MS, c2 = this.disableAudio ? 0 : this.audioRenderer.getBufferedDuration(), F2 = this.videoRenderer?.getQueueSize() ?? 0, h2 = E2 ? 1e3 : d2 || this.waitingForVideoSync ? 60 : 30, p2 = E2 ? 500 : d2 || this.waitingForVideoSync ? 40 : 20, k2 = Math.max(0.25, this.clock.getPlaybackRate()), m2 = k2 < 1 ? 1 / k2 : Math.min(2, k2), g2 = (E2 ? 5 : d2 ? 1.5 : 2) * m2, x2 = this.trackManager.getActiveVideoTrack(), y2 = (x2?.width ?? 0) * (x2?.height ?? 0), _2 = Math.max(15, Math.min(120, x2?.frameRate ?? 30)), T2 = y2 >= 33177600, B2 = y2 >= 8294400, S2 = MoviPlayer._isMobileDevice;
-    let I2;
-    if (T2) I2 = S2 ? d2 ? 8 : 12 : d2 ? 12 : 16;
-    else if (B2) I2 = S2 ? d2 ? 8 : 16 : d2 ? 24 : 48;
-    else if (S2) {
-      const A3 = d2 ? 400 : 800;
-      I2 = Math.max(12, Math.round(_2 * A3 / 1e3));
-    } else I2 = d2 ? 20 : 100;
-    const q2 = Math.round((E2 ? 60 : I2) * m2), $2 = this.isBackgrounded && !this.isPiPActive || "buffering" === A2;
-    this.videoDecoder.queueSize > h2 && 0 === F2 ? this._decoderStuckSince ? performance.now() - this._decoderStuckSince > 5e3 && (v.warn(ij, `Video decoder stuck for 5s (queue=${this.videoDecoder.queueSize}, output=0), flushing`), this.videoDecoder.flush().catch(() => {
+    const d2 = this.isSoftwareDecoding(), c2 = performance.now() - this.seekTime, F2 = this.justSeeked && c2 < MoviPlayer.POST_SEEK_THROTTLE_MS, h2 = this.disableAudio ? 0 : this.audioRenderer.getBufferedDuration(), p2 = this.videoRenderer?.getQueueSize() ?? 0, k2 = d2 ? 1e3 : F2 || this.waitingForVideoSync ? 60 : 30, m2 = d2 ? 500 : F2 || this.waitingForVideoSync ? 40 : 20, g2 = Math.max(0.25, this.clock.getPlaybackRate()), x2 = g2 < 1 ? 1 / g2 : Math.min(2, g2), y2 = (d2 ? 5 : F2 ? 1.5 : 2) * x2, _2 = this.trackManager.getActiveVideoTrack(), T2 = (_2?.width ?? 0) * (_2?.height ?? 0), B2 = Math.max(15, Math.min(120, _2?.frameRate ?? 30)), S2 = T2 >= 33177600, I2 = T2 >= 8294400, q2 = MoviPlayer._isMobileDevice;
+    let $2;
+    if (S2) $2 = q2 ? F2 ? 8 : 12 : F2 ? 12 : 16;
+    else if (I2) $2 = q2 ? F2 ? 8 : 16 : F2 ? 24 : 48;
+    else if (q2) {
+      const A3 = F2 ? 400 : 800;
+      $2 = Math.max(12, Math.round(B2 * A3 / 1e3));
+    } else $2 = F2 ? 20 : 100;
+    const w2 = Math.round((d2 ? 60 : $2) * x2), N2 = this.isBackgrounded && !this.isPiPActive || "buffering" === A2;
+    this.videoDecoder.queueSize > k2 && 0 === p2 ? this._decoderStuckSince ? performance.now() - this._decoderStuckSince > 5e3 && (v.warn(ij, `Video decoder stuck for 5s (queue=${this.videoDecoder.queueSize}, output=0), flushing`), this.videoDecoder.flush().catch(() => {
     }), this._decoderStuckSince = 0) : this._decoderStuckSince = performance.now() : this._decoderStuckSince = 0;
-    const w2 = Math.abs(k2 - 1) > 0.01, N2 = !this.disableAudio && c2 < 0.1, C2 = this.videoDecoder.queueSize > h2, H2 = !$2 && F2 > q2, R2 = w2 && !this.muted && (H2 || C2) && N2;
-    if (!$2 && !R2 && this.videoDecoder.queueSize > h2 || !this.disableAudio && this.audioDecoder.queueSize > p2 || !this.disableAudio && c2 > g2 || !$2 && !R2 && F2 > q2) this.waitingForVideoSync && (this.videoDecoder.queueSize > h2 || F2 > q2) && v.debug(ij, `Backpressure during sync: videoDecoder=${this.videoDecoder.queueSize}, videoBuffered=${F2}`);
+    const C2 = Math.abs(g2 - 1) > 0.01, H2 = !this.disableAudio && h2 < 0.1, R2 = this.videoDecoder.queueSize > k2, D2 = !N2 && p2 > w2, P2 = C2 && !this.muted && (D2 || R2) && H2;
+    if (!N2 && !P2 && this.videoDecoder.queueSize > k2 || !this.disableAudio && this.audioDecoder.queueSize > m2 || !this.disableAudio && h2 > y2 || !N2 && !P2 && p2 > w2) this.waitingForVideoSync && (this.videoDecoder.queueSize > k2 || p2 > w2) && v.debug(ij, `Backpressure during sync: videoDecoder=${this.videoDecoder.queueSize}, videoBuffered=${p2}`);
     else try {
       if (this.seekSessionId !== t2) return void v.debug(ij, "ProcessLoop aborted before demux: new seek started");
       this.demuxInFlight = true, this.demuxInFlightStartTime = performance.now();
       const A3 = this.trackManager?.getActiveVideoTrack()?.frameRate ?? 30, n3 = Math.max(1, Math.ceil(A3 / 30));
       let b3 = 20 * n3;
-      if (d2) b3 = 5 * n3, v.debug(ij, `Post-seek throttling: using burst size ${b3}`);
+      if (F2) b3 = 5 * n3, v.debug(ij, `Post-seek throttling: using burst size ${b3}`);
       else {
-        this.justSeeked && u2 >= MoviPlayer.POST_SEEK_THROTTLE_MS && (this.justSeeked = false, v.debug(ij, "Post-seek throttle period ended"));
+        this.justSeeked && c2 >= MoviPlayer.POST_SEEK_THROTTLE_MS && (this.justSeeked = false, v.debug(ij, "Post-seek throttle period ended"));
         const t3 = this.videoRenderer?.getQueueSize() ?? 0, j4 = this.audioRenderer.getBufferedDuration();
-        (t3 < 30 || j4 < (E2 ? 2 : A3 >= 60 ? 1 : 0.5)) && (b3 = !f2 || this.muted || this.disableAudio || E2 ? (E2 ? 80 : 40) * n3 : 20 * n3);
+        (t3 < 30 || j4 < (d2 ? 2 : A3 >= 60 ? 1 : 0.5)) && (b3 = !E2 || this.muted || this.disableAudio || d2 ? (d2 ? 80 : 40) * n3 : 20 * n3);
       }
       const j3 = !!this.trackManager?.getActiveAudioTrack() && !this.disableAudio, s3 = 60;
       this.videoDecoder.isWaitingForKeyframe && (b3 = Math.min(b3, 5));
       for (let A4 = 0; A4 < b3 && !(!j3 && this.videoRenderer && this.videoRenderer.getQueueSize() > s3); A4++) {
-        if (!R2 && this.videoDecoder.queueSize > h2 || !this.disableAudio && this.audioDecoder.queueSize > p2) {
-          d2 && v.debug(ij, `Post-seek: queue full (video: ${this.videoDecoder.queueSize}, audio: ${this.audioDecoder.queueSize}), pausing burst`);
+        if (!P2 && this.videoDecoder.queueSize > k2 || !this.disableAudio && this.audioDecoder.queueSize > m2) {
+          F2 && v.debug(ij, `Post-seek: queue full (video: ${this.videoDecoder.queueSize}, audio: ${this.audioDecoder.queueSize}), pausing burst`);
           break;
         }
-        if (A4 > 0 && A4 % (d2 ? 2 * n3 : E2 ? 3 : 20 * n3) == 0) {
+        if (A4 > 0 && A4 % (F2 ? 2 * n3 : d2 ? 3 : 20 * n3) == 0) {
           const A5 = new MessageChannel();
           if (await new Promise((t3) => {
             A5.port1.onmessage = t3, A5.port2.postMessage(null);
@@ -108466,7 +108466,7 @@ class MoviPlayer extends j {
           if (A5 && A5.id === b4.streamIndex) {
             if (this._audioOnly) continue;
             if (this.isBackgrounded && !this.isPiPActive) continue;
-            if (R2 && !b4.keyframe) {
+            if (P2 && !b4.keyframe) {
               this.videoChainBrokenUntilKeyframe = true;
               continue;
             }
