@@ -4,10 +4,10 @@ import RequireAuth from "@/components/RequireAuth";
 
 export default function PlayerPage() {
   return (
-    <RequireAuth>
-      <Suspense fallback={<div className="w-full h-screen bg-black" />}>
+    <Suspense fallback={<div className="w-full h-screen bg-black" />}>
+      <RequireAuth>
         <PlayerScreen />
-      </Suspense>
-    </RequireAuth>
+      </RequireAuth>
+    </Suspense>
   );
 }

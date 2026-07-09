@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import { usePathname } from "next/navigation";
 
 export interface AuthInfo {
   session: Session | null;
@@ -34,6 +35,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [cachedName, setCachedName] = useState<string>("Sign In");
   const [cachedAuth, setCachedAuth] = useState<boolean>(false);
+  const pathname = usePathname();
+
+  // Sync anonymous/guest mode marker from localStorage on navigation
+  useEffect(() => {
+    try {
+      setIsAnonymous(!!localStorage.getItem("nuvio_anon"));
+    } catch { /* ignore */ }
+  }, [pathname]);
 
   useEffect(() => {
     let mounted = true;
@@ -80,10 +89,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    try {
-      setIsAnonymous(!!localStorage.getItem("nuvio_anon"));
-    } catch { /* ignore */ }
-
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
@@ -122,6 +127,15 @@ export function useAuth(): AuthInfo {
   const [cachedName, setCachedName] = useState<string>("Sign In");
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const [cachedAuth, setCachedAuth] = useState<boolean>(false);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const pathname = usePathname();
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    try {
+      setIsAnonymous(!!localStorage.getItem("nuvio_anon"));
+    } catch { /* ignore */ }
+  }, [pathname]);
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
@@ -167,10 +181,6 @@ export function useAuth(): AuthInfo {
         localStorage.removeItem("nuvio_display_name_cache");
       }
     });
-
-    try {
-      setIsAnonymous(!!localStorage.getItem("nuvio_anon"));
-    } catch { /* ignore */ }
 
     return () => {
       mounted = false;

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/useAuth";
 
 /**
@@ -9,22 +9,26 @@ import { useAuth } from "@/lib/useAuth";
  * Anonymous/guest users and signed-out users are redirected to /login with a
  * `next` param so they return to the protected page after signing in.
  *
- * Used to protect /player and /settings. The dashboard remains public.
+ * Exception: Guest/anonymous users are permitted to access /player for local testing.
  */
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, isAnonymous, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isLocalTesting = searchParams.get("localTesting") === "true";
+
+  const isAllowed = isAuthenticated || (isAnonymous && isLocalTesting);
 
   useEffect(() => {
     if (loading) return;
-    if (!isAuthenticated) {
+    if (!isAllowed) {
       const next = encodeURIComponent(
         typeof window !== "undefined" ? window.location.pathname + window.location.search : pathname,
       );
       router.replace(`/login?next=${next}`);
     }
-  }, [isAuthenticated, loading, router, pathname]);
+  }, [isAllowed, loading, router, pathname]);
 
   if (loading) {
     return (
@@ -34,7 +38,7 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isAllowed) {
     return (
       <div className="w-full h-screen bg-[#111111] flex flex-col items-center justify-center gap-4 text-center px-6">
         <p className="text-white font-semibold text-lg">Sign in required</p>

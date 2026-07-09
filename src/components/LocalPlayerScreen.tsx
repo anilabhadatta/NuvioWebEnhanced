@@ -1623,7 +1623,7 @@ EventDump: ${JSON.stringify(collected)}`;
     // Reset subtitle timing offset — a new episode/file has its own sync.
     setSubtitleDelayState(0);
     subtitleDelayRef.current = 0;
-  }, [streamUrl]);
+  }, [resolvedSrc]);
 
   // Close any open menu when the controls auto-hide.
   useEffect(() => {
@@ -2270,7 +2270,9 @@ EventDump: ${JSON.stringify(collected)}`;
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-40 p-8 text-center backdrop-blur-sm">
           <p className="text-white font-bold text-xl mb-2">Playback Failed</p>
           <p className="text-white/70 max-w-md">{playerError}</p>
-          <button onClick={() => setShowStreamPicker(true)} className="mt-6 px-6 py-2.5 bg-white text-black font-semibold rounded-xl">Switch Stream</button>
+          <button onClick={() => setShowAddLinkModal(true)} className="mt-6 px-6 py-2.5 bg-white text-black font-semibold rounded-xl hover:bg-white/95 active:scale-95 transition-all">
+            Load Video Source
+          </button>
         </div>
       )}
 
