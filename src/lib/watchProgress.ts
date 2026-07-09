@@ -36,6 +36,11 @@ export async function saveWatchProgress(progress: WatchProgress) {
     console.error("Failed to save watch progress locally", e);
   }
 
+  // If local testing (indicated by "local_" prefix), skip cloud sync
+  if (String(progress.id).startsWith("local_")) {
+    return;
+  }
+
   // 2. Sync cross-platform via NuvioDesktop Supabase RPC Architecture
   try {
     const { data: { session } } = await supabase.auth.getSession();
