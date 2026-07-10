@@ -2229,7 +2229,7 @@ EventDump: ${JSON.stringify(collected)}`;
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
                 </svg>
               </div>
-              <h3 className="text-white font-bold text-xl">Local Testing Mode</h3>
+              <h3 className="text-white font-bold text-xl">Quick Play Mode</h3>
               <p className="text-white/40 text-sm leading-relaxed">Paste any video stream URL (TorBox, direct link) or select a local video file from your device to begin playback.</p>
               <button
                 onClick={() => setShowAddLinkModal(true)}
@@ -2340,7 +2340,7 @@ EventDump: ${JSON.stringify(collected)}`;
           </button>
           <div>
             <p className="text-white font-bold text-lg drop-shadow">{localTitle || "Now Playing"}</p>
-            {movieId && <p className="text-[#aaa] text-sm">{isLocalTesting ? `Local Testing · ID: ${movieId}` : `ID: ${movieId} · ${mediaType}`}</p>}
+            {movieId && <p className="text-[#aaa] text-sm">{isLocalTesting ? `Quick Play · ID: ${movieId}` : `ID: ${movieId} · ${mediaType}`}</p>}
           </div>
         </div>
 
