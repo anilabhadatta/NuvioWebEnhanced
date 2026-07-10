@@ -70,7 +70,7 @@ export default function Dashboard() {
 
       {/* Main content offset by sidebar width */}
       <main
-        className="flex-1 ml-[220px]"
+        className="flex-1 min-w-0 ml-[220px]"
         style={{
           opacity: mounted ? 1 : 0,
           transform: mounted ? "none" : "translateY(12px)",
