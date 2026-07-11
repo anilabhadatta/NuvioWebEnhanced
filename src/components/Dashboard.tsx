@@ -96,6 +96,9 @@ export default function Dashboard() {
               const type = movie.media_type || (movie.title ? "movie" : "tv");
               let route = `/player?id=${tmdbId}&type=${type}&url=${url}`;
               if (stream.infoHash) route += `&hash=${stream.infoHash}`;
+              if (stream.headers) {
+                route += `&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`;
+              }
               if (season && episode) {
                 route += `&s=${season}&e=${episode}`;
               }

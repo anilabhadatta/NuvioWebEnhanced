@@ -262,6 +262,9 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
     if (!picker) return;
     const url = stream.url ? encodeURIComponent(stream.url) : "";
     let route = `/player?id=${picker.id}&type=${picker.type}&url=${url}`;
+    if (stream.headers) {
+      route += `&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`;
+    }
     if (picker.season && picker.episode) route += `&s=${picker.season}&e=${picker.episode}`;
     if (stream.addonUrl) {
       try { sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl); } catch { /* ignore */ }

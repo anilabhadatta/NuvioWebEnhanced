@@ -70,12 +70,38 @@ function writeLocal(repos: PluginRepository[]) {
 
 export async function fetchPluginManifest(url: string): Promise<PluginManifest | null> {
   try {
-    const res = await fetch(url.trim());
-    if (!res.ok) return null;
+    let res = await fetch(url.trim());
+    if (!res.ok) {
+      // Try using the CORS bypass proxy
+      const proxyRes = await fetch("/api/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim(), method: "GET" })
+      });
+      if (proxyRes.ok) {
+        res = proxyRes;
+      }
+    }
     const data = await res.json();
     if (!data || !Array.isArray(data.scrapers)) return null;
     return data as PluginManifest;
   } catch {
+    // Fallback: try proxy directly if fetch raises network error (like CORS)
+    try {
+      const proxyRes = await fetch("/api/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim(), method: "GET" })
+      });
+      if (proxyRes.ok) {
+        const data = await proxyRes.json();
+        if (data && Array.isArray(data.scrapers)) {
+          return data as PluginManifest;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch plugin manifest via proxy", e);
+    }
     return null;
   }
 }
@@ -155,7 +181,10 @@ function repoFromManifest(url: string, manifest: PluginManifest, sortOrder: numb
     description: manifest.description,
     author: manifest.author,
     scraperCount: manifest.scrapers.length,
-    scrapers: manifest.scrapers,
+    scrapers: manifest.scrapers.map((s) => ({
+      ...s,
+      enabled: s.enabled !== false,
+    })),
   };
 }
 
@@ -191,8 +220,67 @@ export async function refreshPluginRepo(url: string, existing: PluginRepository[
   const next = existing.map((r) =>
     r.url === url
       ? (manifest ? repoFromManifest(url, manifest, r.sort_order) : { ...r, errorMessage: "Failed to refresh repository" })
-      : r,
+      : r
   );
-  writeLocal(next);
+  await pushPlugins(next);
   return next;
 }
+
+export async function toggleScraper(
+  repoUrl: string,
+  scraperId: string,
+  enabled: boolean,
+  existing: PluginRepository[]
+): Promise<PluginRepository[]> {
+  const next = existing.map((r) => {
+    if (r.url === repoUrl) {
+      return {
+        ...r,
+        scrapers: r.scrapers.map((s) => (s.id === scraperId ? { ...s, enabled } : s)),
+      };
+    }
+    return r;
+  });
+  await pushPlugins(next);
+  return next;
+}
+
+export function getPluginsEnabledGlobal(): boolean {
+  if (typeof window === "undefined") return true;
+  const val = localStorage.getItem("nuvio_plugins_enabled_global");
+  return val === null ? true : val === "true";
+}
+
+export function setPluginsEnabledGlobal(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("nuvio_plugins_enabled_global", enabled ? "true" : "false");
+}
+
+export function getGroupPluginsByRepo(): boolean {
+  if (typeof window === "undefined") return false;
+  const val = localStorage.getItem("nuvio_group_plugins_by_repo");
+  return val === "true";
+}
+
+export function setGroupPluginsByRepo(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("nuvio_group_plugins_by_repo", enabled ? "true" : "false");
+}
+
+export function loadScraperSettings(scraperId: string): any {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(`nuvio_scraper_settings_${scraperId}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveScraperSettings(scraperId: string, settings: any): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(`nuvio_scraper_settings_${scraperId}`, JSON.stringify(settings));
+  } catch { /* ignore */ }
+}
+

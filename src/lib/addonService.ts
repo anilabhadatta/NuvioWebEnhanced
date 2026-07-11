@@ -47,6 +47,10 @@ export interface StreamItem {
   externalUrl?: string;
   addonName?: string;
   addonUrl?: string;
+  headers?: Record<string, string>;
+  subtitles?: any[];
+  /** If true, always route the stream through /api/streamProxy (e.g. for Cloudflare-protected scraper sources) */
+  proxy?: boolean;
 }
 
 // Streams the browser can't realistically play smoothly. REMUX files are huge

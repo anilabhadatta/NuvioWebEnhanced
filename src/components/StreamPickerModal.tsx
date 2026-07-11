@@ -3,6 +3,13 @@
 import React, { useState, useEffect } from "react";
 import { TMDBMovie, fetchExternalIds, resolveStremioIdToMovie } from "@/lib/tmdb";
 import { NuvioAddon, StreamItem, fetchUserAddons, fetchStreamsFromAddon } from "@/lib/addonService";
+import {
+  fetchPlugins,
+  getPluginsEnabledGlobal,
+  getGroupPluginsByRepo,
+  loadScraperSettings,
+} from "@/lib/plugins";
+import { executeScraper } from "@/lib/pluginRuntime";
 
 interface StreamPickerModalProps {
   tmdbId: number | string;
@@ -84,7 +91,73 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
             .catch(() => []) // Ignore failed addons
         );
 
-        await Promise.all(promises);
+        const pluginPromises: Promise<any>[] = [];
+        const pluginsEnabled = getPluginsEnabledGlobal();
+
+        if (pluginsEnabled) {
+          try {
+            const repos = await fetchPlugins();
+            const groupByRepo = getGroupPluginsByRepo();
+
+            repos.filter((r) => r.enabled).forEach((repo) => {
+              const enabledScrapers = (repo.scrapers || []).filter((s) => s.enabled);
+              enabledScrapers.forEach((scraper) => {
+                const type = addonMediaType === "series" ? "tv" : addonMediaType;
+                if (scraper.supportedTypes && !scraper.supportedTypes.includes(type)) {
+                  return;
+                }
+
+                const idArg = ["anikototv", "hianime", "animepahe", "allanime", "anikoto"].includes(scraper.id)
+                  ? String(tmdbId)
+                  : (imdbId || String(tmdbId));
+
+                const settings = loadScraperSettings(scraper.id);
+
+                const promise = executeScraper(
+                  repo.url,
+                  scraper.filename,
+                  idArg,
+                  type,
+                  season,
+                  episode,
+                  scraper.id,
+                  settings
+                )
+                  .then((results) => {
+                    if (isMounted && results && results.length > 0) {
+                      const mapped: StreamItem[] = results.map((res: any) => ({
+                        name: res.title || res.name || `Stream from ${scraper.name}`,
+                        title: res.title || res.name || `Stream from ${scraper.name}`,
+                        description: [
+                          res.quality ? `${res.quality}` : null,
+                          res.size ? `${res.size}` : null,
+                          res.language ? `Lang: ${res.language}` : null,
+                          res.seeders !== undefined ? `Seeders: ${res.seeders}` : null,
+                        ].filter(Boolean).join(" | ") || res.provider || scraper.name,
+                        url: res.url,
+                        infoHash: res.infoHash,
+                        addonName: groupByRepo ? repo.name : scraper.name,
+                        addonUrl: repo.url,
+                        headers: res.headers,
+                        subtitles: res.subtitles,
+                        proxy: true, // always proxy scraper streams through the server (Cloudflare bypass)
+                      }));
+                      setStreams((prev) => [...prev, ...mapped]);
+                    }
+                  })
+                  .catch((e) => {
+                    console.error(`Failed to fetch streams from plugin scraper: ${scraper.name}`, e);
+                  });
+
+                pluginPromises.push(promise);
+              });
+            });
+          } catch (pluginErr) {
+            console.error("Error loading plugin scrapers", pluginErr);
+          }
+        }
+
+        await Promise.all([...promises, ...pluginPromises]);
 
         if (isMounted) {
           setLoading(false);

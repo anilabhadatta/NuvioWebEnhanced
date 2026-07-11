@@ -214,6 +214,9 @@ export default function HeroBanner() {
             const tmdbId = movie.id;
             const type = movie.media_type || (movie.title ? "movie" : "tv");
             let route = `/player?id=${tmdbId}&type=${type}&url=${url}`;
+            if (stream.headers) {
+              route += `&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`;
+            }
             if (season && episode) {
               route += `&s=${season}&e=${episode}`;
             }

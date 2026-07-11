@@ -700,6 +700,8 @@ export default function MoviPlayerScreen() {
   const rawMovieId = searchParams.get("id");
   const mediaType = searchParams.get("type");
   const streamUrl = searchParams.get("url");
+  const streamHeadersStr = searchParams.get("headers");
+  const forceProxy = searchParams.get("proxy") === "1";
   const season = searchParams.get("s");
   const episode = searchParams.get("e");
   const streamHash = searchParams.get("hash");
@@ -778,6 +780,33 @@ export default function MoviPlayerScreen() {
     setPlayerError(null);
 
     async function resolveUrl() {
+      // If the stream is flagged as needing server-side proxying (e.g. from a plugin scraper),
+      // skip any direct fetch and route through the proxy immediately.
+      // movi-player fetching directly from the browser gets blocked by Cloudflare; our proxy
+      // uses a Chrome TLS fingerprint that bypasses it.
+      if (forceProxy) {
+        let proxiedUrl = `/api/streamProxy?url=${encodeURIComponent(decoded)}`;
+        if (streamHeadersStr) {
+          proxiedUrl += `&headers=${streamHeadersStr}`;
+        }
+        setResolvedSrc(proxiedUrl);
+        return;
+      }
+
+      // If the scraper explicitly provided custom headers (e.g. Referer), proxy with those headers.
+      let parsedHeaders: Record<string, string> | null = null;
+      if (streamHeadersStr) {
+        try {
+          parsedHeaders = JSON.parse(decodeURIComponent(streamHeadersStr));
+        } catch (_) { }
+      }
+
+      if (parsedHeaders && Object.keys(parsedHeaders).length > 0) {
+        const proxiedUrl = `/api/streamProxy?url=${encodeURIComponent(decoded)}&headers=${encodeURIComponent(JSON.stringify(parsedHeaders))}`;
+        setResolvedSrc(proxiedUrl);
+        return;
+      }
+
       // Strategy:
       // 1. Direct fetch with redirect: "follow" — works for CORS-clean streams.
       // 2. If CORS-blocked (debrid redirect chains like TorBox), fall back to
@@ -819,7 +848,7 @@ export default function MoviPlayerScreen() {
       setResolvedSrc(decoded);
     }
     resolveUrl();
-  }, [streamUrl]);
+  }, [streamUrl, streamHeadersStr]);
 
   const lastFetchedSubsId = useRef<string | null>(null);
   useEffect(() => {
@@ -2282,9 +2311,17 @@ EventDump: ${JSON.stringify(collected)}`;
           </button>
           <div>
             <p className="text-white font-bold text-lg drop-shadow">Now Playing</p>
-            {movieId && <p className="text-[#aaa] text-sm">ID: {movieId} · {mediaType}</p>}
+            {movieId && (
+              <p className="text-[#aaa] text-sm flex items-center gap-2">
+                <span>ID: {movieId} · {mediaType}</span>
+                <span className="text-[10px] bg-white/10 text-white/70 px-2 py-0.5 rounded-full font-semibold">
+                  movi-player: {typeof window !== "undefined" && localStorage.getItem("nuvio.element_js_source") === "local" ? "Local" : "CDN (v0.3.4)"}
+                </span>
+              </p>
+            )}
           </div>
         </div>
+
 
         {/* Bottom Bar */}
         <div className="bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 pointer-events-auto">
@@ -2864,6 +2901,12 @@ EventDump: ${JSON.stringify(collected)}`;
             const activeSeason = streamPickerSeason ?? (season ? parseInt(season) : undefined);
             const activeEpisode = streamPickerEpisode ?? (episode ? parseInt(episode) : undefined);
             let route = `/player?id=${movieId}&type=${mediaType}&url=${url}`;
+            if (stream.proxy) {
+              route += `&proxy=1`;
+            }
+            if (stream.headers) {
+              route += `&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`;
+            }
             if (activeSeason && activeEpisode) route += `&s=${activeSeason}&e=${activeEpisode}`;
             // Remember which addon this stream came from (in sessionStorage, NOT the
             // route) so the next episode resolves from the same source without
