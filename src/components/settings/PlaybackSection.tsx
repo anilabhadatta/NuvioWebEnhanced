@@ -15,6 +15,12 @@ export default function PlaybackSection() {
     }
     return "movi-player";
   });
+  const [elementJsSource, setElementJsSource] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("nuvio.element_js_source") || "cdn";
+    }
+    return "cdn";
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -64,33 +70,42 @@ export default function PlaybackSection() {
           >
             movi-player (Default)
           </button>
-          {/* <button
-            onClick={() => {
-              localStorage.setItem("nuvio.player_engine", "PlaysVideo");
-              setPlayerEngine("PlaysVideo");
-            }}
-            className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
-              playerEngine === "PlaysVideo"
-                ? "bg-white text-black border-white"
-                : "bg-white/5 text-white border-white/10 hover:bg-white/10"
-            }`}
-          >
-            PlaysVideo
-          </button>
-          <button
-            onClick={() => {
-              localStorage.setItem("nuvio.player_engine", "vlc.js");
-              setPlayerEngine("vlc.js");
-            }}
-            className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
-              playerEngine === "vlc.js"
-                ? "bg-white text-black border-white"
-                : "bg-white/5 text-white border-white/10 hover:bg-white/10"
-            }`}
-          >
-            vlc.js
-          </button> */}
         </div>
+
+        {playerEngine === "movi-player" && (
+          <div className="mt-5 pt-5 border-t border-white/5">
+            <p className="text-white font-semibold text-sm">movi-player Core Source (element.js)</p>
+            <p className="text-[#888] text-xs mt-1 mb-4">
+              Switch between loading the player core from jsDelivr CDN or using the local element.js copy.
+            </p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => {
+                  localStorage.setItem("nuvio.element_js_source", "cdn");
+                  setElementJsSource("cdn");
+                }}
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${elementJsSource === "cdn"
+                    ? "bg-white text-black border-white"
+                    : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                  }`}
+              >
+                CDN (v0.3.4)
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem("nuvio.element_js_source", "local");
+                  setElementJsSource("local");
+                }}
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${elementJsSource === "local"
+                    ? "bg-white text-black border-white"
+                    : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                  }`}
+              >
+                Local element.js
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Subtitle and Audio</p>

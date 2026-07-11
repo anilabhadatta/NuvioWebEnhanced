@@ -260,7 +260,7 @@ function forceStereoDownmix(moviElement: any) {
 // bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
 // code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
 // cross-origin so it's compatible with our COEP: require-corp headers.
-const MOVI_PLAYER_CDN_URL = "/element.js";
+const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.4/dist/element.js";
 
 let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
@@ -276,16 +276,20 @@ function ensureMoviPlayerLoaded(): Promise<void> {
       customElements.whenDefined("movi-player").then(() => resolve());
       return;
     }
+    const source = localStorage.getItem("nuvio.element_js_source") || "cdn";
+    const scriptUrl = source === "local" ? "/element.js" : MOVI_PLAYER_CDN_URL;
+    console.log(`[LocalPlayer] Loading player core from ${source} source: ${scriptUrl}`);
+
     const s = document.createElement("script");
     s.type = "module";
-    s.src = MOVI_PLAYER_CDN_URL;
+    s.src = scriptUrl;
     s.async = false;
     s.crossOrigin = "anonymous";
     s.dataset.nuvioMoviPlayer = "true";
     s.onload = () => {
       customElements.whenDefined("movi-player").then(() => resolve());
     };
-    s.onerror = () => reject(new Error(`Failed to load ${MOVI_PLAYER_CDN_URL}`));
+    s.onerror = () => reject(new Error(`Failed to load ${scriptUrl}`));
     document.head.appendChild(s);
   });
   return moviPlayerLoadPromise;
@@ -2996,11 +3000,11 @@ EventDump: ${JSON.stringify(collected)}`;
 
       {/* Add Link Modal */}
       {showAddLinkModal && (
-        <div 
+        <div
           className="absolute inset-0 z-[80] flex items-center justify-center bg-black/75 p-6 backdrop-blur-sm"
           onClick={() => setShowAddLinkModal(false)}
         >
-          <div 
+          <div
             className="bg-[#181818] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 text-left"
             onClick={(e) => e.stopPropagation()}
           >
@@ -3011,7 +3015,7 @@ EventDump: ${JSON.stringify(collected)}`;
                 </svg>
                 Load Video Source
               </h2>
-              <button 
+              <button
                 onClick={() => setShowAddLinkModal(false)}
                 className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center transition-colors"
               >
@@ -3019,7 +3023,7 @@ EventDump: ${JSON.stringify(collected)}`;
               </button>
             </div>
 
-            <form 
+            <form
               onSubmit={(e) => {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
