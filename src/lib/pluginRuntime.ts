@@ -254,8 +254,102 @@ function getCookiesForUrl(urlStr: string): string {
   return matched.map((c) => `${c.name}=${c.value}`).join("; ");
 }
 
-// Polyfilled fetch that redirects all scraper HTTP requests through our server-side proxy to bypass CORS
-const customFetch = async (url: string, options: any = {}) => {
+// ---------------------------------------------------------------------------
+// Micro-batch proxy: collects all fetch calls that arrive within a single JS
+// microtask tick and sends them as ONE bulk POST to /api/proxyBulk.
+// This reduces 500+ individual /api/proxy calls to a handful of bulk calls.
+// ---------------------------------------------------------------------------
+
+interface PendingRequest {
+  id: string;
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: string;
+  resolve: (value: any) => void;
+  reject: (reason: any) => void;
+}
+
+let _batchQueue: PendingRequest[] = [];
+let _batchScheduled = false;
+let _batchIdCounter = 0;
+
+function buildFetchResponse(parsed: any, url: string) {
+  const responseHeaders = new Headers();
+  if (parsed.headers) {
+    Object.entries(parsed.headers).forEach(([k, v]) => {
+      responseHeaders.append(k, v as string);
+    });
+  }
+  if (parsed.setCookies && Array.isArray(parsed.setCookies)) {
+    storeCookies(url, parsed.setCookies);
+  }
+  return {
+    ok: parsed.ok,
+    status: parsed.status,
+    statusText: parsed.statusText,
+    url: parsed.url || url,
+    headers: responseHeaders,
+    clone: function () { return this; },
+    text: () => Promise.resolve(parsed.body),
+    json: () => {
+      try { return Promise.resolve(JSON.parse(parsed.body)); }
+      catch { return Promise.resolve(null); }
+    },
+  };
+}
+
+async function flushBatch() {
+  const batch = _batchQueue;
+  _batchQueue = [];
+  _batchScheduled = false;
+
+  if (batch.length === 0) return;
+
+  try {
+    const res = await fetch("/api/proxyBulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requests: batch.map(({ id, url, method, headers, body }) => ({
+          id,
+          url,
+          method,
+          headers,
+          body,
+        })),
+      }),
+    });
+
+    if (!res.ok) {
+      const err = new Error(`Bulk proxy failed: ${res.statusText}`);
+      batch.forEach((p) => p.reject(err));
+      return;
+    }
+
+    const data = await res.json();
+    const responseMap = new Map<string, any>();
+    (data.responses || []).forEach((r: any) => responseMap.set(r.id, r));
+
+    batch.forEach((pending) => {
+      const parsed = responseMap.get(pending.id);
+      if (!parsed) {
+        pending.reject(new Error("No response returned for request " + pending.id));
+        return;
+      }
+      if (parsed.error) {
+        pending.reject(new Error(parsed.error));
+        return;
+      }
+      pending.resolve(buildFetchResponse(parsed, pending.url));
+    });
+  } catch (err) {
+    batch.forEach((p) => p.reject(err));
+  }
+}
+
+// Polyfilled fetch that coalesces all scraper HTTP requests into bulk proxy calls
+const customFetch = (url: string, options: any = {}): Promise<any> => {
   const lowerUrl = url.toLowerCase();
   const shouldProxy =
     !url.startsWith("/") &&
@@ -270,7 +364,7 @@ const customFetch = async (url: string, options: any = {}) => {
 
   const method = (options.method || "GET").toUpperCase();
   const incomingHeaders = options.headers || {};
-  
+
   // Attach cookies from our client-side cookie jar
   const cookieHeader = getCookiesForUrl(url);
   const headers = { ...incomingHeaders };
@@ -280,56 +374,19 @@ const customFetch = async (url: string, options: any = {}) => {
 
   const body = options.body || "";
 
-  const res = await fetch("/api/proxy", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      url,
-      method,
-      headers,
-      body,
-    }),
+  return new Promise((resolve, reject) => {
+    const id = String(++_batchIdCounter);
+    _batchQueue.push({ id, url, method, headers, body, resolve, reject });
+
+    if (!_batchScheduled) {
+      _batchScheduled = true;
+      // Use queueMicrotask so the batch flushes after all synchronous scraper
+      // setup is done but before any await resumes — maximising batch size.
+      queueMicrotask(flushBatch);
+    }
   });
-
-  if (!res.ok) {
-    throw new Error(`Proxy request failed: ${res.statusText}`);
-  }
-
-  const parsed = await res.json();
-
-  // Store set cookies from response
-  if (parsed.setCookies && Array.isArray(parsed.setCookies)) {
-    storeCookies(url, parsed.setCookies);
-  }
-
-  const responseHeaders = new Headers();
-  if (parsed.headers) {
-    Object.entries(parsed.headers).forEach(([k, v]) => {
-      responseHeaders.append(k, v as string);
-    });
-  }
-
-  return {
-    ok: parsed.ok,
-    status: parsed.status,
-    statusText: parsed.statusText,
-    url: parsed.url,
-    headers: responseHeaders,
-    clone: function () {
-      return this;
-    },
-    text: () => Promise.resolve(parsed.body),
-    json: () => {
-      try {
-        return Promise.resolve(JSON.parse(parsed.body));
-      } catch (e) {
-        return Promise.resolve(null);
-      }
-    },
-  };
 };
+
 
 // Require polyfill to return cheerio and CryptoJS
 const customRequire = (moduleName: string) => {
@@ -373,8 +430,14 @@ async function loadScraperCode(url: string): Promise<string | null> {
 }
 
 /**
- * Executes a scraper plugin inside a scoped browser sandbox.
- * Runs on the client-side.
+ * Executes a scraper plugin.
+ *
+ * Primary path: POST the scraper code + params to /api/scraperRun where Node.js
+ * runs it server-side. All HTTP requests the scraper makes are performed directly
+ * from the server (no browser→proxy round trips = zero /api/proxy calls).
+ *
+ * Fallback path: if the server route is unavailable, run the scraper in the
+ * browser sandbox (original behaviour).
  */
 export async function executeScraper(
   manifestUrl: string,
@@ -396,6 +459,40 @@ export async function executeScraper(
     throw new Error(`Failed to load code for scraper: ${scraperId || filename}`);
   }
 
+  // ── Server-side execution (primary) ───────────────────────────────────────
+  try {
+    const res = await fetch("/api/scraperRun", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, tmdbId, mediaType, season, episode, scraperId, settings }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.results)) {
+        return data.results;
+      }
+      if (data.error) {
+        console.warn(`[scraperRun] Server error for ${scraperId}, falling back:`, data.error);
+      }
+    }
+  } catch (serverErr) {
+    console.warn(`[scraperRun] Server route unavailable for ${scraperId}, falling back:`, serverErr);
+  }
+
+  // ── Browser sandbox fallback ───────────────────────────────────────────────
+  return runScraperInBrowser(code, tmdbId, mediaType, season, episode, scraperId, settings);
+}
+
+async function runScraperInBrowser(
+  code: string,
+  tmdbId: string,
+  mediaType: string,
+  season?: number,
+  episode?: number,
+  scraperId?: string,
+  settings?: any
+): Promise<any[]> {
   // Create sandbox global state
   const sandboxGlobals: any = {
     CryptoJS,
@@ -453,7 +550,7 @@ export async function executeScraper(
     const results = await fn.call(sandboxGlobals, tmdbId, mediaType, season, episode);
     return Array.isArray(results) ? results : [];
   } catch (err: any) {
-    console.error(`Error running scraper ${scraperId || filename}:`, err);
+    console.error(`Error running scraper ${scraperId || "unknown"}:`, err);
     return [];
   }
 }
