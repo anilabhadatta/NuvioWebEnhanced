@@ -266,6 +266,33 @@ let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
 
+  // -------------------------------------------------------------------------
+  // Global Fetch Polyfill for 429 Too Many Requests
+  // -------------------------------------------------------------------------
+  // Shield movi-player from intermittent Cloudflare worker rate limits.
+  // If the browser directly fetches chunks and occasionally hits a 429,
+  // we silently retry the request under the hood before returning the
+  // response to the player. This prevents fatal playback crashes.
+  if (!(window as any).__nuvio_fetch_429_polyfilled) {
+    const originalFetch = window.fetch;
+    window.fetch = async function (...args) {
+      let retries = 3;
+      while (retries > 0) {
+        const res = await originalFetch.apply(this, args);
+        if (res.status === 429) {
+          retries--;
+          if (retries === 0) return res;
+          console.warn("[Fetch] Intercepted 429 rate limit, retrying in 1.5s...", args[0]);
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        return res;
+      }
+      return originalFetch.apply(this, args);
+    };
+    (window as any).__nuvio_fetch_429_polyfilled = true;
+  }
+
 
   if (moviPlayerLoadPromise) return moviPlayerLoadPromise;
   if (customElements.get("movi-player")) return Promise.resolve();

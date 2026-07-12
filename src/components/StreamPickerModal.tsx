@@ -92,7 +92,17 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
           fetchStreamsFromAddon(addon, addonMediaType, videoId)
             .then((res) => {
               if (isMounted && res && res.length > 0) {
-                setStreams((prev) => [...prev, ...res]);
+                // Annotate Stremio streams with their origin addon.
+                // Force proxy for Penguplay (Google Drive links require Origin stripping via streamProbe)
+                const isPenguplay = addon.name.toLowerCase().includes("pengu") || addon.url.toLowerCase().includes("pengu");
+                const mappedRes = res.map((s: any) => ({
+                  ...s,
+                  addonName: addon.name,
+                  addonUrl: addon.url,
+                  proxy: isPenguplay ? true : s.proxy,
+                }));
+                
+                setStreams((prev) => [...prev, ...mappedRes]);
                 onFirstResult();
               }
             })
