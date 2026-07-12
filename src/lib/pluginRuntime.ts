@@ -439,7 +439,49 @@ async function loadScraperCode(url: string): Promise<string | null> {
  * Fallback path: if the server route is unavailable, run the scraper in the
  * browser sandbox (original behaviour).
  */
-export async function executeScraper(
+
+// In-flight deduplication: concurrent calls with the same params share one Promise.
+// Result cache: repeat calls within CACHE_TTL (e.g. StrictMode remounts, multiple modal
+// instances for the same content) return the cached result without hitting the server.
+const _inFlightScraper = new Map<string, Promise<any[]>>();
+const _scraperResultCache = new Map<string, { results: any[]; expiresAt: number }>();
+const SCRAPER_CACHE_TTL = 30_000; // 30 seconds
+
+export function executeScraper(
+  manifestUrl: string,
+  filename: string,
+  tmdbId: string,
+  mediaType: string,
+  season?: number,
+  episode?: number,
+  scraperId?: string,
+  settings?: any
+): Promise<any[]> {
+  const dedupKey = `${scraperId}:${manifestUrl}:${tmdbId}:${mediaType}:${season ?? ""}:${episode ?? ""}`;
+
+  // Return cached result if still fresh
+  const cached = _scraperResultCache.get(dedupKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.results);
+  }
+
+  // Return in-flight promise if already running
+  const inflight = _inFlightScraper.get(dedupKey);
+  if (inflight) return inflight;
+
+  const promise = _executeScraperInner(manifestUrl, filename, tmdbId, mediaType, season, episode, scraperId, settings)
+    .then((results) => {
+      // Cache the results for SCRAPER_CACHE_TTL so rapid re-calls are free
+      _scraperResultCache.set(dedupKey, { results, expiresAt: Date.now() + SCRAPER_CACHE_TTL });
+      return results;
+    })
+    .finally(() => _inFlightScraper.delete(dedupKey));
+
+  _inFlightScraper.set(dedupKey, promise);
+  return promise;
+}
+
+async function _executeScraperInner(
   manifestUrl: string,
   filename: string,
   tmdbId: string,

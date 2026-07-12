@@ -58,6 +58,17 @@ export function normalizeManifestUrl(input: string): string {
 const manifestCache = new Map<string, AddonManifest | null>();
 const manifestFetchPromises = new Map<string, Promise<AddonManifest | null>>();
 
+/** Clear the cached manifest for a URL so the next fetch always hits the network. */
+export function clearManifestCache(url?: string) {
+  if (url) {
+    manifestCache.delete(url);
+    manifestFetchPromises.delete(url);
+  } else {
+    manifestCache.clear();
+    manifestFetchPromises.clear();
+  }
+}
+
 export async function fetchAddonManifest(url: string): Promise<AddonManifest | null> {
   if (manifestCache.has(url)) return manifestCache.get(url)!;
   if (manifestFetchPromises.has(url)) return manifestFetchPromises.get(url)!;
@@ -68,16 +79,9 @@ export async function fetchAddonManifest(url: string): Promise<AddonManifest | n
       if (!res.ok) { manifestCache.set(url, null); return null; }
       const manifest = (await res.json()) as AddonManifest;
 
-      if (!manifest?.catalogs || manifest.catalogs.length === 0) {
+      // Minimal validity check: must have an id and name
+      if (!manifest?.id || !manifest?.name) {
         manifestCache.set(url, null); return null;
-      }
-
-      if (manifest.resources && manifest.resources.length > 0) {
-        const names = manifest.resources.map((r: any) => typeof r === "string" ? r : r.name);
-        // Exclude stream providers (they may expose catalogs but aren't browse addons)
-        if (names.includes("stream") || !names.includes("catalog")) {
-          manifestCache.set(url, null); return null;
-        }
       }
 
       manifestCache.set(url, manifest);
@@ -188,6 +192,8 @@ export async function addAddon(rawUrl: string, existing: ManagedAddon[]): Promis
   if (existing.some((a) => a.url === url)) {
     return { ok: false, error: "Addon already installed." };
   }
+  // Always bust the cache on install so a previous failed attempt doesn't block
+  clearManifestCache(url);
   const manifest = await fetchAddonManifest(url);
   if (!manifest) {
     return { ok: false, error: "Could not load addon manifest. Check the URL." };

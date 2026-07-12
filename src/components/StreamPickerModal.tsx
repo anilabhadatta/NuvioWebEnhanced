@@ -29,15 +29,13 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
   const [movieData, setMovieData] = useState<TMDBMovie | null>(null);
 
   const isSeries = mediaType === "tv" || mediaType === "series" || !!season;
-  
-  // Format the ID for addons
-  // Movies: ttXXXXXX
 
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
     setStreams([]);
     setError(null);
+
     async function loadStreams() {
       if (!tmdbId || tmdbId === "NaN" || (typeof tmdbId === "number" && Number.isNaN(tmdbId))) {
         if (isMounted) {
@@ -49,7 +47,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
 
       try {
         const type = isSeries ? "tv" : "movie";
-        
+
         // Fetch metadata so we can display the title in the header
         const metaId = (typeof tmdbId === 'string' && tmdbId.startsWith('tt')) ? tmdbId : `tmdb:${tmdbId}`;
         resolveStremioIdToMovie(metaId, type).then((meta) => {
@@ -81,11 +79,21 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
         const videoId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
         const addonMediaType = isSeries ? "series" : "movie";
 
+        // Helper: reveal results immediately when the first stream from any source arrives
+        let firstResultShown = false;
+        function onFirstResult() {
+          if (!firstResultShown && isMounted) {
+            firstResultShown = true;
+            setLoading(false);
+          }
+        }
+
         const promises = addons.map((addon) =>
           fetchStreamsFromAddon(addon, addonMediaType, videoId)
             .then((res) => {
               if (isMounted && res && res.length > 0) {
                 setStreams((prev) => [...prev, ...res]);
+                onFirstResult();
               }
             })
             .catch(() => []) // Ignore failed addons
@@ -143,6 +151,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
                         proxy: true, // always proxy scraper streams through the server (Cloudflare bypass)
                       }));
                       setStreams((prev) => [...prev, ...mapped]);
+                      onFirstResult();
                     }
                   })
                   .catch((e) => {
