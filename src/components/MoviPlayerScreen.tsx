@@ -780,32 +780,60 @@ export default function MoviPlayerScreen() {
     setPlayerError(null);
 
     async function resolveUrl() {
-      // If the stream is flagged as needing server-side proxying (e.g. from a plugin scraper),
-      // skip any direct fetch and route through the proxy immediately.
-      // movi-player fetching directly from the browser gets blocked by Cloudflare; our proxy
-      // uses a Chrome TLS fingerprint that bypasses it.
+      // Scraper streams: probe server-side first to decide the best playback strategy.
+      //
+      //   hls    → route through /api/streamProxy (each HLS segment needs Chrome TLS + headers)
+      //   direct → play the final CDN URL directly in movi-player (browser IP, native range)
+      //   proxy  → route through /api/streamProxy (CORS-blocked / unknown)
+      //
+      // For non-scraper streams, fall through to the standard direct/resolve logic below.
       if (forceProxy) {
-        let proxiedUrl = `/api/streamProxy?url=${encodeURIComponent(decoded)}`;
+        const parsedHeaders: Record<string, string> = {};
         if (streamHeadersStr) {
-          proxiedUrl += `&headers=${streamHeadersStr}`;
+          try {
+            Object.assign(parsedHeaders, JSON.parse(decodeURIComponent(streamHeadersStr)));
+          } catch (_) { }
         }
-        setResolvedSrc(proxiedUrl);
-        return;
-      }
 
-      // If the scraper explicitly provided custom headers (e.g. Referer), proxy with those headers.
-      let parsedHeaders: Record<string, string> | null = null;
-      if (streamHeadersStr) {
         try {
-          parsedHeaders = JSON.parse(decodeURIComponent(streamHeadersStr));
-        } catch (_) { }
-      }
+          const probeRes = await fetch("/api/streamProbe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: decoded, headers: parsedHeaders }),
+          });
+          if (probeRes.ok) {
+            const probe = await probeRes.json();
 
-      if (parsedHeaders && Object.keys(parsedHeaders).length > 0) {
-        const proxiedUrl = `/api/streamProxy?url=${encodeURIComponent(decoded)}&headers=${encodeURIComponent(JSON.stringify(parsedHeaders))}`;
+            if (probe.strategy === "hls") {
+              // HLS Manifests MUST be proxied because the browser fetch API forbids setting 
+              // custom User-Agents, and CDNs return 403 without them. 
+              // Note: The proxy is now configured to ONLY fetch the .m3u8 text file. 
+              // It leaves all .ts media segments as direct CDN links, so no media is proxied!
+              const headersParam = Object.keys(parsedHeaders).length
+                ? `&headers=${encodeURIComponent(JSON.stringify(parsedHeaders))}`
+                : streamHeadersStr
+                  ? `&headers=${streamHeadersStr}`
+                  : "";
+              setResolvedSrc(`/api/streamProxy?url=${encodeURIComponent(probe.finalUrl || decoded)}${headersParam}`);
+              return;
+            }
+
+            // For all other streams (direct MP4/MKV or unknown), we CANNOT proxy media bytes
+            // through the server. Just give the final CDN link directly to the player.
+            setResolvedSrc(probe.finalUrl || decoded);
+            return;
+          }
+        } catch (_probeErr) {
+          // Probe failed — fall back to proxying the original URL
+        }
+
+        // Fallback: proxy the original URL
+        let proxiedUrl = `/api/streamProxy?url=${encodeURIComponent(decoded)}`;
+        if (streamHeadersStr) proxiedUrl += `&headers=${streamHeadersStr}`;
         setResolvedSrc(proxiedUrl);
         return;
       }
+
 
       // Strategy:
       // 1. Direct fetch with redirect: "follow" — works for CORS-clean streams.
