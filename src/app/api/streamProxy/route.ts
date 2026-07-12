@@ -29,8 +29,6 @@ const FORBIDDEN_UPSTREAM = new Set([
   "sec-ch-ua-mobile",
   "sec-ch-ua-platform",
   "accept-encoding",
-  // Always use our own Chrome UA — never let scrapers override with ExoPlayer / curl / etc.
-  "user-agent",
 ]);
 
 async function streamToText(stream: Readable): Promise<string> {

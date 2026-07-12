@@ -15,7 +15,6 @@ const FORBIDDEN_UPSTREAM = new Set([
   "host", "connection", "origin", "content-length", "transfer-encoding",
   "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site", "sec-fetch-user",
   "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "accept-encoding",
-  "user-agent",
 ]);
 
 // Known video file extensions that always resolve to "direct" without a probe

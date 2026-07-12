@@ -831,11 +831,9 @@ export default function MoviPlayerScreen() {
           if (probeRes.ok) {
             const probe = await probeRes.json();
 
-            if (probe.strategy === "hls") {
-              // HLS Manifests MUST be proxied because the browser fetch API forbids setting 
-              // custom User-Agents, and CDNs return 403 without them. 
-              // Note: The proxy is now configured to ONLY fetch the .m3u8 text file. 
-              // It leaves all .ts media segments as direct CDN links, so no media is proxied!
+            if (probe.strategy === "hls" || probe.strategy === "proxy" || forceProxy) {
+              // Proxied streams: route through /api/streamProxy to inject custom headers/cookies,
+              // strip browser Origin headers, and bypass CORS limits.
               const headersParam = Object.keys(parsedHeaders).length
                 ? `&headers=${encodeURIComponent(JSON.stringify(parsedHeaders))}`
                 : streamHeadersStr
