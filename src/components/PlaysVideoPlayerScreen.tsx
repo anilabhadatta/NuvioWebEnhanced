@@ -338,6 +338,7 @@ export default function PlaysVideoPlayerScreen() {
   // Next-episode (series) + auto-play
   const [nextEpisode, setNextEpisode] = useState<NextEpisodeMeta | null>(null);
   const [showNextEpisodeCard, setShowNextEpisodeCard] = useState(false);
+  const userDismissedNextCardRef = useRef(false);
   const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("nuvio.autoNextEpisode");
@@ -391,7 +392,7 @@ export default function PlaysVideoPlayerScreen() {
       }
       return;
     }
-    
+
     // It's an IMDb ID — resolve to TMDB ID
     let isMounted = true;
     const type = mediaType === "series" || mediaType === "tv" ? "tv" : "movie";
@@ -400,7 +401,7 @@ export default function PlaysVideoPlayerScreen() {
         if (isMounted && movie && movie.id) {
           setResolvedTmdbId(movie.id);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     });
     return () => { isMounted = false; };
   }, [movieId, mediaType]);
@@ -796,8 +797,8 @@ export default function PlaysVideoPlayerScreen() {
     lastAttachedVideoRef.current = video;
     lastAttachedEngineRef.current = engine;
 
-    const handlePlay    = () => onStateChangeRef.current?.({ detail: "playing" });
-    const handlePause   = () => onStateChangeRef.current?.({ detail: "paused" });
+    const handlePlay = () => onStateChangeRef.current?.({ detail: "playing" });
+    const handlePause = () => onStateChangeRef.current?.({ detail: "paused" });
     const handleWaiting = () => onStateChangeRef.current?.({ detail: "buffering" });
     const handlePlaying = () => onStateChangeRef.current?.({ detail: "playing" });
     const handleSeeking = () => onStateChangeRef.current?.({ detail: "seeking" });
@@ -818,7 +819,7 @@ export default function PlaysVideoPlayerScreen() {
       // Fires after PlaysVideo picks HLS vs passthrough — tracks are finalised here.
       setTimeout(() => syncTracksRef.current(video, engine), 200);
     };
-    const handleEngineError   = (e: any) => onStateChangeRef.current?.({ detail: "error", message: e.detail?.message });
+    const handleEngineError = (e: any) => onStateChangeRef.current?.({ detail: "error", message: e.detail?.message });
     const handleEngineLoading = () => onStateChangeRef.current?.({ detail: "loading" });
 
     video.addEventListener("play", handlePlay);
@@ -950,17 +951,22 @@ export default function PlaysVideoPlayerScreen() {
 
     const remaining = duration - currentTime;
     const pctPlayed = currentTime / duration;
-    const shouldShow = remaining <= 30 || pctPlayed >= 0.95;
+    const outro = skipIntervals.find((i) => i.type === "outro");
+    const hasValidOutro = outro && outro.startTime > duration * 0.5;
+    const shouldShow = hasValidOutro ? (currentTime >= outro.startTime) : (remaining <= 30 || pctPlayed >= 0.95);
 
-    if (shouldShow && !showNextEpisodeCard) {
+    if (shouldShow && !showNextEpisodeCard && !userDismissedNextCardRef.current) {
       setShowNextEpisodeCard(true);
-      if (autoNextEnabled && nextEpisode.hasAired) {
+      if (autoNextEnabled && nextEpisode.hasAired && !hasValidOutro) {
         playNextRef.current?.();
       }
-    } else if (!shouldShow && showNextEpisodeCard && remaining > 60) {
-      setShowNextEpisodeCard(false);
+    } else if (!shouldShow && showNextEpisodeCard) {
+      const shouldHide = hasValidOutro ? (currentTime < outro.startTime) : (remaining > 60);
+      if (shouldHide) {
+        setShowNextEpisodeCard(false);
+      }
     }
-  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard]);
+  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard, skipIntervals]);
 
   // Fallback: Show card (and auto-play) if the video ends but the threshold
   // somehow didn't fire (e.g. user seeked past the threshold right to the end).
@@ -1129,6 +1135,7 @@ EventDump: ${JSON.stringify(collected)}`;
     setIsPlaying(false);
     setUserPaused(false);
     setShowNextEpisodeCard(false);
+    userDismissedNextCardRef.current = false;
     // Reset subtitle timing offset — a new episode/file has its own sync.
     setSubtitleDelayState(0);
     subtitleDelayRef.current = 0;
@@ -1645,7 +1652,8 @@ EventDump: ${JSON.stringify(collected)}`;
           setupListeners(v, eng);
         }, [setupListeners])}
       />
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         video::cue {
           color: ${subtitleStyle.color} !important;
           font-size: ${subtitleStyle.sizePct}% !important;
@@ -1773,7 +1781,7 @@ EventDump: ${JSON.stringify(collected)}`;
               </p>
             </div>
             <button
-              onClick={() => setShowNextEpisodeCard(false)}
+              onClick={() => { setShowNextEpisodeCard(false); userDismissedNextCardRef.current = true; }}
               className="text-white/50 hover:text-white text-xs px-1.5"
               title="Dismiss"
             >

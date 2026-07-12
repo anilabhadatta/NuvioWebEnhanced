@@ -227,7 +227,7 @@ function ensureVlcPlayerLoaded(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
   if (VlcPlayerLoadPromise) return VlcPlayerLoadPromise;
   if (customElements.get("vlc-player")) return Promise.resolve();
-  
+
   VlcPlayerLoadPromise = new Promise<void>((resolve) => {
     class VlcPlayer extends HTMLElement {
       video: HTMLVideoElement;
@@ -255,10 +255,10 @@ function ensureVlcPlayerLoaded(): Promise<void> {
           console.error('[VlcPlayer] Native video error:', this.video.error);
           this.dispatchState('error');
         });
-        
+
         this.video.addEventListener('loadeddata', () => {
           this.dispatchState('ready');
-          
+
           const audioList: any[] = [];
           const videoAny = this.video as any;
           if (videoAny.audioTracks) {
@@ -268,7 +268,7 @@ function ensureVlcPlayerLoaded(): Promise<void> {
             }
           }
           if (audioList.length === 0) {
-            audioList.push({id: 0, language: 'unknown', label: 'Default/Unsupported', active: true});
+            audioList.push({ id: 0, language: 'unknown', label: 'Default/Unsupported', active: true });
           }
 
           const subList: any[] = [];
@@ -282,8 +282,8 @@ function ensureVlcPlayerLoaded(): Promise<void> {
           console.log('[VlcPlayer] 🎵 Audio tracks detected:', audioList.length, audioList);
           console.log('[VlcPlayer] 📝 Subtitle tracks detected:', subList.length, subList);
 
-          this.dispatchEvent(new CustomEvent('trackschange', { 
-            detail: { audio: audioList, subtitle: subList } 
+          this.dispatchEvent(new CustomEvent('trackschange', {
+            detail: { audio: audioList, subtitle: subList }
           }));
         });
       }
@@ -294,7 +294,7 @@ function ensureVlcPlayerLoaded(): Promise<void> {
       attributeChangedCallback(name: string, oldVal: string, newVal: string) {
         if (name === "src" && newVal) {
           this.video.src = newVal;
-          this.video.play().catch(() => {});
+          this.video.play().catch(() => { });
         }
       }
       get player() { return null; }
@@ -305,7 +305,7 @@ function ensureVlcPlayerLoaded(): Promise<void> {
       set volume(v) { this.video.volume = v; }
       get playbackRate() { return this.video.playbackRate; }
       set playbackRate(v) { this.video.playbackRate = v; }
-      set audioId(id: any) { 
+      set audioId(id: any) {
         console.log('[VlcPlayer] User requested audio change to ID:', id);
         const videoAny = this.video as any;
         if (videoAny.audioTracks) {
@@ -593,6 +593,7 @@ export default function VlcPlayerScreen() {
   // Next-episode (series) + auto-play
   const [nextEpisode, setNextEpisode] = useState<NextEpisodeMeta | null>(null);
   const [showNextEpisodeCard, setShowNextEpisodeCard] = useState(false);
+  const userDismissedNextCardRef = useRef(false);
   const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("nuvio.autoNextEpisode");
@@ -646,7 +647,7 @@ export default function VlcPlayerScreen() {
       }
       return;
     }
-    
+
     // It's an IMDb ID — resolve to TMDB ID
     let isMounted = true;
     const type = mediaType === "series" || mediaType === "tv" ? "tv" : "movie";
@@ -655,7 +656,7 @@ export default function VlcPlayerScreen() {
         if (isMounted && movie && movie.id) {
           setResolvedTmdbId(movie.id);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     });
     return () => { isMounted = false; };
   }, [movieId, mediaType]);
@@ -1109,17 +1110,22 @@ export default function VlcPlayerScreen() {
 
     const remaining = duration - currentTime;
     const pctPlayed = currentTime / duration;
-    const shouldShow = remaining <= 30 || pctPlayed >= 0.95;
+    const outro = skipIntervals.find((i) => i.type === "outro");
+    const hasValidOutro = outro && outro.startTime > duration * 0.5;
+    const shouldShow = hasValidOutro ? (currentTime >= outro.startTime) : (remaining <= 30 || pctPlayed >= 0.95);
 
-    if (shouldShow && !showNextEpisodeCard) {
+    if (shouldShow && !showNextEpisodeCard && !userDismissedNextCardRef.current) {
       setShowNextEpisodeCard(true);
-      if (autoNextEnabled && nextEpisode.hasAired) {
+      if (autoNextEnabled && nextEpisode.hasAired && !hasValidOutro) {
         playNextRef.current?.();
       }
-    } else if (!shouldShow && showNextEpisodeCard && remaining > 60) {
-      setShowNextEpisodeCard(false);
+    } else if (!shouldShow && showNextEpisodeCard) {
+      const shouldHide = hasValidOutro ? (currentTime < outro.startTime) : (remaining > 60);
+      if (shouldHide) {
+        setShowNextEpisodeCard(false);
+      }
     }
-  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard]);
+  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard, skipIntervals]);
 
   // Fallback: Show card (and auto-play) if the video ends but the threshold
   // somehow didn't fire (e.g. user seeked past the threshold right to the end).
@@ -1288,6 +1294,7 @@ EventDump: ${JSON.stringify(collected)}`;
     setIsPlaying(false);
     setUserPaused(false);
     setShowNextEpisodeCard(false);
+    userDismissedNextCardRef.current = false;
     // Reset subtitle timing offset — a new episode/file has its own sync.
     setSubtitleDelayState(0);
     subtitleDelayRef.current = 0;
@@ -1922,7 +1929,7 @@ EventDump: ${JSON.stringify(collected)}`;
               </p>
             </div>
             <button
-              onClick={() => setShowNextEpisodeCard(false)}
+              onClick={() => { setShowNextEpisodeCard(false); userDismissedNextCardRef.current = true; }}
               className="text-white/50 hover:text-white text-xs px-1.5"
               title="Dismiss"
             >

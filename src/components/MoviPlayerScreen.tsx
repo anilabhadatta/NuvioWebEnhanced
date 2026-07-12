@@ -698,6 +698,10 @@ export default function MoviPlayerScreen() {
   // Next-episode (series) + auto-play
   const [nextEpisode, setNextEpisode] = useState<NextEpisodeMeta | null>(null);
   const [showNextEpisodeCard, setShowNextEpisodeCard] = useState(false);
+  // Set to true when the user explicitly closes the next-episode card — prevents
+  // the threshold effect from re-showing it on every subsequent timeupdate tick.
+  // Reset on each new stream/episode so the card reappears correctly next time.
+  const userDismissedNextCardRef = useRef(false);
   const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("nuvio.autoNextEpisode");
@@ -1626,17 +1630,24 @@ EventDump: ${JSON.stringify(collected)}`;
 
     const remaining = duration - currentTime;
     const pctPlayed = currentTime / duration;
-    const shouldShow = remaining <= 30 || pctPlayed >= 0.95;
+    const outro = skipIntervals.find((i) => i.type === "outro");
+    const hasValidOutro = outro && outro.startTime > duration * 0.5;
+    const shouldShow = hasValidOutro ? (currentTime >= outro.startTime) : (remaining <= 30 || pctPlayed >= 0.95);
 
-    if (shouldShow && !showNextEpisodeCard) {
+    if (shouldShow && !showNextEpisodeCard && !userDismissedNextCardRef.current) {
       setShowNextEpisodeCard(true);
-      if (autoNextEnabled && nextEpisode.hasAired) {
+      // Only auto-play when there is NO outro data — if an outro is present the
+      // user must manually click "Skip outro" or the next-episode card.
+      if (autoNextEnabled && nextEpisode.hasAired && !hasValidOutro) {
         playNextRef.current?.();
       }
-    } else if (!shouldShow && showNextEpisodeCard && remaining > 60) {
-      setShowNextEpisodeCard(false);
+    } else if (!shouldShow && showNextEpisodeCard) {
+      const shouldHide = hasValidOutro ? (currentTime < outro.startTime) : (remaining > 60);
+      if (shouldHide) {
+        setShowNextEpisodeCard(false);
+      }
     }
-  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard]);
+  }, [currentTime, duration, nextEpisode, autoNextEnabled, showNextEpisodeCard, skipIntervals]);
 
   // Fallback: Show card (and auto-play) if the video ends but the threshold
   // somehow didn't fire (e.g. user seeked past the threshold right to the end).
@@ -1698,6 +1709,7 @@ EventDump: ${JSON.stringify(collected)}`;
     setIsPlaying(false);
     setUserPaused(false);
     setShowNextEpisodeCard(false);
+    userDismissedNextCardRef.current = false;
     hasResumedRef.current = false;
     autoplayTriggeredRef.current = false;
 
@@ -2391,7 +2403,7 @@ EventDump: ${JSON.stringify(collected)}`;
               </p>
             </div>
             <button
-              onClick={() => setShowNextEpisodeCard(false)}
+              onClick={() => { setShowNextEpisodeCard(false); userDismissedNextCardRef.current = true; }}
               className="text-white/50 hover:text-white text-xs px-1.5"
               title="Dismiss"
             >
