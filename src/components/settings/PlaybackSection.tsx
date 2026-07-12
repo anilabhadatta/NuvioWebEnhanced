@@ -184,6 +184,18 @@ export default function PlaybackSection() {
           </label>
         </div>
 
+        {/* Use Forced Subtitles */}
+        <div className="px-5 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-white font-semibold text-sm">Use Forced Subtitles</p>
+            <p className="text-[#888] text-xs mt-0.5">Automatically enable matching forced subtitle tracks when available.</p>
+          </div>
+          <label className="relative inline-flex inline-flex items-center cursor-pointer">
+            <input type="checkbox" className="sr-only peer" checked={settings.useForcedSubtitles} onChange={e => updateSetting("useForcedSubtitles", e.target.checked)} />
+            <div className="w-11 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-white/30"></div>
+          </label>
+        </div>
+
         {/* Addon Subtitle Startup */}
         <div className="px-5 py-4 flex items-center justify-between">
           <div>

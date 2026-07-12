@@ -460,7 +460,7 @@ export default function LocalPlayerScreen() {
   const [openMenu, setOpenMenu] = useState<"sub" | "audio" | "speed" | null>(null);
   const [subActiveTab, setSubActiveTab] = useState<"tracks" | "style">("tracks");
   const [audios, setAudios] = useState<{ id: number; name: string }[]>([{ id: 0, name: "Default" }]);
-  const [subtitles, setSubtitles] = useState<{ id: number; name: string }[]>([{ id: -1, name: "None" }]);
+  const [subtitles, setSubtitles] = useState<{ id: number; name: string; language?: string; label?: string }[]>([{ id: -1, name: "None" }]);
   const [selectedAudio, setSelectedAudio] = useState(0);
   const [selectedSub, setSelectedSub] = useState(-1);
   const [isSoftwareDec, setIsSoftwareDec] = useState(false);
@@ -1324,7 +1324,17 @@ export default function LocalPlayerScreen() {
           let targetId = -1;
           const isForcedTrack = (t: any) => t.forced === true || t.label?.toLowerCase().includes("forced") || t.language?.toLowerCase().includes("forced");
 
-          const exactMatch = subtitle.find((t: any) => {
+          let forcedMatch = null;
+          if (prefs.useForcedSubtitles) {
+            forcedMatch = subtitle.find((t: any) => {
+              if (!isForcedTrack(t)) return false;
+              const match = isLanguageMatch(t.language, t.label, prefSub);
+              if (match) console.log(`[MoviPlayer] Found primary forced subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
+              return match;
+            });
+          }
+
+          const exactMatch = forcedMatch || subtitle.find((t: any) => {
             if (isForcedTrack(t)) return false;
             const match = isLanguageMatch(t.language, t.label, prefSub);
             if (match) console.log(`[MoviPlayer] Found primary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
@@ -1333,7 +1343,17 @@ export default function LocalPlayerScreen() {
 
           if (exactMatch) targetId = exactMatch.id;
           else if (secSub && secSub.toLowerCase() !== "none") {
-            const secMatch = subtitle.find((t: any) => {
+            let forcedSecMatch = null;
+            if (prefs.useForcedSubtitles) {
+              forcedSecMatch = subtitle.find((t: any) => {
+                if (!isForcedTrack(t)) return false;
+                const match = isLanguageMatch(t.language, t.label, secSub);
+                if (match) console.log(`[MoviPlayer] Found secondary forced subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
+                return match;
+              });
+            }
+
+            const secMatch = forcedSecMatch || subtitle.find((t: any) => {
               if (isForcedTrack(t)) return false;
               const match = isLanguageMatch(t.language, t.label, secSub);
               if (match) console.log(`[MoviPlayer] Found secondary subtitle match: ${t.language} / ${t.label} (ID: ${t.id})`);
@@ -1374,6 +1394,33 @@ export default function LocalPlayerScreen() {
             console.log("[MoviPlayer] No built-in match found — will try addon subtitles.");
             didUpdateSubPrefs = true;
             setSelectedSub(-1);
+          }
+        } else if (prefs.useForcedSubtitles) {
+          // prefSub is "none" but useForcedSubtitles is true: auto-select forced subtitle matching active audio language
+          const activeAudioTrack = audio.find((t: any) => t.active);
+          const audioLang = activeAudioTrack?.language || prefs.preferredAudioLanguage || "en";
+          const isForcedTrack = (t: any) => t.forced === true || t.label?.toLowerCase().includes("forced") || t.language?.toLowerCase().includes("forced");
+
+          const forcedMatch = subtitle.find((t: any) => {
+            if (!isForcedTrack(t)) return false;
+            return isLanguageMatch(t.language, t.label, audioLang);
+          });
+
+          if (forcedMatch) {
+            let targetId = forcedMatch.id;
+            console.log(`[MoviPlayer] Found forced subtitle matching active audio language (${audioLang}): ID ${targetId}`);
+            if (!activeExternalSubRef.current) {
+              try {
+                const player = video.player;
+                if (player && typeof player.selectSubtitleTrack === 'function') {
+                  player.selectSubtitleTrack(targetId);
+                }
+                didUpdateSubPrefs = true;
+                setSelectedSub(targetId);
+              } catch { /* ok */ }
+            }
+          } else {
+            console.log("[MoviPlayer] Subtitle preference is 'None' and no matching forced subtitle found.");
           }
         } else {
           console.log("[MoviPlayer] Subtitle preference is 'None', skipping auto-selection.");
@@ -1418,7 +1465,7 @@ export default function LocalPlayerScreen() {
     if (subtitle?.length > 0) {
       const newSubs = [{ id: -1, name: 'None' }, ...subtitle.map((t: any, i: number) => {
         const niceName = [t.language, t.label].filter(Boolean).join(' ') || `Subtitle ${i + 1}`;
-        return { id: t.id, name: niceName };
+        return { id: t.id, name: niceName, language: t.language, label: t.label };
       })];
       const strSubs = JSON.stringify(newSubs);
       if (subtitlesCache.current !== strSubs) {
@@ -2226,7 +2273,7 @@ EventDump: ${JSON.stringify(collected)}`;
   const filteredSubtitles = subtitles.filter(s => {
     if (!showOnlyPref) return true;
     if (s.id === -1 || s.id === selectedSub) return true;
-    return isLanguageMatch(s.name, s.name, prefSub) || isLanguageMatch(s.name, s.name, secSub);
+    return isLanguageMatch(s.language || s.name, s.label || s.name, prefSub) || isLanguageMatch(s.language || s.name, s.label || s.name, secSub);
   });
 
   const filteredAddonSubtitles = addonSubtitles.filter(s => {
