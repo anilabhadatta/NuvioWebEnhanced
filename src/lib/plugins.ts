@@ -122,16 +122,20 @@ export async function fetchPlugins(): Promise<PluginRepository[]> {
         const local = readLocal();
         const repos = (data as any[]).map((row, i) => {
           const cached = local.find((r) => r.url === row.url);
+          const isRepoEnabled = row.enabled !== false;
           return {
             url: row.url,
             name: row.name || cached?.name || row.url,
-            enabled: row.enabled !== false,
+            enabled: isRepoEnabled,
             sort_order: row.sort_order ?? i,
             version: cached?.version,
             description: cached?.description,
             author: cached?.author,
             scraperCount: cached?.scraperCount ?? 0,
-            scrapers: cached?.scrapers ?? [],
+            scrapers: (cached?.scrapers ?? []).map((s) => ({
+              ...s,
+              enabled: isRepoEnabled ? s.enabled : false,
+            })),
           } as PluginRepository;
         });
         writeLocal(repos);
@@ -150,18 +154,54 @@ export async function pushPlugins(repos: PluginRepository[]): Promise<boolean> {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return false;
     const profileId = getActiveProfileId();
+
     const payload = repos.map((r, index) => ({
+      user_id: session.user.id,
+      profile_id: profileId,
       url: r.url,
       name: r.name || "",
       enabled: r.enabled !== false,
       sort_order: index,
     }));
-    const { error } = await supabase.rpc("sync_push_plugins", {
+
+    // Try direct delete and insert first. This ensures `enabled` is synced correctly since the
+    // database RPC `sync_push_plugins` might default the `enabled` column to true.
+    const { error: deleteError } = await supabase
+      .from("plugins")
+      .delete()
+      .eq("profile_id", profileId);
+
+    if (!deleteError) {
+      if (payload.length > 0) {
+        const { error: insertError } = await supabase
+          .from("plugins")
+          .insert(payload);
+
+        if (!insertError) {
+          return true;
+        }
+        console.error("Direct insert failed, falling back to RPC", insertError);
+      } else {
+        return true;
+      }
+    } else {
+      console.error("Direct delete failed, falling back to RPC", deleteError);
+    }
+
+    // Fallback to RPC if direct writes fail or are restricted by RLS
+    const rpcPayload = repos.map((r, index) => ({
+      url: r.url,
+      name: r.name || "",
+      enabled: r.enabled !== false,
+      sort_order: index,
+    }));
+    const { error: rpcError } = await supabase.rpc("sync_push_plugins", {
       p_profile_id: profileId,
-      p_plugins: payload,
+      p_plugins: rpcPayload,
     });
-    if (error) {
-      console.error("sync_push_plugins failed", error);
+
+    if (rpcError) {
+      console.error("sync_push_plugins failed", rpcError);
       return false;
     }
     return true;
@@ -171,20 +211,30 @@ export async function pushPlugins(repos: PluginRepository[]): Promise<boolean> {
   }
 }
 
-function repoFromManifest(url: string, manifest: PluginManifest, sortOrder: number): PluginRepository {
+function repoFromManifest(
+  url: string,
+  manifest: PluginManifest,
+  sortOrder: number,
+  existingRepo?: PluginRepository
+): PluginRepository {
+  const repoEnabled = existingRepo ? existingRepo.enabled : true;
   return {
     url,
     name: manifest.name || url,
-    enabled: true,
+    enabled: repoEnabled,
     sort_order: sortOrder,
     version: manifest.version,
     description: manifest.description,
     author: manifest.author,
     scraperCount: manifest.scrapers.length,
-    scrapers: manifest.scrapers.map((s) => ({
-      ...s,
-      enabled: s.enabled !== false,
-    })),
+    scrapers: manifest.scrapers.map((s) => {
+      const existingScraper = existingRepo?.scrapers.find((x) => x.id === s.id);
+      const isEnabled = existingScraper ? existingScraper.enabled : (s.enabled !== false);
+      return {
+        ...s,
+        enabled: repoEnabled ? isEnabled : false,
+      };
+    }),
   };
 }
 
@@ -210,16 +260,30 @@ export async function removePluginRepo(url: string, existing: PluginRepository[]
 }
 
 export async function togglePluginRepo(url: string, existing: PluginRepository[]): Promise<PluginRepository[]> {
-  const next = existing.map((r) => (r.url === url ? { ...r, enabled: !r.enabled } : r));
+  const next = existing.map((r) => {
+    if (r.url === url) {
+      const nextEnabled = !r.enabled;
+      return {
+        ...r,
+        enabled: nextEnabled,
+        scrapers: r.scrapers.map((s) => ({
+          ...s,
+          enabled: nextEnabled ? s.enabled : false,
+        })),
+      };
+    }
+    return r;
+  });
   await pushPlugins(next);
   return next;
 }
 
 export async function refreshPluginRepo(url: string, existing: PluginRepository[]): Promise<PluginRepository[]> {
   const manifest = await fetchPluginManifest(url);
+  const existingRepo = existing.find((r) => r.url === url);
   const next = existing.map((r) =>
     r.url === url
-      ? (manifest ? repoFromManifest(url, manifest, r.sort_order) : { ...r, errorMessage: "Failed to refresh repository" })
+      ? (manifest ? repoFromManifest(url, manifest, r.sort_order, existingRepo) : { ...r, errorMessage: "Failed to refresh repository" })
       : r
   );
   await pushPlugins(next);

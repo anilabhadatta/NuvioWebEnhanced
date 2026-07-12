@@ -255,6 +255,7 @@ export default function PluginsSection() {
       ...s,
       repoUrl: r.url,
       repoName: r.name,
+      repoEnabled: r.enabled,
     }))
   );
 
@@ -393,7 +394,7 @@ export default function PluginsSection() {
           <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Providers</p>
           <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl overflow-hidden divide-y divide-white/5">
             {allScrapers.map((s) => (
-              <div key={s.id} className="px-5 py-4 flex items-center justify-between gap-4">
+              <div key={s.id} className={`px-5 py-4 flex items-center justify-between gap-4 transition-opacity ${!s.repoEnabled ? "opacity-40" : ""}`}>
                 <div className="flex items-center gap-3 min-w-0">
                   {/* Logo or custom icon */}
                   {s.logo ? (
@@ -439,16 +440,19 @@ export default function PluginsSection() {
                 <div className="flex items-center gap-3 shrink-0">
                   {s.hasSettings && (
                     <button
+                      disabled={!s.repoEnabled}
                       onClick={() => setActiveSettingsScraper({ repoUrl: s.repoUrl, scraper: s })}
-                      className="p-1.5 text-[#888] hover:text-white hover:bg-white/5 rounded-lg transition-all"
-                      title="Settings"
+                      className={`p-1.5 rounded-lg transition-all ${!s.repoEnabled ? "text-[#444] cursor-not-allowed" : "text-[#888] hover:text-white hover:bg-white/5"}`}
+                      title={s.repoEnabled ? "Settings" : "Plugin repository is disabled"}
                     >
                       <Settings className="w-5 h-5" />
                     </button>
                   )}
                   <button
+                    disabled={!s.repoEnabled}
                     onClick={() => handleScraperToggle(s.repoUrl, s.id, s.enabled !== true)}
-                    className={`w-11 h-6 rounded-full relative transition-colors ${s.enabled !== false ? "bg-white" : "bg-white/10"}`}
+                    className={`w-11 h-6 rounded-full relative transition-colors ${s.enabled !== false ? "bg-white" : "bg-white/10"} ${!s.repoEnabled ? "cursor-not-allowed" : ""}`}
+                    title={s.repoEnabled ? (s.enabled !== false ? "Disable Provider" : "Enable Provider") : "Plugin repository is disabled"}
                   >
                     <div className={`absolute top-1 w-4 h-4 rounded-full transition-all ${s.enabled !== false ? "right-1 bg-black" : "left-1 bg-[#888]"}`} />
                   </button>
