@@ -305,7 +305,7 @@ export async function toggleScraper(
     }
     return r;
   });
-  await pushPlugins(next);
+  writeLocal(next);
   return next;
 }
 
