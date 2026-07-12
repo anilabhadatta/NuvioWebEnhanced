@@ -761,6 +761,9 @@ export default function LocalPlayerScreen() {
   const effectiveMediaType = mediaType || (localMovieId ? "movie" : null);
   const hasValidTmdbId = resolvedTmdbId !== null;
 
+  // Cached TMDB metadata for watch-progress heartbeat (title, backdrop, IMDb ID)
+  const tmdbMetaRef = useRef<{ title: string; backdrop: string; imdbId: string } | null>(null);
+
   // Sync isLocalTesting state with URL search param
   useEffect(() => {
     const isTesting = searchParams.get("localTesting") === "true";
@@ -772,30 +775,41 @@ export default function LocalPlayerScreen() {
     }
   }, [searchParams]);
 
-  // Resolve IMDB ID to TMDB ID if needed
+  // Resolve IMDB ID to TMDB ID if needed + cache metadata for watch-progress
   useEffect(() => {
     if (!movieId || String(movieId).startsWith("local_")) {
       setResolvedTmdbId(null);
-      return;
-    }
-    if (!movieId.startsWith("tt")) {
-      const parsed = parseInt(movieId, 10);
-      if (Number.isFinite(parsed)) {
-        setResolvedTmdbId(parsed);
-      } else {
-        setResolvedTmdbId(null);
-      }
+      tmdbMetaRef.current = null;
       return;
     }
 
-    // It's an IMDb ID — resolve to TMDB ID
     let isMounted = true;
     const type = mediaType === "series" || mediaType === "tv" ? "tv" : "movie";
-    import("@/lib/tmdb").then(({ resolveStremioIdToMovie }) => {
-      resolveStremioIdToMovie(movieId, type).then((movie) => {
-        if (isMounted && movie && movie.id) {
-          setResolvedTmdbId(movie.id);
+
+    import("@/lib/tmdb").then(({ resolveStremioIdToMovie, TMDB_IMAGE_W500, fetchExternalIds: fetchExtIds }) => {
+      const resolveId = movieId.startsWith("tt") ? movieId : `tmdb:${movieId}`;
+      resolveStremioIdToMovie(resolveId, type).then(async (movie) => {
+        if (!isMounted || !movie) return;
+        if (movie.id) setResolvedTmdbId(movie.id);
+
+        let imdbId = movieId.startsWith("tt") ? movieId : "";
+        if (!imdbId && movie.id) {
+          try {
+            const extIds = await fetchExtIds(movie.id, type);
+            if (extIds?.imdb_id) imdbId = extIds.imdb_id;
+          } catch { /* ok */ }
         }
+
+        if (!isMounted) return;
+        tmdbMetaRef.current = {
+          title: (movie as any).title || (movie as any).name || "",
+          backdrop: (movie as any).backdrop_path
+            ? `${TMDB_IMAGE_W500}${(movie as any).backdrop_path}`
+            : (movie as any).poster_path
+              ? `${TMDB_IMAGE_W500}${(movie as any).poster_path}`
+              : "",
+          imdbId: imdbId || movieId,
+        };
       }).catch(() => { });
     });
     return () => { isMounted = false; };
@@ -1592,8 +1606,12 @@ EventDump: ${JSON.stringify(collected)}`;
     if (!movieId) return;
     const interval = setInterval(() => {
       if (isPlayingRef.current && durationRef.current > 0 && movieId && effectiveMediaType) {
+        const meta = tmdbMetaRef.current;
         saveWatchProgress({
-          id: movieId, type: effectiveMediaType, title: localTitle || "Local Stream", poster: "",
+          id: meta?.imdbId || movieId,
+          type: effectiveMediaType,
+          title: meta?.title || localTitle || "Local Stream",
+          poster: meta?.backdrop || "",
           season: season ? parseInt(season) : undefined,
           episode: episode ? parseInt(episode) : undefined,
           currentTime: currentTimeRef.current,

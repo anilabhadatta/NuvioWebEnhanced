@@ -742,30 +742,47 @@ export default function MoviPlayerScreen() {
   const movieId = rawMovieId ? rawMovieId.replace(/^tmdb:/, "") : null;
   const hasValidTmdbId = resolvedTmdbId !== null;
 
-  // Resolve IMDB ID to TMDB ID if needed
+  // Cached TMDB metadata used for watch-progress heartbeat so mobile/desktop
+  // continue-watching entries get a real title, backdrop image, and IMDb ID.
+  const tmdbMetaRef = useRef<{ title: string; backdrop: string; imdbId: string } | null>(null);
+
+  // Resolve IMDB ID to TMDB ID if needed + cache metadata for watch-progress
   useEffect(() => {
     if (!movieId) {
       setResolvedTmdbId(null);
-      return;
-    }
-    if (!movieId.startsWith("tt")) {
-      const parsed = parseInt(movieId, 10);
-      if (Number.isFinite(parsed)) {
-        setResolvedTmdbId(parsed);
-      } else {
-        setResolvedTmdbId(null);
-      }
+      tmdbMetaRef.current = null;
       return;
     }
 
-    // It's an IMDb ID — resolve to TMDB ID
     let isMounted = true;
     const type = mediaType === "series" || mediaType === "tv" ? "tv" : "movie";
-    import("@/lib/tmdb").then(({ resolveStremioIdToMovie }) => {
-      resolveStremioIdToMovie(movieId, type).then((movie) => {
-        if (isMounted && movie && movie.id) {
-          setResolvedTmdbId(movie.id);
+
+    import("@/lib/tmdb").then(({ resolveStremioIdToMovie, TMDB_IMAGE_W500, fetchExternalIds: fetchExtIds }) => {
+      const resolveId = movieId.startsWith("tt") ? movieId : `tmdb:${movieId}`;
+      resolveStremioIdToMovie(resolveId, type).then(async (movie) => {
+        if (!isMounted || !movie) return;
+        if (movie.id) setResolvedTmdbId(movie.id);
+
+        // Resolve IMDb ID: if movieId is already tt-prefixed use it directly,
+        // otherwise look it up from TMDB external IDs.
+        let imdbId = movieId.startsWith("tt") ? movieId : "";
+        if (!imdbId && movie.id) {
+          try {
+            const extIds = await fetchExtIds(movie.id, type);
+            if (extIds?.imdb_id) imdbId = extIds.imdb_id;
+          } catch { /* ok */ }
         }
+
+        if (!isMounted) return;
+        tmdbMetaRef.current = {
+          title: (movie as any).title || (movie as any).name || "",
+          backdrop: (movie as any).backdrop_path
+            ? `${TMDB_IMAGE_W500}${(movie as any).backdrop_path}`
+            : (movie as any).poster_path
+              ? `${TMDB_IMAGE_W500}${(movie as any).poster_path}`
+              : "",
+          imdbId: imdbId || movieId,
+        };
       }).catch(() => { });
     });
     return () => { isMounted = false; };
@@ -1553,8 +1570,13 @@ EventDump: ${JSON.stringify(collected)}`;
     if (!movieId) return;
     const interval = setInterval(() => {
       if (isPlayingRef.current && durationRef.current > 0 && movieId && mediaType) {
+        const meta = tmdbMetaRef.current;
         saveWatchProgress({
-          id: movieId, type: mediaType, title: "Stream", poster: "",
+          // Use the IMDb ID when available so mobile catalog lookups work
+          id: meta?.imdbId || movieId,
+          type: mediaType,
+          title: meta?.title || "Stream",
+          poster: meta?.backdrop || "",
           season: season ? parseInt(season) : undefined,
           episode: episode ? parseInt(episode) : undefined,
           currentTime: currentTimeRef.current,
