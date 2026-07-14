@@ -1575,7 +1575,7 @@ EventDump: ${JSON.stringify(collected)}`;
   useEffect(() => {
     if (!movieId) return;
     const interval = setInterval(() => {
-      if (isPlayingRef.current && durationRef.current > 0 && movieId && mediaType) {
+      if (isPlayingRef.current && durationRef.current > 0 && movieId && mediaType && hasResumedRef.current) {
         const meta = tmdbMetaRef.current;
         saveWatchProgress({
           // Use the IMDb ID when available so mobile catalog lookups work

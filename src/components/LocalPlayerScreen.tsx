@@ -1605,7 +1605,7 @@ EventDump: ${JSON.stringify(collected)}`;
   useEffect(() => {
     if (!movieId) return;
     const interval = setInterval(() => {
-      if (isPlayingRef.current && durationRef.current > 0 && movieId && effectiveMediaType) {
+      if (isPlayingRef.current && durationRef.current > 0 && movieId && effectiveMediaType && hasResumedRef.current) {
         const meta = tmdbMetaRef.current;
         saveWatchProgress({
           id: meta?.imdbId || movieId,

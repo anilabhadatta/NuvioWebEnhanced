@@ -887,7 +887,7 @@ export default function PlaysVideoPlayerScreen() {
   useEffect(() => {
     if (!movieId) return;
     const interval = setInterval(() => {
-      if (isPlayingRef.current && durationRef.current > 0 && movieId && mediaType) {
+      if (isPlayingRef.current && durationRef.current > 0 && movieId && mediaType && hasResumedRef.current) {
         const meta = tmdbMetaRef.current;
         saveWatchProgress({
           id: meta?.imdbId || movieId,
