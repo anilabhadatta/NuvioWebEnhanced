@@ -2504,7 +2504,7 @@ EventDump: ${JSON.stringify(collected)}`;
               <p className="text-[#aaa] text-sm flex items-center gap-2">
                 <span>{isLocalTesting ? `Quick Play · ID: ${movieId}` : `ID: ${movieId} · ${mediaType}`}</span>
                 <span className="text-[10px] bg-white/10 text-white/70 px-2 py-0.5 rounded-full font-semibold">
-                  movi-player: {typeof window !== "undefined" && localStorage.getItem("nuvio.element_js_source") === "local" ? "Local" : "CDN (v0.3.4)"}
+                  movi-player: {typeof window !== "undefined" && localStorage.getItem("nuvio.element_js_source") === "local" ? "Local" : "CDN (v0.3.5)"}
                 </span>
               </p>
             )}

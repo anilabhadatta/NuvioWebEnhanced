@@ -64,8 +64,8 @@ export default function PlaybackSection() {
               setPlayerEngine("movi-player");
             }}
             className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${playerEngine === "movi-player"
-                ? "bg-white text-black border-white"
-                : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+              ? "bg-white text-black border-white"
+              : "bg-white/5 text-white border-white/10 hover:bg-white/10"
               }`}
           >
             movi-player (Default)
@@ -85,11 +85,11 @@ export default function PlaybackSection() {
                   setElementJsSource("cdn");
                 }}
                 className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${elementJsSource === "cdn"
-                    ? "bg-white text-black border-white"
-                    : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                  ? "bg-white text-black border-white"
+                  : "bg-white/5 text-white border-white/10 hover:bg-white/10"
                   }`}
               >
-                CDN (v0.3.4)
+                CDN (v0.3.5)
               </button>
               <button
                 onClick={() => {
@@ -97,8 +97,8 @@ export default function PlaybackSection() {
                   setElementJsSource("local");
                 }}
                 className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${elementJsSource === "local"
-                    ? "bg-white text-black border-white"
-                    : "bg-white/5 text-white border-white/10 hover:bg-white/10"
+                  ? "bg-white text-black border-white"
+                  : "bg-white/5 text-white border-white/10 hover:bg-white/10"
                   }`}
               >
                 Local element.js
@@ -321,7 +321,7 @@ export default function PlaybackSection() {
 
       <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Skip Segments</p>
       <p className="text-[#888] text-xs mb-4">Automatically detect intros, outros, and recaps</p>
-      
+
       <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl divide-y divide-white/5 mb-8">
         {/* Skip Intro */}
         <div className="px-5 py-4 flex items-center justify-between">
