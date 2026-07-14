@@ -1114,18 +1114,9 @@ export default function MoviPlayerScreen() {
     if (autoplayTriggeredRef.current || userPausedRef.current) return;
     autoplayTriggeredRef.current = true;
 
-    // Async wrapper: fetch fresh cloud resume time before seeking + playing.
-    const doResumeAndPlay = async () => {
-      // Fetch the latest resume position from cloud (Supabase). This is async but
-      // fast: it populates nuvio_cloud_progress so getResumeTime() picks it up.
-      if (!hasResumedRef.current && rawMovieId) {
-        try { await syncWatchProgressFromCloud(); } catch (_) { /* no-op if offline */ }
-      }
-
-      // Double-check user hasn't paused/navigated away while we were fetching.
-      if (userPausedRef.current) return;
-
-      // Apply resume seek.
+    // Apply resume seek and play.
+    const doResumeAndPlay = () => {
+      // Apply resume seek synchronously first so we don't delay the player's seeking pipeline.
       if (!hasResumedRef.current && rawMovieId) {
         hasResumedRef.current = true;
         const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
@@ -1136,6 +1127,11 @@ export default function MoviPlayerScreen() {
         if (resumeTime > 5) {
           try { video.currentTime = resumeTime; } catch (_) { }
         }
+      }
+
+      // Eagerly pull cloud watch progress in the background (fire-and-forget).
+      if (rawMovieId) {
+        syncWatchProgressFromCloud().catch(() => {});
       }
 
       const handlePlayError = (err?: any) => {
