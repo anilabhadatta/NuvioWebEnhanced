@@ -143,31 +143,60 @@ export async function syncWatchProgressFromCloud() {
   }
 }
 
-export function getResumeTime(id: string, type: string, season?: number, episode?: number): number {
+export function getResumeTime(id: string, type: string, season?: number, episode?: number, imdbId?: string): number {
   const local = getWatchProgress();
-  const localFound = local.find(p => String(p.id) === String(id) && p.type === type && p.season === season && p.episode === episode);
+  const localFound = local.find(p => 
+    (String(p.id) === String(id) || (imdbId && String(p.id) === String(imdbId))) && 
+    p.type === type && 
+    p.season === season && 
+    p.episode === episode
+  );
   
+  console.log("[getResumeTime] Input:", { id, type, season, episode, imdbId });
+  console.log("[getResumeTime] Local found:", localFound);
+
   try {
     const cloudStr = localStorage.getItem("nuvio_cloud_progress");
+    console.log("[getResumeTime] Cloud string from localStorage exists:", !!cloudStr);
     if (cloudStr) {
       const cloudData = JSON.parse(cloudStr);
-      const cloudFound = cloudData.find((p: any) => 
-        String(p.content_id) === String(id) && 
-        // Accept both "tv" and "series" since old web records used "tv"
-        (p.content_type === type || (p.content_type === "series" && type === "tv") || (p.content_type === "tv" && type === "series")) &&
-        p.season === (season || null) && 
-        p.episode === (episode || null)
-      );
+      console.log("[getResumeTime] Cloud data length:", cloudData?.length);
+      const cloudFound = cloudData.find((p: any) => {
+        const idMatch = (String(p.content_id) === String(id) || (imdbId && String(p.content_id) === String(imdbId)));
+        const typeMatch = (p.content_type === type || (p.content_type === "series" && type === "tv") || (p.content_type === "tv" && type === "series"));
+        const seasonMatch = p.season === (season || null);
+        const episodeMatch = p.episode === (episode || null);
+        
+        // Log individual item check if it matches content_id
+        if (String(p.content_id) === String(id) || (imdbId && String(p.content_id) === String(imdbId))) {
+          console.log("[getResumeTime] Content ID match details:", {
+            p_content_id: p.content_id,
+            idMatch,
+            typeMatch,
+            seasonMatch,
+            episodeMatch,
+            p_season: p.season,
+            p_episode: p.episode
+          });
+        }
+        return idMatch && typeMatch && seasonMatch && episodeMatch;
+      });
       
+      console.log("[getResumeTime] Cloud found:", cloudFound);
+
       if (cloudFound) {
         const cloudTimeSecs = cloudFound.position / 1000;
+        console.log("[getResumeTime] Cloud time (s):", cloudTimeSecs);
         // Use cloud time if it's more recent than local time
         if (!localFound || cloudFound.last_watched > localFound.updatedAt) {
+          console.log("[getResumeTime] Returning cloud time");
           return cloudTimeSecs;
         }
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error("[getResumeTime] Error parsing/matching cloud progress", e);
+  }
 
   return localFound ? localFound.currentTime : 0;
 }

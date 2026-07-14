@@ -1071,6 +1071,52 @@ export default function MoviPlayerScreen() {
     })();
   }, [showEpisodesPanel, movieId, episodesSeasonNum]);
 
+  const resumeTimeRef = useRef<number>(0);
+  const resumeTimeResolvedRef = useRef<boolean>(false);
+
+  // Fetch resume position (local + cloud) and cache it. doResumeAndPlay's
+  // retry loop will apply it once the player reaches a stable state.
+  useEffect(() => {
+    if (!movieId || !resolvedSrc) {
+      resumeTimeRef.current = 0;
+      resumeTimeResolvedRef.current = false;
+      return;
+    }
+
+    let isMounted = true;
+    resumeTimeResolvedRef.current = false;
+
+    const fetchResumeInfo = async () => {
+      // Wait for TMDB metadata to resolve so we have the IMDb ID.
+      const maxAttempts = 30;
+      let attempts = 0;
+      while (!tmdbMetaRef.current && !movieId.startsWith("tt") && attempts < maxAttempts) {
+        if (!isMounted) return;
+        await new Promise((r) => setTimeout(r, 100));
+        attempts++;
+      }
+
+      if (!isMounted) return;
+
+      const pId = movieId;
+      const pType = mediaType || "movie";
+      const pSeason = season ? parseInt(season, 10) : undefined;
+      const pEpisode = episode ? parseInt(episode, 10) : undefined;
+      const pImdbId = tmdbMetaRef.current?.imdbId || (movieId.startsWith("tt") ? movieId : undefined);
+
+      // Pull cloud progress so getResumeTime picks up the latest saved position.
+      try { await syncWatchProgressFromCloud(); } catch (_) {}
+
+      if (!isMounted) return;
+
+      resumeTimeRef.current = getResumeTime(pId, pType, pSeason, pEpisode, pImdbId);
+      resumeTimeResolvedRef.current = true;
+    };
+
+    fetchResumeInfo();
+
+    return () => { isMounted = false; };
+  }, [movieId, mediaType, season, episode, resolvedSrc]);
 
   // --------------------------------------------------------------------------------
   // 2. STABLE EVENT LISTENERS (Prevents React Re-render Loop Crashes)
@@ -1116,26 +1162,7 @@ export default function MoviPlayerScreen() {
 
     // Apply resume seek and play.
     const doResumeAndPlay = () => {
-      // Apply resume seek synchronously first so we don't delay the player's seeking pipeline.
-      if (!hasResumedRef.current && rawMovieId) {
-        hasResumedRef.current = true;
-        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
-        const pType = mediaType || "movie";
-        const pSeason = season ? parseInt(season, 10) : undefined;
-        const pEpisode = episode ? parseInt(episode, 10) : undefined;
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
-        if (resumeTime > 5) {
-          try { video.currentTime = resumeTime; } catch (_) { }
-        }
-      }
-
-      // Eagerly pull cloud watch progress in the background (fire-and-forget).
-      if (rawMovieId) {
-        syncWatchProgressFromCloud().catch(() => {});
-      }
-
       const handlePlayError = (err?: any) => {
-        console.log("[MoviPlayer] Autoplay blocked, falling back to muted", err);
         setIsMuted(true);
         setMutedByAutoplay(true);
         if (typeof video.muted !== 'undefined') video.muted = true;
@@ -1145,13 +1172,62 @@ export default function MoviPlayerScreen() {
         }, 100);
       };
 
+      // Determine the resume position (use cached value if cloud sync already resolved).
+      let resumeTime = 0;
+      if (!hasResumedRef.current && rawMovieId) {
+        if (resumeTimeResolvedRef.current) {
+          resumeTime = resumeTimeRef.current;
+        } else {
+          const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
+          const pType = mediaType || "movie";
+          const pSeason = season ? parseInt(season, 10) : undefined;
+          const pEpisode = episode ? parseInt(episode, 10) : undefined;
+          const pImdbId = tmdbMetaRef.current?.imdbId || (movieId && movieId.startsWith("tt") ? movieId : undefined);
+          resumeTime = getResumeTime(pId, pType, pSeason, pEpisode, pImdbId);
+          resumeTimeRef.current = resumeTime;
+        }
+        hasResumedRef.current = true;
+      }
+
+      // Start playback. The player runs its first-play pipeline asynchronously
+      // after play() returns, so we apply the resume seek in a retry loop below.
       const p = typeof video.play === 'function' ? video.play() : null;
       if (p && typeof p.catch === 'function') p.catch((err: any) => handlePlayError(err));
 
-      // Failsafe for silent failures (audio context suspended, video stays paused)
+      // Retry-seek loop: poll until the player reaches a stable state, then
+      // apply the resume seek. The player's internal first-play seek(0) runs
+      // async and would override a synchronous seek, so we wait for it to finish.
+      if (resumeTime > 5) {
+        const targetTime = resumeTime;
+        let attempts = 0;
+        const trySeek = () => {
+          if (userPausedRef.current || attempts >= 30) return;
+          attempts++;
+          const state = video.player?.getState?.();
+          if (Math.abs((video.currentTime ?? 0) - targetTime) < 2) return; // already there
+          if (state === 'playing' || state === 'paused' || state === 'buffering') {
+            try { video.currentTime = targetTime; } catch (_) {}
+            // One verification pass: retry if the seek didn't take
+            setTimeout(() => {
+              if (Math.abs((video.currentTime ?? 0) - targetTime) > 5 && !userPausedRef.current) {
+                try { video.currentTime = targetTime; } catch (_) {}
+              }
+            }, 500);
+            return;
+          }
+          setTimeout(trySeek, 100);
+        };
+        setTimeout(trySeek, 50);
+      }
+
+      // Pull the latest cloud progress in the background after playback starts.
+      if (rawMovieId) syncWatchProgressFromCloud().catch(() => {});
+
+      // Failsafe: if the player stays paused/suspended 1.5s after play(),
+      // retry with muted audio (handles browser autoplay policy blocks).
       setTimeout(() => {
         if (!userPausedRef.current && (video.paused || (video.player?.audioRenderer?.audioContext?.state === "suspended" && !video.muted))) {
-          handlePlayError("Failsafe: video still paused after play()");
+          handlePlayError();
         }
       }, 1500);
     };
@@ -1734,6 +1810,8 @@ EventDump: ${JSON.stringify(collected)}`;
     userDismissedNextCardRef.current = false;
     hasResumedRef.current = false;
     autoplayTriggeredRef.current = false;
+    resumeTimeRef.current = 0;
+    resumeTimeResolvedRef.current = false;
 
     // Reset autoplay coordination gates for the new stream
     playerReadyRef.current = false;
