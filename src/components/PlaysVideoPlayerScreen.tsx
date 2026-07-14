@@ -171,6 +171,7 @@ export default function PlaysVideoPlayerScreen() {
   const [userPaused, setUserPaused] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [mutedByAutoplay, setMutedByAutoplay] = useState(false);
+  const hasResumedRef = useRef(true);
 
   const [isBuffering, setIsBuffering] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
