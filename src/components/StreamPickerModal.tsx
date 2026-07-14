@@ -100,6 +100,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
                   addonName: addon.name,
                   addonUrl: addon.url,
                   proxy: isPenguplay ? true : s.proxy,
+                  imdbId: imdbId || undefined,
                 }));
                 
                 setStreams((prev) => [...prev, ...mappedRes]);
@@ -159,6 +160,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
                         headers: res.headers,
                         subtitles: res.subtitles,
                         proxy: true, // always proxy scraper streams through the server (Cloudflare bypass)
+                        imdbId: imdbId || undefined,
                       }));
                       setStreams((prev) => [...prev, ...mapped]);
                       onFirstResult();

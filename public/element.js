@@ -48934,7 +48934,7 @@ class HttpSource {
     if (!j2 && this.atomicIsStreaming() && t2 <= 15728640 && this.consecutiveOneOffFetches < this.MAX_ONEOFF_BEFORE_RESTART) {
       v.info(T, `Read: one-off range fetch for offset=${A2}, length=${t2} (outside stream window, main stream continues)`);
       try {
-        const v2 = (this.size > 0 ? Math.min(A2 + t2 - 1, this.size - 1) : A2 + t2 - 1) - A2 + 1, n3 = await fetch(this.url, { headers: await this.buildRequestHeaders({ offset: A2, length: v2 }) });
+        const v2 = (this.size > 0 ? Math.min(A2 + t2 - 1, this.size - 1) : A2 + t2 - 1) - A2 + 1, n3 = await fetch(this.url, { headers: await this.buildRequestHeaders({ offset: A2, length: v2 }), signal: this.abortController?.signal });
         if (206 === n3.status || n3.ok) {
           const t3 = n3.headers.get("content-length");
           if (t3 && parseInt(t3, 10) > 1.5 * v2) throw new Error(`Server ignored Range (Content-Length ${t3} for a ${v2}-byte request)`);
