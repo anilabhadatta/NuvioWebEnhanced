@@ -497,8 +497,20 @@ export default function MoviPlayerScreen() {
       const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const targetTime = ratio * duration;
+      
       try {
+        const wasPlaying = !video.paused;
+        if (wasPlaying && typeof video.pause === 'function') video.pause();
+        
         video.currentTime = targetTime;
+        
+        if (wasPlaying) {
+          setTimeout(() => {
+            if (!userPausedRef.current && typeof video.play === 'function') {
+              video.play().catch(() => {});
+            }
+          }, 600); // Wait 600ms for buffer to stabilize
+        }
       } catch (_) { }
       setCurrentTime(targetTime);
     }
@@ -1163,6 +1175,7 @@ export default function MoviPlayerScreen() {
     // Apply resume seek and play.
     const doResumeAndPlay = () => {
       const handlePlayError = (err?: any) => {
+        if (err && err.name === 'AbortError') return; // Ignore intentional aborts via pause()
         setIsMuted(true);
         setMutedByAutoplay(true);
         if (typeof video.muted !== 'undefined') video.muted = true;
@@ -1198,13 +1211,22 @@ export default function MoviPlayerScreen() {
       // apply the resume seek. The player's internal first-play seek(0) runs
       // async and would override a synchronous seek, so we wait for it to finish.
       if (resumeTime > 5) {
+        // Pause immediately so we don't blast 0:00 audio while preparing to seek
+        if (typeof video.pause === 'function') video.pause();
+        
         const targetTime = resumeTime;
         let attempts = 0;
         const trySeek = () => {
-          if (userPausedRef.current || attempts >= 30) return;
+          if (userPausedRef.current || attempts >= 30) {
+            if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+            return;
+          }
           attempts++;
           const state = video.player?.getState?.();
-          if (Math.abs((video.currentTime ?? 0) - targetTime) < 2) return; // already there
+          if (Math.abs((video.currentTime ?? 0) - targetTime) < 2) {
+            if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+            return; // already there
+          }
           if (state === 'playing' || state === 'paused' || state === 'buffering') {
             try { video.currentTime = targetTime; } catch (_) {}
             // One verification pass: retry if the seek didn't take
@@ -1212,6 +1234,12 @@ export default function MoviPlayerScreen() {
               if (Math.abs((video.currentTime ?? 0) - targetTime) > 5 && !userPausedRef.current) {
                 try { video.currentTime = targetTime; } catch (_) {}
               }
+              // Wait 600ms for buffer to stabilize before resuming audio/video
+              setTimeout(() => {
+                if (!userPausedRef.current && typeof video.play === 'function') {
+                  video.play().catch(() => {});
+                }
+              }, 600);
             }, 500);
             return;
           }
@@ -1924,7 +1952,22 @@ EventDump: ${JSON.stringify(collected)}`;
     if (!video || !duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = (e.clientX - rect.left) / rect.width;
-    video.currentTime = ratio * duration;
+    const targetTime = ratio * duration;
+    
+    try {
+      const wasPlaying = !video.paused;
+      if (wasPlaying && typeof video.pause === 'function') video.pause();
+      
+      video.currentTime = targetTime;
+      
+      if (wasPlaying) {
+        setTimeout(() => {
+          if (!userPausedRef.current && typeof video.play === 'function') {
+            video.play().catch(() => {});
+          }
+        }, 600);
+      }
+    } catch (_) { }
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2114,7 +2157,16 @@ EventDump: ${JSON.stringify(collected)}`;
         case "ArrowLeft": {
           e.preventDefault();
           if (typeof video.currentTime === "number") {
+            const wasPlaying = !video.paused;
+            if (wasPlaying && typeof video.pause === 'function') video.pause();
+            
             video.currentTime = Math.max(0, video.currentTime - 10);
+            
+            if (wasPlaying) {
+              setTimeout(() => {
+                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+              }, 400);
+            }
           }
           resetControlsTimeout();
           break;
@@ -2122,7 +2174,16 @@ EventDump: ${JSON.stringify(collected)}`;
         case "ArrowRight": {
           e.preventDefault();
           if (typeof video.currentTime === "number" && duration > 0) {
+            const wasPlaying = !video.paused;
+            if (wasPlaying && typeof video.pause === 'function') video.pause();
+            
             video.currentTime = Math.min(duration, video.currentTime + 10);
+            
+            if (wasPlaying) {
+              setTimeout(() => {
+                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+              }, 400);
+            }
           }
           resetControlsTimeout();
           break;
@@ -2153,8 +2214,17 @@ EventDump: ${JSON.stringify(collected)}`;
         case "5": case "6": case "7": case "8": case "9": {
           e.preventDefault();
           if (duration > 0) {
+            const wasPlaying = !video.paused;
+            if (wasPlaying && typeof video.pause === 'function') video.pause();
+            
             const fraction = parseInt(e.key, 10) / 10;
             video.currentTime = duration * fraction;
+            
+            if (wasPlaying) {
+              setTimeout(() => {
+                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+              }, 600);
+            }
           }
           resetControlsTimeout();
           break;
