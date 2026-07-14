@@ -852,18 +852,13 @@ export default function MoviPlayerScreen() {
           if (probeRes.ok) {
             const probe = await probeRes.json();
 
-            let isCorsSafe = false;
-            if (forceProxy && probe.strategy === "direct" && probe.finalUrl) {
-              try {
-                // Robust check: test if the browser can directly access the CDN without CORS errors
-                const corsCheck = await fetch(probe.finalUrl, { method: 'HEAD' });
-                isCorsSafe = corsCheck.ok || corsCheck.status === 206 || corsCheck.status === 429 || corsCheck.status === 405;
-              } catch (e) {
-                isCorsSafe = false; // CORS blocked or network error
-              }
-            }
+            // Google Drive streams ALWAYS require the proxy to strip Origin headers.
+            // Other CDNs (like HakunaYmatata) do not, and proxying them causes 429 limits on Vercel IPs.
+            const isGoogleDrive = probe.finalUrl?.includes('googleusercontent.com') || 
+                                  probe.finalUrl?.includes('drive.google.com') || 
+                                  probe.finalUrl?.includes('docs.google.com');
 
-            if (probe.strategy === "hls" || probe.strategy === "proxy" || (forceProxy && !isCorsSafe)) {
+            if (probe.strategy === "hls" || probe.strategy === "proxy" || (forceProxy && isGoogleDrive)) {
               // Proxied streams: route through /api/streamProxy to inject custom headers/cookies,
               // strip browser Origin headers, and bypass CORS limits.
               const headersParam = Object.keys(parsedHeaders).length
