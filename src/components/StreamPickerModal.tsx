@@ -76,7 +76,9 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
         }
 
         const baseId = imdbId ? imdbId : "tmdb:" + tmdbId;
-        const videoId = isSeries ? `${baseId}:${season}:${episode}` : baseId;
+        const safeSeason = season ?? 1;
+        const safeEpisode = episode ?? 1;
+        const videoId = isSeries ? `${baseId}:${safeSeason}:${safeEpisode}` : baseId;
         const addonMediaType = isSeries ? "series" : "movie";
 
         // Helper: reveal results immediately when the first stream from any source arrives
@@ -136,8 +138,8 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
                   scraper.filename,
                   idArg,
                   type,
-                  season,
-                  episode,
+                  safeSeason,
+                  safeEpisode,
                   scraper.id,
                   settings
                 )

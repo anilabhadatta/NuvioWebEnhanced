@@ -37,10 +37,13 @@ function getInitialProgress(): WatchProgress[] {
     const allProgress = [...local, ...cloudProgress];
 
     const getWeight = (p: any) => {
-      if (p.season !== undefined && p.episode !== undefined) {
-        return p.season * 10000 + p.episode;
+      // Base weight is the timestamp so recent items always win.
+      // However, if it's a TV show missing season/episode data (from a bug), penalize it heavily.
+      let weight = p.updatedAt;
+      if ((p.type === "tv" || p.type === "series") && (p.season === undefined || p.episode === undefined)) {
+        weight -= 1000000000000; // Heavy penalty
       }
-      return p.updatedAt;
+      return weight;
     };
 
     const uniqueMap = new Map<string, WatchProgress>();
@@ -110,10 +113,13 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
 
     // Helper to get sort weight for an item (prefers higher season/episode)
     const getWeight = (p: any) => {
-      if (p.season !== undefined && p.episode !== undefined) {
-        return p.season * 10000 + p.episode;
+      // Base weight is the timestamp so recent items always win.
+      // However, if it's a TV show missing season/episode data (from a bug), penalize it heavily.
+      let weight = p.updatedAt;
+      if ((p.type === "tv" || p.type === "series") && (p.season === undefined || p.episode === undefined)) {
+        weight -= 1000000000000; // Heavy penalty
       }
-      return p.updatedAt; // For movies, fallback to timestamp
+      return weight;
     };
 
     // First pass deduplication: group by raw ID and pick the one with max weight

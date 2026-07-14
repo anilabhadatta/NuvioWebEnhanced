@@ -31,7 +31,7 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
   const title = movie.title || movie.name || "";
   const date = movie.release_date || movie.first_air_date || "";
   const genres = getGenreNames(movie.genre_ids || []);
-  const isSeries = movie.media_type === "tv";
+  const isSeries = movie.media_type === "tv" || movie.media_type === "series" || (!movie.media_type && !movie.title && !!movie.name);
 
   useEffect(() => {
     if (isSeries) {
