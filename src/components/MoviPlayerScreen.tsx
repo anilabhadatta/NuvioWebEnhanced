@@ -852,7 +852,8 @@ export default function MoviPlayerScreen() {
           if (probeRes.ok) {
             const probe = await probeRes.json();
 
-            if (probe.strategy === "hls" || probe.strategy === "proxy" || forceProxy) {
+            const isDirectSafe = probe.finalUrl?.includes('hakunaymatata');
+            if (probe.strategy === "hls" || probe.strategy === "proxy" || (forceProxy && !isDirectSafe)) {
               // Proxied streams: route through /api/streamProxy to inject custom headers/cookies,
               // strip browser Origin headers, and bypass CORS limits.
               const headersParam = Object.keys(parsedHeaders).length
