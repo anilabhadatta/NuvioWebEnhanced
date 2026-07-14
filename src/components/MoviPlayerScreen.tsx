@@ -283,25 +283,7 @@ function ensureMoviPlayerLoaded(): Promise<void> {
           retries--;
           if (retries === 0) return res;
           console.warn("[Fetch] Intercepted 429 rate limit, retrying in 1.5s...", args[0]);
-          await new Promise<void>((r, reject) => {
-            let timeoutId: NodeJS.Timeout;
-            const signal = args[1]?.signal;
-            const onAbort = () => {
-              clearTimeout(timeoutId);
-              reject(new DOMException("Aborted", "AbortError"));
-            };
-            if (signal) {
-              if (signal.aborted) return onAbort();
-              signal.addEventListener("abort", onAbort);
-            }
-            timeoutId = setTimeout(() => {
-              if (signal) signal.removeEventListener("abort", onAbort);
-              r();
-            }, 1500);
-          }).catch((e) => {
-            // Re-throw AbortError so the outer catch can handle it
-            throw e;
-          });
+          await new Promise((r) => setTimeout(r, 1500));
           continue;
         }
         return res;
@@ -321,7 +303,7 @@ function ensureMoviPlayerLoaded(): Promise<void> {
       customElements.whenDefined("movi-player").then(() => resolve());
       return;
     }
-    const source = localStorage.getItem("nuvio.element_js_source") || "local";
+    const source = localStorage.getItem("nuvio.element_js_source") || "cdn";
     const scriptUrl = source === "local" ? "/element.js" : MOVI_PLAYER_CDN_URL;
     console.log(`[MoviPlayer] Loading player core from ${source} source: ${scriptUrl}`);
 
@@ -754,8 +736,6 @@ export default function MoviPlayerScreen() {
   const season = searchParams.get("s");
   const episode = searchParams.get("e");
   const streamHash = searchParams.get("hash");
-  // Pre-resolved IMDb ID stamped by StreamPickerModal — avoids async re-resolution in the player.
-  const urlImdbId = searchParams.get("imdb") || null;
 
   const [resolvedTmdbId, setResolvedTmdbId] = useState<number | null>(null);
   // Strip any "tmdb:" prefix — e.g. "tmdb:12345" → "12345"
@@ -765,24 +745,12 @@ export default function MoviPlayerScreen() {
   // Cached TMDB metadata used for watch-progress heartbeat so mobile/desktop
   // continue-watching entries get a real title, backdrop image, and IMDb ID.
   const tmdbMetaRef = useRef<{ title: string; backdrop: string; imdbId: string } | null>(null);
-  const metaResolvedRef = useRef(false);
-
-  // Seed imdbId immediately from the URL param so there is zero async wait on first play.
-  // The TMDB effect below may later fill in the title/backdrop, which is fine — the imdbId
-  // is what matters for watch-progress lookup and it is already known synchronously.
-  if (urlImdbId && tmdbMetaRef.current === null) {
-    tmdbMetaRef.current = { title: "", backdrop: "", imdbId: urlImdbId };
-    metaResolvedRef.current = true;
-  }
-
 
   // Resolve IMDB ID to TMDB ID if needed + cache metadata for watch-progress
   useEffect(() => {
-    metaResolvedRef.current = false;
     if (!movieId) {
       setResolvedTmdbId(null);
       tmdbMetaRef.current = null;
-      metaResolvedRef.current = true;
       return;
     }
 
@@ -815,12 +783,7 @@ export default function MoviPlayerScreen() {
               : "",
           imdbId: imdbId || movieId,
         };
-        metaResolvedRef.current = true;
-      }).catch(() => {
-        if (isMounted) metaResolvedRef.current = true;
-      });
-    }).catch(() => {
-      if (isMounted) metaResolvedRef.current = true;
+      }).catch(() => { });
     });
     return () => { isMounted = false; };
   }, [movieId, mediaType]);
@@ -1169,10 +1132,7 @@ export default function MoviPlayerScreen() {
         const pType = mediaType || "movie";
         const pSeason = season ? parseInt(season, 10) : undefined;
         const pEpisode = episode ? parseInt(episode, 10) : undefined;
-        // Use the pre-resolved IMDb ID from the URL param first, then fall back to
-        // whatever the async TMDB effect managed to populate.
-        const pImdbId = urlImdbId || tmdbMetaRef.current?.imdbId || undefined;
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode, pImdbId);
+        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
         if (resumeTime > 5) {
           try { video.currentTime = resumeTime; } catch (_) { }
         }
@@ -1749,8 +1709,8 @@ EventDump: ${JSON.stringify(collected)}`;
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    try {
-      v.playbackRate = playbackRate;
+    try { 
+      v.playbackRate = playbackRate; 
       v.playbackrate = playbackRate;
       if (v.setAttribute) v.setAttribute('playbackrate', String(playbackRate));
     } catch (_) { /* ignore */ }
@@ -2538,14 +2498,8 @@ EventDump: ${JSON.stringify(collected)}`;
 
               {/* Volume */}
               <div className="flex items-center gap-2 group/vol w-32">
-                <button
-                  onClick={() => {
-                    const next = !isMuted;
-                    setIsMuted(next);
-                    if (!next) setMutedByAutoplay(false);
-                    const video = videoRef.current;
-                    if (video && typeof video.muted !== 'undefined') video.muted = next;
-                  }}
+                <button 
+                  onClick={() => setIsMuted(prev => !prev)} 
                   className="outline-none hover:text-white transition-colors"
                   title={isMuted ? "Unmute" : "Mute"}
                 >
@@ -3102,9 +3056,6 @@ EventDump: ${JSON.stringify(collected)}`;
               route += `&headers=${encodeURIComponent(JSON.stringify(stream.headers))}`;
             }
             if (activeSeason && activeEpisode) route += `&s=${activeSeason}&e=${activeEpisode}`;
-            // Stamp the pre-resolved IMDb ID so the player reads it directly from the URL
-            // without any async TMDB re-resolution (eliminates resume-position race condition).
-            if (stream.imdbId) route += `&imdb=${encodeURIComponent(stream.imdbId)}`;
             // Remember which addon this stream came from (in sessionStorage, NOT the
             // route) so the next episode resolves from the same source without
             // polluting the addon URL with query params.

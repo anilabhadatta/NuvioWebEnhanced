@@ -51,8 +51,6 @@ export interface StreamItem {
   subtitles?: any[];
   /** If true, always route the stream through /api/streamProxy (e.g. for Cloudflare-protected scraper sources) */
   proxy?: boolean;
-  /** Resolved IMDb ID (e.g. "tt1190634") stamped at stream-picker time so the player never needs to re-resolve */
-  imdbId?: string;
 }
 
 // Streams the browser can't realistically play smoothly. REMUX files are huge

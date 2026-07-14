@@ -220,7 +220,6 @@ export default function HeroBanner() {
             if (season && episode) {
               route += `&s=${season}&e=${episode}`;
             }
-            if (stream.imdbId) route += `&imdb=${encodeURIComponent(stream.imdbId)}`;
             try {
               if (stream.addonUrl) sessionStorage.setItem("nuvio.currentAddonUrl", stream.addonUrl);
               else sessionStorage.removeItem("nuvio.currentAddonUrl");

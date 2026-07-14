@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
   let customHeaders: Record<string, string> = {};
   try {
     customHeaders = JSON.parse(customHeadersStr);
-  } catch (_) { }
+  } catch (_) {}
 
   // Base headers — Chrome desktop UA for maximum compatibility
   const headersToSend: Record<string, string> = {

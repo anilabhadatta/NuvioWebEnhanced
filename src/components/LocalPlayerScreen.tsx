@@ -283,24 +283,7 @@ function ensureMoviPlayerLoaded(): Promise<void> {
           retries--;
           if (retries === 0) return res;
           console.warn("[Fetch] Intercepted 429 rate limit, retrying in 1.5s...", args[0]);
-          await new Promise<void>((r, reject) => {
-            let timeoutId: NodeJS.Timeout;
-            const signal = args[1]?.signal;
-            const onAbort = () => {
-              clearTimeout(timeoutId);
-              reject(new DOMException("Aborted", "AbortError"));
-            };
-            if (signal) {
-              if (signal.aborted) return onAbort();
-              signal.addEventListener("abort", onAbort);
-            }
-            timeoutId = setTimeout(() => {
-              if (signal) signal.removeEventListener("abort", onAbort);
-              r();
-            }, 1500);
-          }).catch((e) => {
-            throw e;
-          });
+          await new Promise((r) => setTimeout(r, 1500));
           continue;
         }
         return res;
@@ -320,7 +303,7 @@ function ensureMoviPlayerLoaded(): Promise<void> {
       customElements.whenDefined("movi-player").then(() => resolve());
       return;
     }
-    const source = localStorage.getItem("nuvio.element_js_source") || "local";
+    const source = localStorage.getItem("nuvio.element_js_source") || "cdn";
     const scriptUrl = source === "local" ? "/element.js" : MOVI_PLAYER_CDN_URL;
     console.log(`[LocalPlayer] Loading player core from ${source} source: ${scriptUrl}`);
 
@@ -780,7 +763,6 @@ export default function LocalPlayerScreen() {
 
   // Cached TMDB metadata for watch-progress heartbeat (title, backdrop, IMDb ID)
   const tmdbMetaRef = useRef<{ title: string; backdrop: string; imdbId: string } | null>(null);
-  const metaResolvedRef = useRef(false);
 
   // Sync isLocalTesting state with URL search param
   useEffect(() => {
@@ -795,11 +777,9 @@ export default function LocalPlayerScreen() {
 
   // Resolve IMDB ID to TMDB ID if needed + cache metadata for watch-progress
   useEffect(() => {
-    metaResolvedRef.current = false;
     if (!movieId || String(movieId).startsWith("local_")) {
       setResolvedTmdbId(null);
       tmdbMetaRef.current = null;
-      metaResolvedRef.current = true;
       return;
     }
 
@@ -830,12 +810,7 @@ export default function LocalPlayerScreen() {
               : "",
           imdbId: imdbId || movieId,
         };
-        metaResolvedRef.current = true;
-      }).catch(() => {
-        if (isMounted) metaResolvedRef.current = true;
-      });
-    }).catch(() => {
-      if (isMounted) metaResolvedRef.current = true;
+      }).catch(() => { });
     });
     return () => { isMounted = false; };
   }, [movieId, mediaType]);
@@ -1173,13 +1148,6 @@ export default function LocalPlayerScreen() {
 
     // Async wrapper: fetch fresh cloud resume time before seeking + playing.
     const doResumeAndPlay = async () => {
-      // Wait for TMDB/IMDb metadata resolution to complete so getResumeTime has the correct IDs
-      let waited = 0;
-      while (!metaResolvedRef.current && waited < 3000) {
-        await new Promise((r) => setTimeout(r, 50));
-        waited += 50;
-      }
-
       // Fetch the latest resume position from cloud (Supabase). This is async but
       // fast: it populates nuvio_cloud_progress so getResumeTime() picks it up.
       if (!hasResumedRef.current && rawMovieId) {
@@ -1197,8 +1165,7 @@ export default function LocalPlayerScreen() {
         const pType = mediaType || (localMovieId ? "movie" : null) || "movie";
         const pSeason = season ? parseInt(season, 10) : undefined;
         const pEpisode = episode ? parseInt(episode, 10) : undefined;
-        const pImdbId = tmdbMetaRef.current?.imdbId || undefined;
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode, pImdbId);
+        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
         if (resumeTime > 5) {
           try { video.currentTime = resumeTime; } catch (_) { }
         }
@@ -1775,8 +1742,8 @@ EventDump: ${JSON.stringify(collected)}`;
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    try {
-      v.playbackRate = playbackRate;
+    try { 
+      v.playbackRate = playbackRate; 
       v.playbackrate = playbackRate;
       if (v.setAttribute) v.setAttribute('playbackrate', String(playbackRate));
     } catch (_) { /* ignore */ }
@@ -2585,14 +2552,8 @@ EventDump: ${JSON.stringify(collected)}`;
 
               {/* Volume */}
               <div className="flex items-center gap-2 group/vol w-32">
-                <button
-                  onClick={() => {
-                    const next = !isMuted;
-                    setIsMuted(next);
-                    if (!next) setMutedByAutoplay(false);
-                    const video = videoRef.current;
-                    if (video && typeof video.muted !== 'undefined') video.muted = next;
-                  }}
+                <button 
+                  onClick={() => setIsMuted(prev => !prev)} 
                   className="outline-none hover:text-white transition-colors"
                   title={isMuted ? "Unmute" : "Mute"}
                 >
