@@ -318,9 +318,23 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
     </div>
   );
 
+  // State to track fullscreen element so we can portal into it
+  const [fsNode, setFsNode] = useState<Element | null>(null);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const updateFs = () => setFsNode(document.fullscreenElement || null);
+    updateFs();
+    document.addEventListener("fullscreenchange", updateFs);
+    document.addEventListener("webkitfullscreenchange", updateFs);
+    return () => {
+      document.removeEventListener("fullscreenchange", updateFs);
+      document.removeEventListener("webkitfullscreenchange", updateFs);
+    };
+  }, []);
+
   if (typeof window !== "undefined") {
     const { createPortal } = require("react-dom");
-    return createPortal(modalContent, document.body);
+    return createPortal(modalContent, fsNode || document.body);
   }
   return null;
 }
