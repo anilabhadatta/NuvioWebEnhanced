@@ -345,13 +345,10 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
       onInit(player);
     }
 
-    // Configure Shaka once after element is fully registered — calling this in
-    // the 'ready' event handler causes the player to re-emit 'ready', which
-    // breaks the autoplay gate in the separate autoplay useEffect.
+    // Wait for movi-player definition to load
     ensureMoviPlayerLoaded().then(() => {
       if (!cancelled) {
         setMoviReady(true);
-        try { configureShakaPerformance(player); } catch (_) { }
       }
     });
 
@@ -1201,29 +1198,23 @@ export default function MoviPlayerScreen() {
     else if (state === 'ready') {
       setIsBuffering(false);
       setPlayerError(null);
+
+      // Configure Shaka for hardware-accelerated, high-res playback.
+      if (!video.__shakaConfigured) {
+        try {
+          if (video.player && typeof video.player.configure === 'function') {
+            configureShakaPerformance(video);
+            video.__shakaConfigured = true;
+          }
+        } catch (_) { }
+      }
+
       try {
         const isSw = !!(video.player?.isSoftwareDecoding?.() || (typeof video.isSoftwareDecoding === 'function' && video.isSoftwareDecoding()));
         setIsSoftwareDec(isSw);
       } catch (_) { }
 
-      // Resume watch progress logic
-      if (!hasResumedRef.current && rawMovieId) {
-        hasResumedRef.current = true;
-        const pId = rawMovieId.startsWith("tmdb:") ? rawMovieId.slice(5) : rawMovieId;
-        const pType = mediaType || "movie";
-        const pSeason = season ? parseInt(season, 10) : undefined;
-        const pEpisode = episode ? parseInt(episode, 10) : undefined;
-
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
-        if (resumeTime > 5) {
-          try {
-            video.currentTime = resumeTime;
-          } catch (_) { }
-        }
-      }
-
-      // Fallback: if trackschange never fired subtitle tracks (pure HLS/stream with
-      // no embedded subs), unlock subPrefApplied here so addon subtitles can run.
+      // Fallback: if trackschange never fired subtitle tracks, unlock subPrefApplied
       if (!subPrefAppliedRef.current) {
         console.log("[MoviPlayer] ready fired before any subtitle tracks — unlocking addon subtitle selection.");
         subPrefAppliedRef.current = true;
@@ -1231,15 +1222,10 @@ export default function MoviPlayerScreen() {
         setSelectedSub(-1);
       }
 
-      // Robust autoplay failsafe: if the player is ready and the user hasn't
-      // intentionally paused, trigger play() directly here. The dedicated autoplay
-      // useEffect uses an 800ms delay which can miss cases where configureShakaPerformance
-      // or a seek caused a second 'ready' emission after the guard already fired.
-      if (!userPaused) {
-        setTimeout(() => {
-          try { if (!userPausedRef.current) video.play?.(); } catch (_) { }
-        }, 50);
-      }
+      // Signal that the player is ready. scheduleAutoplay will fire play() once
+      // tracks have also been configured (or timed out).
+      playerReadyRef.current = true;
+      scheduleAutoplay(video);
     }
     else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
   };
@@ -1718,114 +1704,6 @@ EventDump: ${JSON.stringify(collected)}`;
   }, [resolvedSrc]);
 
   // Redundant autoplay effect removed. Autoplay is now managed via the stable statechange listener for 100% reliability.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-
-    let playTimeout: any = null;
-    let autoplayTriggered = false;
-
-    const triggerPlay = () => {
-      if (autoplayTriggered || userPausedRef.current) return;
-      autoplayTriggered = true;
-
-      clearTimeout(playTimeout);
-      playTimeout = setTimeout(() => {
-        if (userPausedRef.current) return;
-        const p = typeof v.play === 'function' ? v.play() : null;
-        if (p && typeof p.catch === 'function') {
-          p.catch((err: any) => {
-            // Unmuted play failed. Fallback to muted autoplay!
-            setIsMuted(true);
-            setMutedByAutoplay(true);
-            if (typeof v.muted !== 'undefined') v.muted = true;
-            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
-            setTimeout(() => {
-              if (!userPausedRef.current) {
-                typeof v.play === 'function' && v.play();
-              }
-            }, 100);
-          });
-        }
-
-        // Custom player autoplay block detection: Check if the audio context is suspended.
-        // If it is suspended and the player is not muted, the browser blocked unmuted autoplay.
-        // Switch to muted autoplay so it continues playing instead of remaining stuck on black screen.
-        setTimeout(() => {
-          if (userPausedRef.current) return;
-          const isSuspended = v.player?.audioRenderer?.audioContext?.state === "suspended";
-          if (isSuspended && !v.player?.muted) {
-            setIsMuted(true);
-            setMutedByAutoplay(true);
-            if (typeof v.muted !== 'undefined') v.muted = true;
-            if (v.player && typeof v.player.setMuted === 'function') v.player.setMuted(true);
-            setTimeout(() => {
-              if (!userPausedRef.current) {
-                typeof v.play === 'function' && v.play();
-              }
-            }, 100);
-          }
-        }, 150);
-      }, 800); // 800ms delay to let the decoder pipeline warm up fully before play
-    };
-
-    const onStateChange = (e: any) => {
-      if (e.detail === 'ready' && !userPausedRef.current) {
-        triggerPlay();
-      }
-    };
-    const onCanPlay = () => {
-      if (!userPausedRef.current) {
-        triggerPlay();
-      }
-    };
-    const onError = (e: any) => {
-      const errObj = v.error || (v.video && v.video.error);
-      const detail = e.detail || {};
-
-      // Shaka Player error fields
-      const shakaCode = detail.code || e.code || e.detail?.code;
-      const shakaCategory = detail.category || e.detail?.category;
-      const shakaSeverity = detail.severity || e.detail?.severity;
-      const shakaData = detail.data || e.detail?.data;
-      const msg = detail.message || e.message || errObj?.message || 'none';
-
-      // Gather all top-level keys
-      const collected: any = {};
-      const target = e.detail || e;
-      if (target) {
-        const keys = Object.getOwnPropertyNames(target);
-        for (const key of keys) {
-          try {
-            const val = target[key];
-            if (typeof val !== 'function' && typeof val !== 'object') {
-              collected[key] = val;
-            }
-          } catch { }
-        }
-      }
-
-      const errMsg = `[Player Error]
-NativeCode: ${errObj?.code || 'none'}
-NativeMsg: ${errObj?.message || 'none'}
-ShakaCode: ${shakaCode || 'none'} (Cat: ${shakaCategory || 'none'}, Sev: ${shakaSeverity || 'none'})
-Msg: ${msg}
-ShakaData: ${JSON.stringify(shakaData || [])}
-EventDump: ${JSON.stringify(collected)}`;
-
-      console.error(errMsg);
-    };
-
-    v.addEventListener('statechange', onStateChange);
-    v.addEventListener('canplay', onCanPlay);
-    v.addEventListener('error', onError);
-    return () => {
-      clearTimeout(playTimeout);
-      v.removeEventListener('statechange', onStateChange);
-      v.removeEventListener('canplay', onCanPlay);
-      v.removeEventListener('error', onError);
-    };
-  }, [resolvedSrc]);
 
   // Reflect playback rate on the player.
   useEffect(() => {
