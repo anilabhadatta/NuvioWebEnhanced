@@ -634,6 +634,7 @@ export default function VlcPlayerScreen() {
 
   // Cached TMDB metadata for watch-progress heartbeat (title, backdrop, IMDb ID)
   const tmdbMetaRef = useRef<{ title: string; backdrop: string; imdbId: string } | null>(null);
+  const hasResumedRef = useRef(true);
 
   // Resolve IMDB ID to TMDB ID if needed + cache metadata for watch-progress
   useEffect(() => {
