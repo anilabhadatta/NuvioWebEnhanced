@@ -1146,33 +1146,9 @@ export default function LocalPlayerScreen() {
     if (autoplayTriggeredRef.current || userPausedRef.current) return;
     autoplayTriggeredRef.current = true;
 
-    // Async wrapper: fetch fresh cloud resume time before seeking + playing.
-    const doResumeAndPlay = async () => {
-      // Fetch the latest resume position from cloud (Supabase). This is async but
-      // fast: it populates nuvio_cloud_progress so getResumeTime() picks it up.
-      if (!hasResumedRef.current && rawMovieId) {
-        try { await syncWatchProgressFromCloud(); } catch (_) { /* no-op if offline */ }
-      }
-
-      // Double-check user hasn't paused/navigated away while we were fetching.
-      if (userPausedRef.current) return;
-
-      // Apply resume seek.
-      if (!hasResumedRef.current && (rawMovieId || localMovieId)) {
-        hasResumedRef.current = true;
-        const activeId = rawMovieId || localMovieId || "";
-        const pId = activeId.startsWith("tmdb:") ? activeId.slice(5) : activeId;
-        const pType = mediaType || (localMovieId ? "movie" : null) || "movie";
-        const pSeason = season ? parseInt(season, 10) : undefined;
-        const pEpisode = episode ? parseInt(episode, 10) : undefined;
-        const resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
-        if (resumeTime > 5) {
-          try { video.currentTime = resumeTime; } catch (_) { }
-        }
-      }
-
+    // Apply resume seek and play.
+    const doResumeAndPlay = () => {
       const handlePlayError = (err?: any) => {
-        console.log("[MoviPlayer] Autoplay blocked, falling back to muted", err);
         setIsMuted(true);
         setMutedByAutoplay(true);
         if (typeof video.muted !== 'undefined') video.muted = true;
@@ -1182,13 +1158,57 @@ export default function LocalPlayerScreen() {
         }, 100);
       };
 
+      // Determine the resume position
+      let resumeTime = 0;
+      if (!hasResumedRef.current && (rawMovieId || localMovieId)) {
+        const activeId = rawMovieId || localMovieId || "";
+        const pId = activeId.startsWith("tmdb:") ? activeId.slice(5) : activeId;
+        const pType = mediaType || (localMovieId ? "movie" : null) || "movie";
+        const pSeason = season ? parseInt(season, 10) : undefined;
+        const pEpisode = episode ? parseInt(episode, 10) : undefined;
+        resumeTime = getResumeTime(pId, pType, pSeason, pEpisode);
+        hasResumedRef.current = true;
+      }
+
+      // Start playback. The player runs its first-play pipeline asynchronously
+      // after play() returns, so we apply the resume seek in a retry loop below.
       const p = typeof video.play === 'function' ? video.play() : null;
       if (p && typeof p.catch === 'function') p.catch((err: any) => handlePlayError(err));
 
-      // Failsafe for silent failures (audio context suspended, video stays paused)
+      // Retry-seek loop: poll until the player reaches a stable state, then
+      // apply the resume seek. The player's internal first-play seek(0) runs
+      // async and would override a synchronous seek, so we wait for it to finish.
+      if (resumeTime > 5) {
+        const targetTime = resumeTime;
+        let attempts = 0;
+        const trySeek = () => {
+          if (userPausedRef.current || attempts >= 30) return;
+          attempts++;
+          const state = video.player?.getState?.();
+          if (Math.abs((video.currentTime ?? 0) - targetTime) < 2) return; // already there
+          if (state === 'playing' || state === 'paused' || state === 'buffering') {
+            try { video.currentTime = targetTime; } catch (_) {}
+            // One verification pass: retry if the seek didn't take
+            setTimeout(() => {
+              if (Math.abs((video.currentTime ?? 0) - targetTime) > 5 && !userPausedRef.current) {
+                try { video.currentTime = targetTime; } catch (_) {}
+              }
+            }, 500);
+            return;
+          }
+          setTimeout(trySeek, 100);
+        };
+        setTimeout(trySeek, 50);
+      }
+
+      // Pull the latest cloud progress in the background after playback starts.
+      if (rawMovieId) syncWatchProgressFromCloud().catch(() => {});
+
+      // Failsafe: if the player stays paused/suspended 1.5s after play(),
+      // retry with muted audio (handles browser autoplay policy blocks).
       setTimeout(() => {
         if (!userPausedRef.current && (video.paused || (video.player?.audioRenderer?.audioContext?.state === "suspended" && !video.muted))) {
-          handlePlayError("Failsafe: video still paused after play()");
+          handlePlayError();
         }
       }, 1500);
     };
@@ -2553,7 +2573,13 @@ EventDump: ${JSON.stringify(collected)}`;
               {/* Volume */}
               <div className="flex items-center gap-2 group/vol w-32">
                 <button 
-                  onClick={() => setIsMuted(prev => !prev)} 
+                  onClick={() => {
+                    const next = !isMuted;
+                    setIsMuted(next);
+                    if (!next) setMutedByAutoplay(false);
+                    const video = videoRef.current;
+                    if (video && typeof video.muted !== 'undefined') video.muted = next;
+                  }}
                   className="outline-none hover:text-white transition-colors"
                   title={isMuted ? "Unmute" : "Mute"}
                 >

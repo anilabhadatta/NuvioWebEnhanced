@@ -2573,7 +2573,13 @@ EventDump: ${JSON.stringify(collected)}`;
               {/* Volume */}
               <div className="flex items-center gap-2 group/vol w-32">
                 <button 
-                  onClick={() => setIsMuted(prev => !prev)} 
+                  onClick={() => {
+                    const next = !isMuted;
+                    setIsMuted(next);
+                    if (!next) setMutedByAutoplay(false);
+                    const video = videoRef.current;
+                    if (video && typeof video.muted !== 'undefined') video.muted = next;
+                  }}
                   className="outline-none hover:text-white transition-colors"
                   title={isMuted ? "Unmute" : "Mute"}
                 >
