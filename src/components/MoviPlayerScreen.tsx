@@ -2592,7 +2592,18 @@ EventDump: ${JSON.stringify(collected)}`;
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
           </button>
           <div>
-            <p className="text-white font-bold text-lg drop-shadow">Now Playing</p>
+            <p className="text-white font-bold text-lg drop-shadow flex items-center gap-2">
+              <span>Now Playing</span>
+              {tmdbMetaRef.current?.title && (
+                <>
+                  <span className="text-white/40 font-normal">|</span>
+                  <span className="text-white/90">
+                    {tmdbMetaRef.current.title}
+                    {season && episode ? ` S${season}E${episode}` : ''}
+                  </span>
+                </>
+              )}
+            </p>
             {movieId && (
               <p className="text-[#aaa] text-sm flex items-center gap-2">
                 <span>ID: {movieId} · {mediaType}</span>
