@@ -282,23 +282,56 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
                 {streams
                   .filter((s) => selectedAddonFilter === "All" || s.addonName === selectedAddonFilter)
                   .map((stream, idx) => (
-                    <button
+                    <div
                       key={idx}
-                      onClick={() => onPlayStream(stream)}
-                      className="w-full bg-[#222] hover:bg-[#333] border border-white/5 rounded-xl p-4 text-left transition-colors group"
+                      className="w-full bg-[#222] hover:bg-[#333] border border-white/5 rounded-xl flex transition-colors group overflow-hidden"
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="text-white font-semibold text-sm line-clamp-1">
-                          {stream.title || stream.name || "Unknown Stream"}
-                        </span>
-                        <span className="text-xs bg-white/10 text-[#aaa] px-2 py-1 rounded whitespace-nowrap ml-2">
-                          {stream.addonName}
-                        </span>
-                      </div>
-                      {stream.description && (
-                        <p className="text-[#888] text-xs line-clamp-2">{stream.description}</p>
+                      <button
+                        onClick={() => onPlayStream(stream)}
+                        className="flex-1 min-w-0 p-4 text-left"
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-white font-semibold text-sm line-clamp-1 pr-4 break-all">
+                            {stream.title || stream.name || "Unknown Stream"}
+                          </span>
+                          <span className="text-xs bg-white/10 text-[#aaa] px-2 py-1 rounded whitespace-nowrap flex-shrink-0">
+                            {stream.addonName}
+                          </span>
+                        </div>
+                        {stream.description && (
+                          <p className="text-[#888] text-xs line-clamp-2 pr-2 break-words">{stream.description}</p>
+                        )}
+                      </button>
+                      {stream.url && !stream.url.startsWith("intent:") && (
+                        <div className="flex flex-col border-l border-white/5 flex-shrink-0 w-12">
+                          <button
+                            title="Copy link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(stream.url!);
+                            }}
+                            className="flex-1 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-colors border-b border-white/5"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+                            </svg>
+                          </button>
+                          <a
+                            href={stream.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            download={movieData ? `${movieData.title || movieData.name}.mp4` : "video.mp4"}
+                            title="Download stream"
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex-1 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                            </svg>
+                          </a>
+                        </div>
                       )}
-                    </button>
+                    </div>
                   ))}
               </div>
               
