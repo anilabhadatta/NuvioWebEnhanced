@@ -3180,27 +3180,34 @@ EventDump: ${JSON.stringify(collected)}`;
         <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/70 p-6" onClick={() => setShowExternalPlayer(false)}>
           <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-white font-bold text-lg">Open in external player</h2>
+              <h2 className="text-white font-bold text-lg">Stream Options</h2>
               <button onClick={() => setShowExternalPlayer(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <p className="text-[#888] text-xs mb-3">Your browser will ask to launch the selected app. Make sure the player is installed and its URL handler is registered.</p>
             <div className="flex flex-col gap-2">
-              {externalPlayers.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => openInExternalPlayer(p.id)}
-                  className="w-full text-left px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white font-semibold text-sm transition-colors"
-                >
-                  {p.name}
-                </button>
-              ))}
               <button
                 onClick={copyStreamUrl}
                 className="w-full text-left px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white font-semibold text-sm transition-colors mt-1"
               >
                 Copy stream URL
+              </button>
+              <button
+                onClick={() => {
+                  if (resolvedSrc) {
+                    const a = document.createElement('a');
+                    a.href = resolvedSrc;
+                    a.target = '_blank';
+                    a.download = tmdbMetaRef.current?.title ? `${tmdbMetaRef.current.title}.mp4` : 'video.mp4';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }
+                  setShowExternalPlayer(false);
+                }}
+                className="w-full text-left px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white font-semibold text-sm transition-colors mt-1"
+              >
+                Download video
               </button>
             </div>
           </div>
