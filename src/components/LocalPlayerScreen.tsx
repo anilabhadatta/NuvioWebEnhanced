@@ -428,6 +428,15 @@ export default function LocalPlayerScreen() {
   const videoRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // High-performance direct DOM refs
+  const timeDisplayRef = useRef<HTMLSpanElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const progressDotRef = useRef<HTMLDivElement>(null);
+  const externalSubRef = useRef<HTMLDivElement>(null);
+  const externalSubInnerRef = useRef<HTMLDivElement>(null);
+  const lastStateUpdateTimeRef = useRef<number>(0);
+  const externalSubCuesRef = useRef<SubtitleCue[]>([]);
+
   const [resolvedSrc, setResolvedSrc] = useState<string | File>("");
   const [isLocalTesting, setIsLocalTesting] = useState(false);
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
@@ -655,6 +664,26 @@ export default function LocalPlayerScreen() {
   useEffect(() => {
     subtitleStyleRef.current = subtitleStyle;
     applySubtitleStyleToPlayer(videoRef.current, subtitleStyle);
+
+    // Apply styles to custom external subtitle overlay directly in the DOM
+    const inner = externalSubInnerRef.current;
+    if (inner) {
+      const bgIsTransparent = !subtitleStyle.bgColor || subtitleStyle.bgColor === 'transparent' || subtitleStyle.bgPct === 0;
+      const bgRgb = bgIsTransparent ? null : (() => {
+        const c = subtitleStyle.bgColor.replace('#', '');
+        const full = c.length === 3 ? c[0] + c[0] + c[1] + c[1] + c[2] + c[2] : c;
+        return `${parseInt(full.slice(0, 2), 16)}, ${parseInt(full.slice(2, 4), 16)}, ${parseInt(full.slice(4, 6), 16)}`;
+      })();
+      const addonFontSize = subtitleStyle.sizePct + 80;
+
+      inner.style.backgroundColor = bgRgb ? `rgba(${bgRgb}, ${subtitleStyle.bgPct / 100})` : 'transparent';
+      inner.style.color = subtitleStyle.color;
+      inner.style.fontSize = `${addonFontSize}%`;
+      inner.style.textShadow = subtitleStyle.edge === 'shadow' ? '1px 1px 4px #000, -1px -1px 4px #000' :
+        subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
+        subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none';
+      inner.style.padding = bgRgb ? '4px 10px' : '0';
+    }
   }, [subtitleStyle]);
 
   // External Subtitles
@@ -668,6 +697,9 @@ export default function LocalPlayerScreen() {
   const subtitleDelayRef = useRef(0);
   // Parsed cues for the custom overlay renderer
   const [externalSubCues, setExternalSubCues] = useState<SubtitleCue[]>([]);
+  useEffect(() => {
+    externalSubCuesRef.current = externalSubCues;
+  }, [externalSubCues]);
   const autoSelectedAddonSubRef = useRef(false);
   // Stored as a ref so the early useEffect (before loadExternalSubtitle is defined) can call it
   const loadExternalSubtitleRef = useRef<((id: string, url: string, name: string) => void) | null>(null);
@@ -1530,8 +1562,63 @@ export default function LocalPlayerScreen() {
     // following episode's card while this one is still loading.
     if (t < 60) awaitingFreshTimeRef.current = false;
 
-    setCurrentTime(t);
-    setDuration(video.duration || 0);
+    // Direct DOM updates for timer and progress bar (runs at 60fps)
+    if (timeDisplayRef.current) {
+      timeDisplayRef.current.textContent = `${formatTime(t)} / ${formatTime(video.duration || 0)}`;
+    }
+    
+    if (progressBarRef.current) {
+      const dur = video.duration || 0;
+      const pct = dur > 0 ? (t / dur) * 100 : 0;
+      progressBarRef.current.style.width = `${pct}%`;
+      if (progressDotRef.current) {
+        progressDotRef.current.style.left = `calc(${pct}% - 8px)`;
+      }
+    }
+
+    // Direct DOM updates for subtitle overlay (binary search lookup at 60fps)
+    const adjustedSubTime = t - subtitleDelayRef.current;
+    let foundCue: SubtitleCue | null = null;
+    const cues = externalSubCuesRef.current;
+    if (cues && cues.length > 0) {
+      let low = 0;
+      let high = cues.length - 1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        const cue = cues[mid];
+        if (adjustedSubTime >= cue.start && adjustedSubTime <= cue.end) {
+          foundCue = cue;
+          break;
+        } else if (adjustedSubTime < cue.start) {
+          high = mid - 1;
+        } else {
+          low = mid + 1;
+        }
+      }
+    }
+
+    const overlay = externalSubRef.current;
+    const inner = externalSubInnerRef.current;
+    if (overlay && inner) {
+      if (foundCue) {
+        if (inner.textContent !== foundCue.text) {
+          inner.textContent = foundCue.text;
+        }
+        overlay.classList.remove("hidden");
+      } else {
+        overlay.classList.add("hidden");
+      }
+    }
+
+    // Throttle React state updates to 250ms to prevent heavy component re-renders.
+    // Also force an immediate update if a seek occurred (e.g. >1.5s time gap).
+    const isSeek = Math.abs(t - currentTimeRef.current) > 1.5;
+    const now = performance.now();
+    if (isSeek || now - lastStateUpdateTimeRef.current >= 250) {
+      setCurrentTime(t);
+      setDuration(video.duration || 0);
+      lastStateUpdateTimeRef.current = now;
+    }
 
     // Periodically sync software decoding status
     try {
@@ -2363,45 +2450,24 @@ EventDump: ${JSON.stringify(collected)}`;
       />
 
       {/* External subtitle overlay — rendered by our own parser, works with any player */}
-      {activeSubCue && (() => {
-        // Build background color respecting user's choice
-        const bgIsTransparent = !subtitleStyle.bgColor || subtitleStyle.bgColor === 'transparent' || subtitleStyle.bgPct === 0;
-        const bgRgb = bgIsTransparent ? null : (() => {
-          const c = subtitleStyle.bgColor.replace('#', '');
-          const full = c.length === 3 ? c[0] + c[0] + c[1] + c[1] + c[2] + c[2] : c;
-          return `${parseInt(full.slice(0, 2), 16)}, ${parseInt(full.slice(2, 4), 16)}, ${parseInt(full.slice(4, 6), 16)}`;
-        })();
-        const addonFontSize = subtitleStyle.sizePct + 80;
-        return (
-          <div
-            className="absolute bottom-[88px] left-0 right-0 flex justify-center z-30 pointer-events-none px-8"
-            style={{ userSelect: 'none' }}
-          >
-            <div
-              style={{
-                backgroundColor: bgRgb
-                  ? `rgba(${bgRgb}, ${subtitleStyle.bgPct / 100})`
-                  : 'transparent',
-                color: subtitleStyle.color,
-                fontSize: `${addonFontSize}%`,
-                textShadow: subtitleStyle.edge === 'shadow' ? '1px 1px 4px #000, -1px -1px 4px #000' :
-                  subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
-                    subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none',
-                padding: bgRgb ? '4px 10px' : '0',
-                borderRadius: 4,
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 600,
-                lineHeight: 1.4,
-                maxWidth: '80vw',
-                textAlign: 'center',
-                whiteSpace: 'pre-line',
-              }}
-            >
-              {activeSubCue.text}
-            </div>
-          </div>
-        );
-      })()}
+      <div
+        ref={externalSubRef}
+        className="absolute bottom-[88px] left-0 right-0 flex justify-center z-30 pointer-events-none px-8 hidden"
+        style={{ userSelect: 'none' }}
+      >
+        <div
+          ref={externalSubInnerRef}
+          style={{
+            borderRadius: 4,
+            fontFamily: 'Arial, sans-serif',
+            fontWeight: 600,
+            lineHeight: 1.4,
+            maxWidth: '80vw',
+            textAlign: 'center',
+            whiteSpace: 'pre-line',
+          }}
+        />
+      </div>
 
       {/* States */}
       {!resolvedSrc && (
@@ -2566,9 +2632,10 @@ EventDump: ${JSON.stringify(collected)}`;
                 onLostPointerCapture={handleProgressLostPointerCapture}
               >
                 <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
-                  <div className="h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
+                  <div ref={progressBarRef} className="h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
                 </div>
                 <div
+                  ref={progressDotRef}
                   className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity pointer-events-none"
                   style={{ left: `calc(${displayProgress}% - 8px)` }}
                 />
@@ -2608,7 +2675,7 @@ EventDump: ${JSON.stringify(collected)}`;
               </div>
 
               {/* Time */}
-              <span className="text-white/80 text-sm tabular-nums ml-2">
+              <span ref={timeDisplayRef} className="text-white/80 text-sm tabular-nums ml-2">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
             </div>
