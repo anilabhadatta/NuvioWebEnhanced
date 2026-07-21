@@ -26,6 +26,7 @@ If you prefer not to use the server-side resolver (e.g., to avoid any IP differe
 5. Make sure the extension is enabled. The extension automatically modifies `Access-Control-Allow-Origin` and `Cross-Origin-Resource-Policy` headers for all requests.
 
 > **Note:** The extension is not available on mobile browsers (iOS Safari, Android Chrome). On mobile, the built-in resolver handles CORS automatically.
+> 
 
 ## Getting Started (Local Development)
 
