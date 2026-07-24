@@ -7,6 +7,10 @@ import { Readable } from "node:stream";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const STREAM_PROXY_ENABLED = !["false", "0", "no", "off"].includes(
+  (process.env.NEXT_PUBLIC_STREAM_PROXY || "true").toLowerCase()
+);
+
 const agent = new https.Agent({
   ciphers:
     "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256",
@@ -40,6 +44,10 @@ async function streamToText(stream: Readable): Promise<string> {
 }
 
 export async function GET(req: NextRequest) {
+  if (!STREAM_PROXY_ENABLED) {
+    return new NextResponse("Stream proxy is disabled", { status: 403 });
+  }
+
   const { searchParams } = req.nextUrl;
   const targetUrl = searchParams.get("url");
   if (!targetUrl) {
@@ -184,6 +192,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function HEAD(req: NextRequest) {
+  if (!STREAM_PROXY_ENABLED) {
+    return new NextResponse("Stream proxy is disabled", { status: 403 });
+  }
+
   const { searchParams } = req.nextUrl;
   const targetUrl = searchParams.get("url");
   if (!targetUrl) {
@@ -202,6 +214,10 @@ export async function HEAD(req: NextRequest) {
 }
 
 export async function OPTIONS() {
+  if (!STREAM_PROXY_ENABLED) {
+    return new NextResponse("Stream proxy is disabled", { status: 403 });
+  }
+
   return new NextResponse(null, {
     status: 204,
     headers: {

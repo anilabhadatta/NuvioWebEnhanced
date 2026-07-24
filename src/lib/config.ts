@@ -15,4 +15,7 @@ export const config = {
   traktClientSecret: process.env.NEXT_PUBLIC_TRAKT_CLIENT_SECRET || "",
   traktApiUrl: process.env.NEXT_PUBLIC_TRAKT_API_URL || "",
   traktRedirectUri: process.env.NEXT_PUBLIC_TRAKT_REDIRECT_URI || "",
+  streamProxyEnabled: !["false", "0", "no", "off"].includes(
+    (process.env.NEXT_PUBLIC_STREAM_PROXY || "true").toLowerCase()
+  ),
 };

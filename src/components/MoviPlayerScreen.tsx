@@ -10,6 +10,7 @@ import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
 import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS, getLocalPlaybackSettings } from "@/lib/playbackSettings";
 import { languageMatchesPreference, getLanguageName } from "@/lib/languageUtils";
+import { config } from "@/lib/config";
 import StreamPickerModal from "./StreamPickerModal";
 
 function formatTime(sec: number): string {
@@ -777,6 +778,7 @@ export default function MoviPlayerScreen() {
   const streamUrl = searchParams.get("url");
   const streamHeadersStr = searchParams.get("headers");
   const forceProxy = searchParams.get("proxy") === "1";
+  const streamProxyEnabled = config.streamProxyEnabled;
   const season = searchParams.get("s");
   const episode = searchParams.get("e");
   const streamHash = searchParams.get("hash");
@@ -879,6 +881,12 @@ export default function MoviPlayerScreen() {
       //   proxy  → route through /api/streamProxy (CORS-blocked / unknown)
       //
       // For non-scraper streams, fall through to the standard direct/resolve logic below.
+      if (forceProxy && !streamProxyEnabled) {
+        setPlayerError("Stream proxy is disabled by environment configuration.");
+        setResolvedSrc(decoded);
+        return;
+      }
+
       if (forceProxy) {
         const parsedHeaders: Record<string, string> = {};
         if (streamHeadersStr) {
@@ -896,7 +904,7 @@ export default function MoviPlayerScreen() {
           if (probeRes.ok) {
             const probe = await probeRes.json();
 
-            if (probe.strategy === "hls" || probe.strategy === "proxy" || forceProxy) {
+            if (probe.strategy === "hls" || probe.strategy === "proxy") {
               // Proxied streams: route through /api/streamProxy to inject custom headers/cookies,
               // strip browser Origin headers, and bypass CORS limits.
               const headersParam = Object.keys(parsedHeaders).length
@@ -3299,7 +3307,7 @@ EventDump: ${JSON.stringify(collected)}`;
             const activeSeason = streamPickerSeason ?? (season ? parseInt(season) : undefined);
             const activeEpisode = streamPickerEpisode ?? (episode ? parseInt(episode) : undefined);
             let route = `/player?id=${movieId}&type=${mediaType}&url=${url}`;
-            if (stream.proxy) {
+            if (stream.proxy && streamProxyEnabled) {
               route += `&proxy=1`;
             }
             if (stream.headers) {

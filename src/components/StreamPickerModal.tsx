@@ -9,6 +9,7 @@ import {
   getGroupPluginsByRepo,
   loadScraperSettings,
 } from "@/lib/plugins";
+import { config } from "@/lib/config";
 import { executeScraper } from "@/lib/pluginRuntime";
 
 interface StreamPickerModalProps {
@@ -27,6 +28,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
   const [error, setError] = useState<string | null>(null);
   const [selectedAddonFilter, setSelectedAddonFilter] = useState<string>("All");
   const [movieData, setMovieData] = useState<TMDBMovie | null>(null);
+  const streamProxyEnabled = config.streamProxyEnabled;
 
   const isSeries = mediaType === "tv" || mediaType === "series" || !!season;
 
@@ -101,7 +103,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
                   ...s,
                   addonName: addon.name,
                   addonUrl: addon.url,
-                  proxy: isPenguplay ? true : s.proxy,
+                  proxy: streamProxyEnabled ? (isPenguplay ? true : s.proxy) : false,
                 }));
                 
                 setStreams((prev) => [...prev, ...mappedRes]);
@@ -160,7 +162,7 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
                         addonUrl: repo.url,
                         headers: res.headers,
                         subtitles: res.subtitles,
-                        proxy: true, // always proxy scraper streams through the server (Cloudflare bypass)
+                        proxy: streamProxyEnabled, // allow proxy only when enabled by environment
                       }));
                       setStreams((prev) => [...prev, ...mapped]);
                       onFirstResult();
