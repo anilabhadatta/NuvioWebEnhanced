@@ -416,10 +416,13 @@ export default function MoviPlayerScreen() {
   const timeDisplayRef = useRef<HTMLSpanElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
   const progressDotRef = useRef<HTMLDivElement>(null);
+  const bufferedBarRef = useRef<HTMLDivElement>(null);
   const externalSubRef = useRef<HTMLDivElement>(null);
   const externalSubInnerRef = useRef<HTMLDivElement>(null);
   const lastStateUpdateTimeRef = useRef<number>(0);
   const externalSubCuesRef = useRef<SubtitleCue[]>([]);
+  const doubleClickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const osdTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [resolvedSrc, setResolvedSrc] = useState<string>("");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -441,9 +444,29 @@ export default function MoviPlayerScreen() {
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolume] = useState(() => {
+    if (typeof window === 'undefined') return 1;
+    const s = parseFloat(localStorage.getItem('nuvio.volume') ?? '');
+    return isNaN(s) ? 1 : Math.max(0, Math.min(1, s));
+  });
   const [showControls, setShowControls] = useState(true);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // OSD toast (on-screen display for keyboard/wheel actions)
+  const [osdMessage, setOsdMessage] = useState<string | null>(null);
+  // Picture-in-Picture
+  const [isPip, setIsPip] = useState(false);
+  // Keyboard shortcut help overlay
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  // Subtitle vertical offset (px from bottom)
+  const [subtitleBottomOffset, setSubtitleBottomOffset] = useState(88);
+
+  // Show a brief on-screen toast message (auto-dismisses after 1.5s)
+  const showOsd = useCallback((msg: string) => {
+    setOsdMessage(msg);
+    if (osdTimerRef.current) clearTimeout(osdTimerRef.current);
+    osdTimerRef.current = setTimeout(() => setOsdMessage(null), 1500);
+  }, []);
 
   // Menus
   const [openMenu, setOpenMenu] = useState<"sub" | "audio" | "speed" | null>(null);
@@ -507,17 +530,17 @@ export default function MoviPlayerScreen() {
       const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const targetTime = ratio * duration;
-      
+
       try {
         const wasPlaying = !video.paused;
         if (wasPlaying && typeof video.pause === 'function') video.pause();
-        
+
         video.currentTime = targetTime;
-        
+
         if (wasPlaying) {
           setTimeout(() => {
             if (!userPausedRef.current && typeof video.play === 'function') {
-              video.play().catch(() => {});
+              video.play().catch(() => { });
             }
           }, 600); // Wait 600ms for buffer to stabilize
         }
@@ -673,7 +696,7 @@ export default function MoviPlayerScreen() {
       inner.style.fontSize = `${addonFontSize}%`;
       inner.style.textShadow = subtitleStyle.edge === 'shadow' ? '1px 1px 4px #000, -1px -1px 4px #000' :
         subtitleStyle.edge === 'outline' ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' :
-        subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none';
+          subtitleStyle.edge === 'raised' ? '1px 1px 0 #fff, 2px 2px 0 #888' : 'none';
       inner.style.padding = bgRgb ? '4px 10px' : '0';
     }
   }, [subtitleStyle]);
@@ -1157,7 +1180,7 @@ export default function MoviPlayerScreen() {
       const pImdbId = tmdbMetaRef.current?.imdbId || (movieId.startsWith("tt") ? movieId : undefined);
 
       // Pull cloud progress so getResumeTime picks up the latest saved position.
-      try { await syncWatchProgressFromCloud(); } catch (_) {}
+      try { await syncWatchProgressFromCloud(); } catch (_) { }
 
       if (!isMounted) return;
 
@@ -1253,31 +1276,31 @@ export default function MoviPlayerScreen() {
       if (resumeTime > 5) {
         // Pause immediately so we don't blast 0:00 audio while preparing to seek
         if (typeof video.pause === 'function') video.pause();
-        
+
         const targetTime = resumeTime;
         let attempts = 0;
         const trySeek = () => {
           if (userPausedRef.current || attempts >= 30) {
-            if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+            if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => { });
             return;
           }
           attempts++;
           const state = video.player?.getState?.();
           if (Math.abs((video.currentTime ?? 0) - targetTime) < 2) {
-            if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+            if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => { });
             return; // already there
           }
           if (state === 'playing' || state === 'paused' || state === 'buffering') {
-            try { video.currentTime = targetTime; } catch (_) {}
+            try { video.currentTime = targetTime; } catch (_) { }
             // One verification pass: retry if the seek didn't take
             setTimeout(() => {
               if (Math.abs((video.currentTime ?? 0) - targetTime) > 5 && !userPausedRef.current) {
-                try { video.currentTime = targetTime; } catch (_) {}
+                try { video.currentTime = targetTime; } catch (_) { }
               }
               // Wait 600ms for buffer to stabilize before resuming audio/video
               setTimeout(() => {
                 if (!userPausedRef.current && typeof video.play === 'function') {
-                  video.play().catch(() => {});
+                  video.play().catch(() => { });
                 }
               }, 600);
             }, 500);
@@ -1289,7 +1312,7 @@ export default function MoviPlayerScreen() {
       }
 
       // Pull the latest cloud progress in the background after playback starts.
-      if (rawMovieId) syncWatchProgressFromCloud().catch(() => {});
+      if (rawMovieId) syncWatchProgressFromCloud().catch(() => { });
 
       // Failsafe: if the player stays paused/suspended 1.5s after play(),
       // retry with muted audio (handles browser autoplay policy blocks).
@@ -1618,7 +1641,7 @@ export default function MoviPlayerScreen() {
     if (timeDisplayRef.current) {
       timeDisplayRef.current.textContent = `${formatTime(t)} / ${formatTime(video.duration || 0)}`;
     }
-    
+
     if (progressBarRef.current) {
       const dur = video.duration || 0;
       const pct = dur > 0 ? (t / dur) * 100 : 0;
@@ -1904,8 +1927,8 @@ EventDump: ${JSON.stringify(collected)}`;
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    try { 
-      v.playbackRate = playbackRate; 
+    try {
+      v.playbackRate = playbackRate;
       v.playbackrate = playbackRate;
       if (v.setAttribute) v.setAttribute('playbackrate', String(playbackRate));
     } catch (_) { /* ignore */ }
@@ -2013,32 +2036,75 @@ EventDump: ${JSON.stringify(collected)}`;
     resetControlsTimeout();
   }, [resetControlsTimeout]);
 
-  // Click/Touch middle screen handler
+  // Toggle Picture-in-Picture mode
+  const togglePip = useCallback(async () => {
+    try {
+      const innerVideo = (videoRef.current?.shadowRoot?.querySelector('video') ?? videoRef.current) as HTMLVideoElement | null;
+      if (!innerVideo) return;
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        setIsPip(false);
+      } else if (innerVideo.requestPictureInPicture) {
+        await innerVideo.requestPictureInPicture();
+        setIsPip(true);
+        innerVideo.addEventListener('leavepictureinpicture', () => setIsPip(false), { once: true });
+      }
+    } catch (_) { /* ignore */ }
+  }, []);
+
+  // Click/Touch middle screen handler (Double-click / double-tap seek ±10s)
   const handleMiddleScreenClick = (e: React.PointerEvent<HTMLDivElement>) => {
-    // If the video is muted due to autoplay block, unmute it on click instead of pausing/toggling controls
     if (mutedByAutoplay) {
       handleUnmute();
       return;
     }
 
-    // Touch event: toggle control overlay visibility (iPad)
-    if (e.pointerType === "touch") {
-      const now = Date.now();
-      const DOUBLE_TAP_DELAY = 300;
-      const isDoubleTap = now - lastTapRef.current < DOUBLE_TAP_DELAY;
-      lastTapRef.current = now;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const isLeft = clickX < rect.width / 2;
 
-      if (isDoubleTap) {
-        togglePlay();
-        resetControlsTimeout();
-      } else {
+    const now = Date.now();
+    const DOUBLE_CLICK_DELAY = 300;
+    const isDouble = now - lastTapRef.current < DOUBLE_CLICK_DELAY;
+    lastTapRef.current = now;
+
+    if (isDouble) {
+      if (doubleClickTimerRef.current) {
+        clearTimeout(doubleClickTimerRef.current);
+        doubleClickTimerRef.current = null;
+      }
+
+      const video = videoRef.current;
+      if (video && typeof video.currentTime === "number") {
+        const wasPlaying = !video.paused;
+        if (wasPlaying && typeof video.pause === 'function') video.pause();
+
+        const targetTime = isLeft
+          ? Math.max(0, video.currentTime - 10)
+          : Math.min(duration || video.duration || Infinity, video.currentTime + 10);
+
+        video.currentTime = targetTime;
+        showOsd(isLeft ? "⏪ -10s" : "⏩ +10s");
+
+        if (wasPlaying) {
+          setTimeout(() => {
+            if (!userPausedRef.current && typeof video.play === 'function') {
+              video.play().catch(() => { });
+            }
+          }, 400);
+        }
+      }
+      resetControlsTimeout();
+    } else {
+      if (e.pointerType === "touch") {
         setShowControls((prev) => !prev);
         resetControlsTimeout();
+      } else {
+        doubleClickTimerRef.current = setTimeout(() => {
+          togglePlay();
+          resetControlsTimeout();
+        }, DOUBLE_CLICK_DELAY);
       }
-    } else {
-      // Mouse click: toggle play/pause (Desktop)
-      togglePlay();
-      resetControlsTimeout();
     }
   };
 
@@ -2048,17 +2114,17 @@ EventDump: ${JSON.stringify(collected)}`;
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = (e.clientX - rect.left) / rect.width;
     const targetTime = ratio * duration;
-    
+
     try {
       const wasPlaying = !video.paused;
       if (wasPlaying && typeof video.pause === 'function') video.pause();
-      
+
       video.currentTime = targetTime;
-      
+
       if (wasPlaying) {
         setTimeout(() => {
           if (!userPausedRef.current && typeof video.play === 'function') {
-            video.play().catch(() => {});
+            video.play().catch(() => { });
           }
         }, 600);
       }
@@ -2073,6 +2139,8 @@ EventDump: ${JSON.stringify(collected)}`;
     const video = videoRef.current;
     if (video && typeof video.volume !== 'undefined') video.volume = val;
     if (video && typeof video.muted !== 'undefined') video.muted = (val === 0);
+    try { localStorage.setItem('nuvio.volume', String(val)); } catch { /* ok */ }
+    showOsd(val === 0 ? "🔇 Muted" : `🔊 ${Math.round(val * 100)}%`);
   };
 
   // -- Next episode autoplay flow ---------------------------------------------
@@ -2232,12 +2300,18 @@ EventDump: ${JSON.stringify(collected)}`;
         case "K":
           e.preventDefault();
           togglePlay();
+          showOsd(userPausedRef.current ? "▶ Play" : "⏸ Pause");
           resetControlsTimeout();
           break;
         case "f":
         case "F":
           e.preventDefault();
           toggleFullscreen();
+          break;
+        case "p":
+        case "P":
+          e.preventDefault();
+          togglePip();
           break;
         case "m":
         case "M": {
@@ -2246,6 +2320,7 @@ EventDump: ${JSON.stringify(collected)}`;
           setIsMuted(next);
           setMutedByAutoplay(false);
           if (typeof video.muted !== "undefined") video.muted = next;
+          showOsd(next ? "🔇 Muted" : "🔊 Unmuted");
           resetControlsTimeout();
           break;
         }
@@ -2254,12 +2329,13 @@ EventDump: ${JSON.stringify(collected)}`;
           if (typeof video.currentTime === "number") {
             const wasPlaying = !video.paused;
             if (wasPlaying && typeof video.pause === 'function') video.pause();
-            
+
             video.currentTime = Math.max(0, video.currentTime - 10);
-            
+            showOsd("⏪ -10s");
+
             if (wasPlaying) {
               setTimeout(() => {
-                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => { });
               }, 400);
             }
           }
@@ -2271,12 +2347,13 @@ EventDump: ${JSON.stringify(collected)}`;
           if (typeof video.currentTime === "number" && duration > 0) {
             const wasPlaying = !video.paused;
             if (wasPlaying && typeof video.pause === 'function') video.pause();
-            
+
             video.currentTime = Math.min(duration, video.currentTime + 10);
-            
+            showOsd("⏩ +10s");
+
             if (wasPlaying) {
               setTimeout(() => {
-                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => { });
               }, 400);
             }
           }
@@ -2291,6 +2368,8 @@ EventDump: ${JSON.stringify(collected)}`;
           setMutedByAutoplay(false);
           if (typeof video.volume !== "undefined") video.volume = nv;
           if (typeof video.muted !== "undefined") video.muted = (nv === 0);
+          try { localStorage.setItem('nuvio.volume', String(nv)); } catch { /* ok */ }
+          showOsd(`🔊 ${Math.round(nv * 100)}%`);
           resetControlsTimeout();
           break;
         }
@@ -2302,22 +2381,59 @@ EventDump: ${JSON.stringify(collected)}`;
           setMutedByAutoplay(false);
           if (typeof video.volume !== "undefined") video.volume = nv;
           if (typeof video.muted !== "undefined") video.muted = (nv === 0);
+          try { localStorage.setItem('nuvio.volume', String(nv)); } catch { /* ok */ }
+          showOsd(nv === 0 ? "🔇 Muted" : `🔊 ${Math.round(nv * 100)}%`);
           resetControlsTimeout();
           break;
         }
+        case ">":
+        case ".":
+          if (e.shiftKey || e.key === ">") {
+            e.preventDefault();
+            setPlaybackRate((prev) => {
+              const rates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+              const idx = rates.findIndex((r) => r > prev);
+              const nr = idx !== -1 ? rates[idx] : 2;
+              showOsd(`⚡ ${nr}×`);
+              return nr;
+            });
+          }
+          break;
+        case "<":
+        case ",":
+          if (e.shiftKey || e.key === "<") {
+            e.preventDefault();
+            setPlaybackRate((prev) => {
+              const rates = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+              const rev = [...rates].reverse();
+              const idx = rev.findIndex((r) => r < prev);
+              const nr = idx !== -1 ? rev[idx] : 0.5;
+              showOsd(`⚡ ${nr}×`);
+              return nr;
+            });
+          }
+          break;
+        case "?":
+        case "/":
+          if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+            e.preventDefault();
+            setShowShortcutsHelp((prev) => !prev);
+          }
+          break;
         case "0": case "1": case "2": case "3": case "4":
         case "5": case "6": case "7": case "8": case "9": {
           e.preventDefault();
           if (duration > 0) {
             const wasPlaying = !video.paused;
             if (wasPlaying && typeof video.pause === 'function') video.pause();
-            
+
             const fraction = parseInt(e.key, 10) / 10;
             video.currentTime = duration * fraction;
-            
+            showOsd(`Seek ${fraction * 100}%`);
+
             if (wasPlaying) {
               setTimeout(() => {
-                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => {});
+                if (!userPausedRef.current && typeof video.play === 'function') video.play().catch(() => { });
               }, 600);
             }
           }
@@ -2337,7 +2453,7 @@ EventDump: ${JSON.stringify(collected)}`;
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [duration, isMuted, volume, togglePlay, toggleFullscreen, resetControlsTimeout, nextEpisode, nextSearching, playNextEpisode]);
+  }, [duration, isMuted, volume, togglePlay, toggleFullscreen, togglePip, showOsd, resetControlsTimeout, nextEpisode, nextSearching, playNextEpisode]);
 
   // External player URL schemes. Web has no equivalent of NuvioDesktop's
   // file-system detection, so we offer the well-known URL handlers that
@@ -2551,8 +2667,8 @@ EventDump: ${JSON.stringify(collected)}`;
       {/* External subtitle overlay — rendered by our own parser, works with any player */}
       <div
         ref={externalSubRef}
-        className="absolute bottom-[88px] left-0 right-0 flex justify-center z-30 pointer-events-none px-8 hidden"
-        style={{ userSelect: 'none' }}
+        className="absolute left-0 right-0 flex justify-center z-30 pointer-events-none px-8 hidden"
+        style={{ userSelect: 'none', bottom: `${subtitleBottomOffset}px` }}
       >
         <div
           ref={externalSubInnerRef}
@@ -2567,6 +2683,13 @@ EventDump: ${JSON.stringify(collected)}`;
           }}
         />
       </div>
+
+      {/* OSD Toast Notification */}
+      {osdMessage && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md border border-white/20 px-4 py-2 rounded-full text-white text-sm font-semibold z-50 pointer-events-none shadow-xl flex items-center gap-2">
+          <span>{osdMessage}</span>
+        </div>
+      )}
 
       {/* States */}
       {!resolvedSrc && (
@@ -2720,8 +2843,22 @@ EventDump: ${JSON.stringify(collected)}`;
                 onPointerCancel={handleProgressLostPointerCapture}
                 onLostPointerCapture={handleProgressLostPointerCapture}
               >
-                <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
-                  <div ref={progressBarRef} className="h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
+                <div className="w-full h-2 group-hover:h-3 transition-all duration-150 bg-white/20 rounded-full overflow-hidden relative">
+                  <div ref={bufferedBarRef} className="absolute left-0 top-0 h-full bg-white/40 rounded-full transition-all duration-300" style={{ width: '0%' }} />
+                  <div ref={progressBarRef} className="absolute left-0 top-0 h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
+                  {duration > 0 && skipIntervals.map((interval, i) => {
+                    const leftPct = (interval.startTime / duration) * 100;
+                    const widthPct = ((interval.endTime - interval.startTime) / duration) * 100;
+                    const isIntro = interval.type === "intro";
+                    return (
+                      <div
+                        key={i}
+                        className={`absolute top-0 h-full opacity-80 ${isIntro ? "bg-amber-400" : "bg-indigo-400"}`}
+                        style={{ left: `${leftPct}%`, width: `${Math.max(0.5, widthPct)}%` }}
+                        title={`${interval.type.toUpperCase()} (${formatTime(interval.startTime)} - ${formatTime(interval.endTime)})`}
+                      />
+                    );
+                  })}
                 </div>
                 <div
                   ref={progressDotRef}
@@ -2743,7 +2880,7 @@ EventDump: ${JSON.stringify(collected)}`;
 
               {/* Volume */}
               <div className="flex items-center gap-2 group/vol w-32">
-                <button 
+                <button
                   onClick={() => {
                     const next = !isMuted;
                     setIsMuted(next);
@@ -3166,6 +3303,26 @@ EventDump: ${JSON.stringify(collected)}`;
                 </svg>
               </button>
 
+              {/* PiP button */}
+              <button
+                onClick={togglePip}
+                className={`w-10 h-10 flex items-center justify-center transition-colors rounded-lg ${isPip ? 'bg-white text-black' : 'text-white/80 hover:text-white bg-white/10 hover:bg-white/20'}`}
+                title="Picture-in-Picture (P)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+                </svg>
+              </button>
+
+              {/* Keyboard Shortcuts Help button */}
+              <button
+                onClick={() => setShowShortcutsHelp(true)}
+                className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg font-bold text-sm"
+                title="Keyboard Shortcuts (?)"
+              >
+                ?
+              </button>
+
               {/* Fullscreen */}
               <button
                 onClick={toggleFullscreen}
@@ -3365,6 +3522,31 @@ EventDump: ${JSON.stringify(collected)}`;
             >
               Dismiss
             </button>
+          </div>
+        </div>
+      )}
+      {/* Keyboard Shortcuts Modal */}
+      {showShortcutsHelp && (
+        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/75 p-6 backdrop-blur-sm" onClick={() => setShowShortcutsHelp(false)}>
+          <div className="bg-[#181818] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 text-left" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-white font-bold text-lg">Keyboard Shortcuts</h2>
+              <button onClick={() => setShowShortcutsHelp(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="space-y-2 text-sm text-white/80">
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Play / Pause</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">Space / K</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Seek ±10s</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">← / → / Double-Click</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Seek %</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">0 - 9</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Volume Up / Down</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">↑ / ↓ / Mouse Scroll</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Mute / Unmute</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">M</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Fullscreen</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">F</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Picture-in-Picture</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">P</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Speed Up / Down</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">&gt; / &lt;</kbd></div>
+              <div className="flex justify-between py-1 border-b border-white/5"><span>Next Episode</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">N</kbd></div>
+              <div className="flex justify-between py-1"><span>Shortcuts Help</span><kbd className="bg-white/10 px-2 py-0.5 rounded text-xs text-white">?</kbd></div>
+            </div>
           </div>
         </div>
       )}
