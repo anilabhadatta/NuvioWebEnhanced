@@ -39,11 +39,11 @@ export default function SettingsScreen() {
     <div className="flex min-h-screen bg-[#111111]">
       <Sidebar />
 
-      <main className="flex-1 min-w-0 ml-[220px] flex">
+      <main className="flex-1 min-w-0 ml-[220px] flex flex-col xl:flex-row">
         {/* Category sidebar */}
-        <div className="w-52 border-r border-white/5 pt-10 px-4 shrink-0">
-          <h1 className="text-2xl font-bold text-white mb-6 px-2">Settings</h1>
-          <nav className="flex flex-col gap-1">
+        <div className="xl:w-52 xl:border-r border-b xl:border-b-0 border-white/5 pt-6 xl:pt-10 px-4 xl:px-4 shrink-0">
+          <h1 className="text-2xl font-bold text-white mb-4 xl:mb-6 px-2">Settings</h1>
+          <nav className="flex xl:flex-col gap-2 xl:gap-1 overflow-x-auto pb-2 xl:pb-0">
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
@@ -51,6 +51,7 @@ export default function SettingsScreen() {
                 className={`text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                   active === cat.id ? "bg-white/10 text-white" : "text-[#888] hover:text-white hover:bg-white/5"
                 }`}
+                style={{ whiteSpace: "nowrap" }}
               >
                 {cat.label}
               </button>
@@ -59,7 +60,7 @@ export default function SettingsScreen() {
         </div>
 
         {/* Detail panel */}
-        <div className="flex-1 pt-10 px-8 max-w-4xl pb-20">
+        <div className="flex-1 min-w-0 pt-6 xl:pt-10 px-4 sm:px-6 xl:px-8 max-w-none xl:max-w-4xl pb-20">
           {active === "account" && (
             <div>
               <h2 className="text-2xl font-bold text-white mb-8">Account</h2>
