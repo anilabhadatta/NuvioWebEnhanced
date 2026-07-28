@@ -460,6 +460,8 @@ export default function MoviPlayerScreen() {
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   // Subtitle vertical offset (px from bottom)
   const [subtitleBottomOffset, setSubtitleBottomOffset] = useState(88);
+  // Scrubber hover time tooltip
+  const [hoverTimeInfo, setHoverTimeInfo] = useState<{ time: number; xPct: number } | null>(null);
 
   // Show a brief on-screen toast message (auto-dismisses after 1.5s)
   const showOsd = useCallback((msg: string) => {
@@ -2838,11 +2840,28 @@ EventDump: ${JSON.stringify(collected)}`;
                 className="w-full py-4 -my-4 cursor-pointer mb-6 group relative select-none pointer-events-auto"
                 style={{ touchAction: "none" }}
                 onPointerDown={handleProgressPointerDown}
-                onPointerMove={handleProgressPointerMove}
+                onPointerMove={(e) => {
+                  handleProgressPointerMove(e);
+                  if (duration > 0) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                    setHoverTimeInfo({ time: ratio * duration, xPct: ratio * 100 });
+                  }
+                }}
+                onPointerLeave={() => setHoverTimeInfo(null)}
                 onPointerUp={handleProgressPointerUp}
-                onPointerCancel={handleProgressLostPointerCapture}
-                onLostPointerCapture={handleProgressLostPointerCapture}
+                onPointerCancel={() => { handleProgressLostPointerCapture(); setHoverTimeInfo(null); }}
+                onLostPointerCapture={() => { handleProgressLostPointerCapture(); setHoverTimeInfo(null); }}
               >
+                {/* Hover time tooltip */}
+                {hoverTimeInfo && (
+                  <div
+                    className="absolute -top-7 -translate-x-1/2 bg-black/90 text-white text-[11px] font-semibold px-2 py-0.5 rounded border border-white/20 pointer-events-none shadow-lg z-30 tabular-nums"
+                    style={{ left: `${hoverTimeInfo.xPct}%` }}
+                  >
+                    {formatTime(hoverTimeInfo.time)}
+                  </div>
+                )}
                 <div className="w-full h-2 group-hover:h-3 transition-all duration-150 bg-white/20 rounded-full overflow-hidden relative">
                   <div ref={bufferedBarRef} className="absolute left-0 top-0 h-full bg-white/40 rounded-full transition-all duration-300" style={{ width: '0%' }} />
                   <div ref={progressBarRef} className="absolute left-0 top-0 h-full bg-white rounded-full" style={{ width: `${displayProgress}%` }} />
@@ -3384,13 +3403,25 @@ EventDump: ${JSON.stringify(collected)}`;
                       onClick={() => playEpisode(episodesSeasonNum, ep.episode_number)}
                       className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors border-b border-white/5 ${isCurrent ? "bg-white/10" : "hover:bg-white/5"}`}
                     >
-                      <span className={`text-xs font-bold mt-0.5 w-6 text-center flex-shrink-0 ${isCurrent ? "text-white" : "text-white/50"}`}>
-                        {ep.episode_number}
-                      </span>
+                      {ep.still_path ? (
+                        <div className="w-20 h-11 rounded-lg overflow-hidden bg-black/40 flex-shrink-0 relative border border-white/10 mt-0.5">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={`https://image.tmdb.org/t/p/w300${ep.still_path}`} alt="" className="w-full h-full object-cover" />
+                        </div>
+                      ) : (
+                        <span className={`text-xs font-bold mt-0.5 w-6 text-center flex-shrink-0 ${isCurrent ? "text-white" : "text-white/50"}`}>
+                          {ep.episode_number}
+                        </span>
+                      )}
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-semibold truncate ${isCurrent ? "text-white" : "text-white/80"}`}>
-                          {ep.name || `Episode ${ep.episode_number}`}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                          {ep.still_path && (
+                            <span className="text-[11px] font-bold text-white/50">E{ep.episode_number}.</span>
+                          )}
+                          <p className={`text-sm font-semibold truncate ${isCurrent ? "text-white" : "text-white/80"}`}>
+                            {ep.name || `Episode ${ep.episode_number}`}
+                          </p>
+                        </div>
                         {ep.overview && (
                           <p className="text-white/40 text-xs mt-0.5 line-clamp-2">{ep.overview}</p>
                         )}
