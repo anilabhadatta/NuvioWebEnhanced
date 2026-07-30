@@ -2040,19 +2040,95 @@ EventDump: ${JSON.stringify(collected)}`;
 
   // Toggle Picture-in-Picture mode
   const togglePip = useCallback(async () => {
+    const movi = videoRef.current;
+    if (!movi) return;
+
+    // 1. Query active video element directly from Shaka player if available
+    const shakaVideo = movi.player?.getMediaElement?.() as HTMLVideoElement | null;
+
+    // 2. Gather all candidate <video> elements inside movi-player (shadow root or properties)
+    const shadowVideos = Array.from(movi.shadowRoot?.querySelectorAll?.('video') ?? []) as HTMLVideoElement[];
+    const directVideos = Array.from(movi.querySelectorAll?.('video') ?? []) as HTMLVideoElement[];
+    const allVideos: HTMLVideoElement[] = [];
+
+    if (shakaVideo) allVideos.push(shakaVideo);
+    if (movi.video && movi.video instanceof HTMLVideoElement && !allVideos.includes(movi.video)) {
+      allVideos.push(movi.video);
+    }
+    shadowVideos.forEach((v) => { if (!allVideos.includes(v)) allVideos.push(v); });
+    directVideos.forEach((v) => { if (!allVideos.includes(v)) allVideos.push(v); });
+    if (movi instanceof HTMLVideoElement && !allVideos.includes(movi)) {
+      allVideos.push(movi);
+    }
+
+    // 3. Pick the best active candidate (readyState >= 1 or active videoWidth/currentTime)
+    let innerVideo = allVideos.find((v) => v.readyState >= 1 && (v.videoWidth > 0 || v.currentTime > 0))
+      || allVideos.find((v) => v.readyState >= 1)
+      || allVideos.find((v) => v.src || v.srcObject || !v.paused)
+      || allVideos[0]
+      || null;
+
+    if (!innerVideo) {
+      showOsd("Video element not found");
+      return;
+    }
+
     try {
-      const innerVideo = (videoRef.current?.shadowRoot?.querySelector('video') ?? videoRef.current) as HTMLVideoElement | null;
-      if (!innerVideo) return;
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
         setIsPip(false);
-      } else if (innerVideo.requestPictureInPicture) {
+        showOsd("Exited Picture-in-Picture");
+        return;
+      }
+
+      // Ensure disablePictureInPicture attribute/property is cleared across candidates
+      allVideos.forEach((v) => {
+        if (v.hasAttribute('disablepictureinpicture')) v.removeAttribute('disablepictureinpicture');
+        (v as any).disablePictureInPicture = false;
+      });
+
+      // Poll candidate video elements for up to 1.5s if readyState < 1
+      if (innerVideo.readyState < 1) {
+        showOsd("Waiting for video stream...");
+        const startTime = Date.now();
+        while (Date.now() - startTime < 1500) {
+          const readyCandidate = allVideos.find((v) => v.readyState >= 1);
+          if (readyCandidate) {
+            innerVideo = readyCandidate;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+
+      if (innerVideo.readyState < 1) {
+        showOsd("Stream metadata loading... Press Play first");
+        return;
+      }
+
+      if (typeof innerVideo.requestPictureInPicture === 'function') {
         await innerVideo.requestPictureInPicture();
         setIsPip(true);
-        innerVideo.addEventListener('leavepictureinpicture', () => setIsPip(false), { once: true });
+        showOsd("Picture-in-Picture Enabled");
+
+        const onLeave = () => {
+          setIsPip(false);
+          showOsd("Exited Picture-in-Picture");
+        };
+        innerVideo.addEventListener('leavepictureinpicture', onLeave, { once: true });
+      } else {
+        showOsd("PiP not supported by browser");
       }
-    } catch (_) { /* ignore */ }
-  }, []);
+    } catch (err: any) {
+      console.warn("[MoviPlayer] Native PiP error:", err);
+      const msg = err?.message || "";
+      if (msg.includes("Metadata") || msg.includes("loaded yet")) {
+        showOsd("Stream metadata loading... Press Play first");
+      } else {
+        showOsd(`PiP Error: ${msg || "Not allowed"}`);
+      }
+    }
+  }, [showOsd]);
 
   // Click/Touch middle screen handler (Double-click / double-tap seek ±10s)
   const handleMiddleScreenClick = (e: React.PointerEvent<HTMLDivElement>) => {
