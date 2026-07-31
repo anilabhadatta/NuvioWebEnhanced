@@ -27,6 +27,78 @@ function deriveDisplayName(user: User | null, isAnonymous: boolean): string {
   return isAnonymous ? "Guest" : "Sign In";
 }
 
+/**
+ * Checks if an error object or HTTP response represents an invalid,
+ * expired, malformed, or revoked authentication token.
+ */
+export function isInvalidTokenError(error: any): boolean {
+  if (!error) return false;
+  const status = error.status || error.statusCode || error.code;
+  const message = (error.message || error.error_description || error.details || "").toString().toLowerCase();
+  const errCode = (error.code || "").toString().toLowerCase();
+
+  // 401 Unauthorized or PostgREST 301 (JWT expired or invalid)
+  if (status === 401 || errCode === "pgrst301" || status === "pgrst301" || status === "401") {
+    return true;
+  }
+
+  const invalidKeywords = [
+    "invalid token",
+    "token is expired",
+    "jwt expired",
+    "invalid jwt",
+    "jwt malformed",
+    "invalid_grant",
+    "user_not_found",
+    "session_not_found",
+    "user from sub claim in jwt does not exist",
+    "claim in jwt does not exist",
+    "bad_jwt",
+    "unauthorized",
+  ];
+
+  return invalidKeywords.some((kw) => message.includes(kw) || errCode.includes(kw));
+}
+
+let isLoggingOut = false;
+
+/**
+ * Performs auto logout by clearing all authentication caches and signing out from Supabase.
+ */
+export async function performAutoLogout() {
+  if (isLoggingOut) return;
+  isLoggingOut = true;
+  try {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.removeItem("nuvio_is_authenticated_cache");
+        localStorage.removeItem("nuvio_display_name_cache");
+        localStorage.removeItem("nuvio_anon");
+        localStorage.removeItem("nuvio_cloud_progress");
+      } catch {}
+    }
+    try {
+      await supabase.auth.signOut();
+    } catch {}
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+  } finally {
+    isLoggingOut = false;
+  }
+}
+
+/**
+ * Checks if the error indicates an invalid token and automatically logs out if true.
+ */
+export function handleInvalidTokenError(error: any): boolean {
+  if (isInvalidTokenError(error)) {
+    performAutoLogout();
+    return true;
+  }
+  return false;
+}
+
 const AuthContext = createContext<AuthInfo | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -54,44 +126,118 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setCachedAuth(localStorage.getItem("nuvio_is_authenticated_cache") === "true");
     } catch {}
 
-    supabase.auth.getSession().then(({ data }) => {
+    const initSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!mounted) return;
+
+        if (error && isInvalidTokenError(error)) {
+          await performAutoLogout();
+          return;
+        }
+
+        if (data?.session) {
+          const { data: userData, error: userError } = await supabase.auth.getUser();
+          if (!mounted) return;
+
+          if (userError && isInvalidTokenError(userError)) {
+            await performAutoLogout();
+            return;
+          }
+
+          if (userData?.user) {
+            setSession(data.session);
+            const name = deriveDisplayName(userData.user, false);
+            setCachedName(name);
+            setCachedAuth(true);
+            try {
+              localStorage.setItem("nuvio_is_authenticated_cache", "true");
+              localStorage.setItem("nuvio_display_name_cache", name);
+            } catch {}
+          } else {
+            await performAutoLogout();
+            return;
+          }
+        } else {
+          setSession(null);
+          setCachedName(isAnonymous ? "Guest" : "Sign In");
+          setCachedAuth(false);
+          try {
+            localStorage.removeItem("nuvio_is_authenticated_cache");
+            localStorage.removeItem("nuvio_display_name_cache");
+          } catch {}
+        }
+      } catch (err) {
+        if (isInvalidTokenError(err)) {
+          await performAutoLogout();
+          return;
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    initSession();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
-      setSession(data.session);
-      setLoading(false);
-      if (data.session) {
-        const name = deriveDisplayName(data.session.user, false);
-        setCachedName(name);
-        setCachedAuth(true);
-        localStorage.setItem("nuvio_is_authenticated_cache", "true");
-        localStorage.setItem("nuvio_display_name_cache", name);
-      } else {
+
+      if (event === "SIGNED_OUT") {
+        setSession(null);
+        setLoading(false);
         setCachedName(isAnonymous ? "Guest" : "Sign In");
         setCachedAuth(false);
-        localStorage.removeItem("nuvio_is_authenticated_cache");
-        localStorage.removeItem("nuvio_display_name_cache");
+        try {
+          localStorage.removeItem("nuvio_is_authenticated_cache");
+          localStorage.removeItem("nuvio_display_name_cache");
+        } catch {}
+        return;
+      }
+
+      if (newSession) {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (!mounted) return;
+
+        if (userError && isInvalidTokenError(userError)) {
+          await performAutoLogout();
+          return;
+        }
+
+        setSession(newSession);
+        setLoading(false);
+        const name = deriveDisplayName(userData?.user || newSession.user, false);
+        setCachedName(name);
+        setCachedAuth(true);
+        try {
+          localStorage.setItem("nuvio_is_authenticated_cache", "true");
+          localStorage.setItem("nuvio_display_name_cache", name);
+        } catch {}
+      } else {
+        setSession(null);
+        setLoading(false);
+        setCachedName(isAnonymous ? "Guest" : "Sign In");
+        setCachedAuth(false);
+        try {
+          localStorage.removeItem("nuvio_is_authenticated_cache");
+          localStorage.removeItem("nuvio_display_name_cache");
+        } catch {}
       }
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setLoading(false);
-      if (newSession) {
-        const name = deriveDisplayName(newSession.user, false);
-        setCachedName(name);
-        setCachedAuth(true);
-        localStorage.setItem("nuvio_is_authenticated_cache", "true");
-        localStorage.setItem("nuvio_display_name_cache", name);
-      } else {
-        setCachedName(isAnonymous ? "Guest" : "Sign In");
-        setCachedAuth(false);
-        localStorage.removeItem("nuvio_is_authenticated_cache");
-        localStorage.removeItem("nuvio_display_name_cache");
-      }
-    });
+    const handleInvalidTokenEvent = () => {
+      performAutoLogout();
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("nuvio:invalid-token", handleInvalidTokenEvent);
+    }
 
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("nuvio:invalid-token", handleInvalidTokenEvent);
+      }
     };
   }, [isAnonymous]);
 
@@ -108,15 +254,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return React.createElement(AuthContext.Provider, { value }, children);
 }
 
-/**
- * Reactive auth state backed by the Supabase session (persisted in cookies by
- * @supabase/ssr, so the user stays signed in across reloads/sessions).
- */
 export function useAuth(): AuthInfo {
   const ctx = useContext(AuthContext);
   if (ctx) return ctx;
 
-  // Fallback to local state if hook is used outside provider
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const [session, setSession] = useState<Session | null>(null);
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -147,38 +288,72 @@ export function useAuth(): AuthInfo {
       setCachedAuth(localStorage.getItem("nuvio_is_authenticated_cache") === "true");
     } catch {}
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setSession(data.session);
-      setLoading(false);
-      if (data.session) {
-        const name = deriveDisplayName(data.session.user, false);
-        setCachedName(name);
-        setCachedAuth(true);
-        localStorage.setItem("nuvio_is_authenticated_cache", "true");
-        localStorage.setItem("nuvio_display_name_cache", name);
-      } else {
-        setCachedName(isAnonymous ? "Guest" : "Sign In");
-        setCachedAuth(false);
-        localStorage.removeItem("nuvio_is_authenticated_cache");
-        localStorage.removeItem("nuvio_display_name_cache");
-      }
-    });
+    const initFallback = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!mounted) return;
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setLoading(false);
+        if (error && isInvalidTokenError(error)) {
+          await performAutoLogout();
+          return;
+        }
+
+        if (data?.session) {
+          const { data: userData, error: userError } = await supabase.auth.getUser();
+          if (!mounted) return;
+
+          if (userError && isInvalidTokenError(userError)) {
+            await performAutoLogout();
+            return;
+          }
+
+          if (userData?.user) {
+            setSession(data.session);
+            const name = deriveDisplayName(userData.user, false);
+            setCachedName(name);
+            setCachedAuth(true);
+          } else {
+            await performAutoLogout();
+            return;
+          }
+        } else {
+          setSession(null);
+          setCachedName(isAnonymous ? "Guest" : "Sign In");
+          setCachedAuth(false);
+        }
+      } catch (err) {
+        if (isInvalidTokenError(err)) {
+          await performAutoLogout();
+          return;
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    initFallback();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+      if (!mounted) return;
       if (newSession) {
-        const name = deriveDisplayName(newSession.user, false);
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (!mounted) return;
+
+        if (userError && isInvalidTokenError(userError)) {
+          await performAutoLogout();
+          return;
+        }
+
+        setSession(newSession);
+        setLoading(false);
+        const name = deriveDisplayName(userData?.user || newSession.user, false);
         setCachedName(name);
         setCachedAuth(true);
-        localStorage.setItem("nuvio_is_authenticated_cache", "true");
-        localStorage.setItem("nuvio_display_name_cache", name);
       } else {
+        setSession(null);
+        setLoading(false);
         setCachedName(isAnonymous ? "Guest" : "Sign In");
         setCachedAuth(false);
-        localStorage.removeItem("nuvio_is_authenticated_cache");
-        localStorage.removeItem("nuvio_display_name_cache");
       }
     });
 

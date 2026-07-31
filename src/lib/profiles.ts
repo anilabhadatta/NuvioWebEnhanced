@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { handleInvalidTokenError } from "./useAuth";
 
 /**
  * Profile system mirrored from NuvioMobile (ProfileRepository).
@@ -62,10 +63,15 @@ export async function pullProfiles(): Promise<NuvioProfile[]> {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return [];
     const { data, error } = await supabase.rpc("sync_pull_profiles");
-    if (error || !data) return [];
+    if (error) {
+      handleInvalidTokenError(error);
+      return [];
+    }
+    if (!data) return [];
     return (data as NuvioProfile[]).sort((a, b) => a.profile_index - b.profile_index);
   } catch (e) {
     console.error("pullProfiles failed", e);
+    handleInvalidTokenError(e);
     return [];
   }
 }
@@ -78,11 +84,13 @@ export async function pushProfiles(profiles: ProfilePushPayload[]): Promise<bool
     });
     if (error) {
       console.error("pushProfiles failed", error);
+      handleInvalidTokenError(error);
       return false;
     }
     return true;
   } catch (e) {
     console.error("pushProfiles failed", e);
+    handleInvalidTokenError(e);
     return false;
   }
 }

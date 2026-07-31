@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { getActiveProfileId } from "./profiles";
+import { handleInvalidTokenError } from "./useAuth";
 
 /**
  * UI Collections — custom home layouts, mirrored from NuvioMobile
@@ -128,7 +129,11 @@ export async function pullCollections(): Promise<Collection[]> {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return loadLocalCollections();
     const { data, error } = await supabase.rpc("sync_pull_collections", { p_profile_id: profileId });
-    if (error || !data) return loadLocalCollections();
+    if (error) {
+      handleInvalidTokenError(error);
+      return loadLocalCollections();
+    }
+    if (!data) return loadLocalCollections();
     const blob = Array.isArray(data) ? data[0] : data;
     const json = blob?.collections_json;
     const collections: Collection[] = Array.isArray(json) ? json : [];
@@ -136,6 +141,7 @@ export async function pullCollections(): Promise<Collection[]> {
     return collections;
   } catch (e) {
     console.error("pullCollections failed", e);
+    handleInvalidTokenError(e);
     return loadLocalCollections();
   }
 }
@@ -152,11 +158,13 @@ export async function pushCollections(collections: Collection[]): Promise<boolea
     });
     if (error) {
       console.error("sync_push_collections failed", error);
+      handleInvalidTokenError(error);
       return false;
     }
     return true;
   } catch (e) {
     console.error("pushCollections failed", e);
+    handleInvalidTokenError(e);
     return false;
   }
 }

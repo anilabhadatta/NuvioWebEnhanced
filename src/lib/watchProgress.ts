@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { handleInvalidTokenError } from "./useAuth";
 
 export interface WatchProgress {
   id: string;        // IMDb ID (tt-prefixed) if available, otherwise TMDB ID
@@ -83,11 +84,13 @@ export async function saveWatchProgress(progress: WatchProgress) {
 
     if (percent >= 0.95) {
       // Mark as fully watched — matches NuvioMobile's SupabaseWatchedSyncAdapter contract.
-      await supabase.rpc("sync_delete_watch_progress", {
+      const { error: delErr } = await supabase.rpc("sync_delete_watch_progress", {
         p_profile_id: profileId,
         p_keys: [progressKey]
       });
-      await supabase.rpc("sync_push_watched_items", {
+      if (delErr) handleInvalidTokenError(delErr);
+
+      const { error: pushErr } = await supabase.rpc("sync_push_watched_items", {
         p_profile_id: profileId,
         p_items: [{
            content_id: contentId,
@@ -98,15 +101,18 @@ export async function saveWatchProgress(progress: WatchProgress) {
            watched_at: Date.now()
         }]
       });
+      if (pushErr) handleInvalidTokenError(pushErr);
     } else {
       // Push in-progress entry.
-      await supabase.rpc("sync_push_watch_progress", {
+      const { error: pushErr } = await supabase.rpc("sync_push_watch_progress", {
         p_profile_id: profileId,
         p_entries: [entry]
       });
+      if (pushErr) handleInvalidTokenError(pushErr);
     }
   } catch (e) {
     console.error("Failed to sync watch progress to cloud", e);
+    handleInvalidTokenError(e);
   }
 }
 
@@ -134,12 +140,17 @@ export async function syncWatchProgressFromCloud() {
       p_limit: 100
     });
 
-    if (error || !data) return;
+    if (error) {
+      handleInvalidTokenError(error);
+      return;
+    }
+    if (!data) return;
 
     // Cache the raw desktop RPC records so we can check them instantly on playback
     localStorage.setItem("nuvio_cloud_progress", JSON.stringify(data));
   } catch (e) {
     console.error("Error pulling cloud progress", e);
+    handleInvalidTokenError(e);
   }
 }
 

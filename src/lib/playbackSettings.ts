@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { getActiveProfileId } from "./profiles";
+import { handleInvalidTokenError } from "./useAuth";
 
 export interface PlaybackSettings {
   preferredAudioLanguage: string;
@@ -64,7 +65,11 @@ export async function pullPlaybackSettings(): Promise<PlaybackSettings> {
       p_profile_id: profileId,
     });
 
-    if (error || !data) return getLocalPlaybackSettings();
+    if (error) {
+      handleInvalidTokenError(error);
+      return getLocalPlaybackSettings();
+    }
+    if (!data) return getLocalPlaybackSettings();
     
     const blob = Array.isArray(data) ? data[0]?.settings_json : (data as any)?.settings_json;
     if (!blob || !blob.features || !blob.features.player_settings) return getLocalPlaybackSettings();
@@ -97,6 +102,7 @@ export async function pullPlaybackSettings(): Promise<PlaybackSettings> {
     return finalSettings;
   } catch (e) {
     console.error("pullPlaybackSettings error", e);
+    handleInvalidTokenError(e);
     return getLocalPlaybackSettings();
   }
 }
@@ -164,11 +170,13 @@ export async function pushPlaybackSettings(settings: PlaybackSettings): Promise<
 
     if (error) {
       console.error("pushPlaybackSettings failed", error);
+      handleInvalidTokenError(error);
       return false;
     }
     return true;
   } catch (e) {
     console.error("pushPlaybackSettings error", e);
+    handleInvalidTokenError(e);
     return false;
   }
 }
