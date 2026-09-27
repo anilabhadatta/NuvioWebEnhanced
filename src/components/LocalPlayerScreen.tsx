@@ -9,6 +9,7 @@ import { WatchProgress, getWatchProgress, saveWatchProgress, getResumeTime, sync
 import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
 import { PlaybackSettings, pullPlaybackSettings, pushPlaybackSettings, DEFAULT_PLAYBACK_SETTINGS, getLocalPlaybackSettings } from "@/lib/playbackSettings";
+import { ensureMoviPlayerLoaded } from "@/lib/moviPlayer";
 import { languageMatchesPreference, getLanguageName } from "@/lib/languageUtils";
 import { config } from "@/lib/config";
 import StreamPickerModal from "./StreamPickerModal";
@@ -261,67 +262,6 @@ function forceStereoDownmix(moviElement: any) {
 // bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
 // code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
 // cross-origin so it's compatible with our COEP: require-corp headers.
-const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.4.0/dist/element.js";
-
-let moviPlayerLoadPromise: Promise<void> | null = null;
-function ensureMoviPlayerLoaded(): Promise<void> {
-  if (typeof window === "undefined") return Promise.resolve();
-
-  // -------------------------------------------------------------------------
-  // Global Fetch Polyfill for 429 Too Many Requests
-  // -------------------------------------------------------------------------
-  // Shield movi-player from intermittent Cloudflare worker rate limits.
-  // If the browser directly fetches chunks and occasionally hits a 429,
-  // we silently retry the request under the hood before returning the
-  // response to the player. This prevents fatal playback crashes.
-  if (!(window as any).__nuvio_fetch_429_polyfilled) {
-    const originalFetch = window.fetch;
-    window.fetch = async function (...args) {
-      let retries = 3;
-      while (retries > 0) {
-        const res = await originalFetch.apply(this, args);
-        if (res.status === 429) {
-          retries--;
-          if (retries === 0) return res;
-          console.warn("[Fetch] Intercepted 429 rate limit, retrying in 1.5s...", args[0]);
-          await new Promise((r) => setTimeout(r, 1500));
-          continue;
-        }
-        return res;
-      }
-      return originalFetch.apply(this, args);
-    };
-    (window as any).__nuvio_fetch_429_polyfilled = true;
-  }
-
-
-  if (moviPlayerLoadPromise) return moviPlayerLoadPromise;
-  if (customElements.get("movi-player")) return Promise.resolve();
-  moviPlayerLoadPromise = new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector('script[data-nuvio-movi-player]') as HTMLScriptElement | null;
-    if (existing) {
-      // Another mount started the load — just wait for the element to register.
-      customElements.whenDefined("movi-player").then(() => resolve());
-      return;
-    }
-    const source = localStorage.getItem("nuvio.element_js_source_v3.5") || "cdn";
-    const scriptUrl = source === "local" ? "/element.js" : MOVI_PLAYER_CDN_URL;
-    console.log(`[LocalPlayer] Loading player core from ${source} source: ${scriptUrl}`);
-
-    const s = document.createElement("script");
-    s.type = "module";
-    s.src = scriptUrl;
-    s.async = false;
-    s.crossOrigin = "anonymous";
-    s.dataset.nuvioMoviPlayer = "true";
-    s.onload = () => {
-      customElements.whenDefined("movi-player").then(() => resolve());
-    };
-    s.onerror = () => reject(new Error(`Failed to load ${scriptUrl}`));
-    document.head.appendChild(s);
-  });
-  return moviPlayerLoadPromise;
-}
 
 const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: string | File, onInit: (p: any) => void }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
