@@ -89,7 +89,7 @@ export default function PlaybackSection() {
                   : "bg-white/5 text-white border-white/10 hover:bg-white/10"
                   }`}
               >
-                CDN (v0.3.5)
+                CDN (v0.4.0)
               </button>
               <button
                 onClick={() => {

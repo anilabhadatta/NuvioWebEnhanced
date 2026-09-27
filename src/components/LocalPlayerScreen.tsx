@@ -261,7 +261,7 @@ function forceStereoDownmix(moviElement: any) {
 // bundle. Loading the upstream IIFE from jsdelivr keeps the original (valid)
 // code intact; jsdelivr serves it with Cross-Origin-Resource-Policy:
 // cross-origin so it's compatible with our COEP: require-corp headers.
-const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.3.4/dist/element.js";
+const MOVI_PLAYER_CDN_URL = "https://cdn.jsdelivr.net/npm/movi-player@0.4.0/dist/element.js";
 
 let moviPlayerLoadPromise: Promise<void> | null = null;
 function ensureMoviPlayerLoaded(): Promise<void> {
@@ -340,7 +340,7 @@ const MoviPlayerWrapper = React.memo(({ resolvedSrc, onInit }: { resolvedSrc: st
     // Create immediately as a plain, unregistered element
     let player = wrapperRef.current.querySelector("movi-player") as any;
     if (!player) {
-      wrapperRef.current.innerHTML = `<movi-player class="w-full h-full object-contain" playsinline="true"></movi-player>`;
+      wrapperRef.current.innerHTML = `<movi-player class="w-full h-full object-contain" playsinline="true" fallback="native"></movi-player>`;
       player = wrapperRef.current.querySelector("movi-player") as any;
       playerRef.current = player;
       onInit(player);
@@ -2602,7 +2602,7 @@ EventDump: ${JSON.stringify(collected)}`;
               <p className="text-[#aaa] text-sm flex items-center gap-2">
                 <span>{isLocalTesting ? `Quick Play · ID: ${movieId}` : `ID: ${movieId} · ${mediaType}`}</span>
                 <span className="text-[10px] bg-white/10 text-white/70 px-2 py-0.5 rounded-full font-semibold">
-                  movi-player: {typeof window !== "undefined" && localStorage.getItem("nuvio.element_js_source") === "local" ? "Local" : "CDN (v0.3.5)"}
+                  movi-player: {typeof window !== "undefined" && localStorage.getItem("nuvio.element_js_source") === "local" ? "Local" : "CDN (v0.4.0)"}
                 </span>
               </p>
             )}
