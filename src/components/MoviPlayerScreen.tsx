@@ -304,7 +304,7 @@ function ensureMoviPlayerLoaded(): Promise<void> {
       customElements.whenDefined("movi-player").then(() => resolve());
       return;
     }
-    const source = localStorage.getItem("nuvio.element_js_source") || "cdn";
+    const source = localStorage.getItem("nuvio.element_js_source_v3.5") || "cdn";
     const scriptUrl = source === "local" ? "/element.js" : MOVI_PLAYER_CDN_URL;
     console.log(`[MoviPlayer] Loading player core from ${source} source: ${scriptUrl}`);
 
@@ -2883,7 +2883,7 @@ EventDump: ${JSON.stringify(collected)}`;
               <p className="text-[#aaa] text-sm flex items-center gap-2">
                 <span>ID: {movieId} · {mediaType}</span>
                 <span className="text-[10px] bg-white/10 text-white/70 px-2 py-0.5 rounded-full font-semibold">
-                  movi-player: {typeof window !== "undefined" && localStorage.getItem("nuvio.element_js_source") === "local" ? "Local" : "CDN (v0.4.0)"}
+                  movi-player: {typeof window !== "undefined" && localStorage.getItem("nuvio.element_js_source_v3.5") === "local" ? "Local" : "CDN (v0.4.0)"}
                 </span>
               </p>
             )}

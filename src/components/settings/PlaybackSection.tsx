@@ -17,7 +17,7 @@ export default function PlaybackSection() {
   });
   const [elementJsSource, setElementJsSource] = useState(() => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem("nuvio.element_js_source") || "cdn";
+      return localStorage.getItem("nuvio.element_js_source_v3.5") || "cdn";
     }
     return "cdn";
   });
@@ -81,7 +81,7 @@ export default function PlaybackSection() {
             <div className="flex gap-4">
               <button
                 onClick={() => {
-                  localStorage.setItem("nuvio.element_js_source", "cdn");
+                  localStorage.setItem("nuvio.element_js_source_v3.5", "cdn");
                   setElementJsSource("cdn");
                 }}
                 className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${elementJsSource === "cdn"
@@ -93,7 +93,7 @@ export default function PlaybackSection() {
               </button>
               <button
                 onClick={() => {
-                  localStorage.setItem("nuvio.element_js_source", "local");
+                  localStorage.setItem("nuvio.element_js_source_v3.5", "local");
                   setElementJsSource("local");
                 }}
                 className={`px-4 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${elementJsSource === "local"
