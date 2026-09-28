@@ -538,7 +538,7 @@ export default function LocalPlayerScreen() {
       };
       playbackSettingsRef.current = updatedPrefs;
       const url = new URL(window.location.href);
-      if (url.searchParams.get("test") !== "1") {
+      if (url.searchParams.get("localTesting") !== "true") {
         pushPlaybackSettings(updatedPrefs).catch(() => { });
       }
     }
@@ -554,7 +554,7 @@ export default function LocalPlayerScreen() {
   useEffect(() => {
     let mounted = true;
     const url = new URL(window.location.href);
-    if (url.searchParams.get("test") === "1") return;
+    if (url.searchParams.get("localTesting") === "true") return;
     pullPlaybackSettings().then(db => {
       if (!mounted) return;
       playbackSettingsRef.current = db;
@@ -1681,7 +1681,7 @@ EventDump: ${JSON.stringify(collected)}`;
       }
     }, 5000);
     return () => clearInterval(interval);
-  }, [movieId, effectiveMediaType, season, episode, localTitle]);
+  }, [movieId, effectiveMediaType, season, episode, localTitle, isLocalTesting]);
 
   // Trakt scrobbling — start when playback begins, stop on pause/unmount. Mirrors
   // NuvioMobile's scrobble flow. Uses the TMDB id (movieId) which Trakt accepts.
@@ -1719,7 +1719,7 @@ EventDump: ${JSON.stringify(collected)}`;
         traktScrobble("pause", payload);
       }
     }
-  }, [isPlaying, movieId, mediaType, season, episode]);
+  }, [isPlaying, movieId, mediaType, season, episode, isLocalTesting]);
 
   // Skip segment — derived value, no setState needed
   const activeSkip = skipIntervals.find(i => currentTime >= i.startTime && currentTime <= i.endTime) || null;
