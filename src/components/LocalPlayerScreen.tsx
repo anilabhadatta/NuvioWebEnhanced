@@ -537,7 +537,10 @@ export default function LocalPlayerScreen() {
         subtitleOutline: newStyle.edge === "outline"
       };
       playbackSettingsRef.current = updatedPrefs;
-      pushPlaybackSettings(updatedPrefs).catch(() => { });
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("test") !== "1") {
+        pushPlaybackSettings(updatedPrefs).catch(() => { });
+      }
     }
   };
 
@@ -550,6 +553,8 @@ export default function LocalPlayerScreen() {
 
   useEffect(() => {
     let mounted = true;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("test") === "1") return;
     pullPlaybackSettings().then(db => {
       if (!mounted) return;
       playbackSettingsRef.current = db;
@@ -1182,7 +1187,7 @@ export default function LocalPlayerScreen() {
       }
 
       // Pull the latest cloud progress in the background after playback starts.
-      if (rawMovieId) syncWatchProgressFromCloud().catch(() => {});
+      if (rawMovieId && !isLocalTesting) syncWatchProgressFromCloud().catch(() => {});
 
       // Failsafe: if the player stays paused/suspended 1.5s after play(),
       // retry with muted audio (handles browser autoplay policy blocks).
@@ -1658,7 +1663,7 @@ EventDump: ${JSON.stringify(collected)}`;
 
   // Watch Progress Hearbeat
   useEffect(() => {
-    if (!movieId) return;
+    if (!movieId || isLocalTesting) return;
     const interval = setInterval(() => {
       if (isPlayingRef.current && durationRef.current > 0 && movieId && effectiveMediaType && hasResumedRef.current) {
         const meta = tmdbMetaRef.current;
@@ -1682,6 +1687,7 @@ EventDump: ${JSON.stringify(collected)}`;
   // NuvioMobile's scrobble flow. Uses the TMDB id (movieId) which Trakt accepts.
   const traktStartedRef = useRef(false);
   useEffect(() => {
+    if (isLocalTesting) return;
     if (!movieId || !mediaType || !hasValidTmdbId) return;
     if (!isTraktConnected()) return;
 

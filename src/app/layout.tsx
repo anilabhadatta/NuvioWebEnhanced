@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import AppProviders from "@/components/AppProviders";
-import { Analytics } from "@vercel/analytics/react";
-import { SpeedInsights } from "@vercel/speed-insights/next";
+import VercelTracking from "@/components/VercelTracking";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -28,8 +27,7 @@ export default function RootLayout({
         <AppProviders>
           {children}
         </AppProviders>
-        <Analytics />
-        <SpeedInsights />
+        <VercelTracking />
       </body>
     </html>
   );
