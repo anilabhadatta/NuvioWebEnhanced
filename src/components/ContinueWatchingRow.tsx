@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { getWatchProgress, WatchProgress } from "@/lib/watchProgress";
+import { getWatchProgress, WatchProgress, syncWatchProgressFromCloud } from "@/lib/watchProgress";
+import { getLocalPlaybackSettings } from "@/lib/playbackSettings";
 import { TMDB_IMAGE_W500, resolveStremioIdToMovie } from "@/lib/tmdb";
 import StreamPickerModal from "./StreamPickerModal";
 import { StreamItem } from "@/lib/addonService";
@@ -15,11 +16,16 @@ function getInitialProgress(): WatchProgress[] {
   if (typeof window === "undefined") return [];
   try {
     // 1. Get local progress
-    const local = getWatchProgress();
+    let local = getWatchProgress();
+    const settings = getLocalPlaybackSettings();
+    if (!settings.localWatchHistoryEnabled) {
+      local = local.filter(p => !String(p.id).startsWith("local_"));
+    }
 
     // 2. Get cloud progress
     let cloudData: any[] = [];
-    const cloudStr = localStorage.getItem("nuvio_cloud_progress");
+    const profileIdStr = localStorage.getItem("nuvio_active_profile_id") || "1";
+    const cloudStr = localStorage.getItem(`nuvio_cloud_progress_${profileIdStr}`);
     if (cloudStr) cloudData = JSON.parse(cloudStr);
 
     const cloudProgress: WatchProgress[] = cloudData.map((c: any) => ({
@@ -86,66 +92,68 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
 
   useEffect(() => {
     isHydrated = true;
-    // 1. Get local progress
-    const local = getWatchProgress();
-
-    // 2. Get cloud progress
-    let cloudData: any[] = [];
-    try {
-      const cloudStr = localStorage.getItem("nuvio_cloud_progress");
-      if (cloudStr) cloudData = JSON.parse(cloudStr);
-    } catch (e) { }
-
-    const cloudProgress: WatchProgress[] = cloudData.map((c: any) => ({
-      id: c.content_id,
-      type: c.content_type === "series" ? "tv" : c.content_type,
-      title: "Stream",
-      poster: "",
-      season: c.season || undefined,
-      episode: c.episode || undefined,
-      currentTime: c.position / 1000,
-      duration: c.duration / 1000,
-      updatedAt: c.last_watched
-    }));
-
-    // Merge and sort by most recently watched (default fallback)
-    const allProgress = [...local, ...cloudProgress];
-
-    // Helper to get sort weight for an item (prefers higher season/episode)
-    const getWeight = (p: any) => {
-      // Base weight is the timestamp so recent items always win.
-      // However, if it's a TV show missing season/episode data (from a bug), penalize it heavily.
-      let weight = p.updatedAt;
-      if ((p.type === "tv" || p.type === "series") && (p.season === undefined || p.episode === undefined)) {
-        weight -= 1000000000000; // Heavy penalty
+    async function loadData() {
+      // 1. Get local progress
+      let local = getWatchProgress();
+      const settings = getLocalPlaybackSettings();
+      if (!settings.localWatchHistoryEnabled) {
+        local = local.filter(p => !String(p.id).startsWith("local_"));
       }
-      return weight;
-    };
 
-    // First pass deduplication: group by raw ID and pick the one with max weight
-    const uniqueMap = new Map<string, WatchProgress>();
-    for (const p of allProgress) {
-      const idStr = String(p.id);
-      if (!uniqueMap.has(idStr)) {
-        uniqueMap.set(idStr, p);
-      } else {
-        const existing = uniqueMap.get(idStr)!;
-        if (getWeight(p) > getWeight(existing)) {
+      // 2. Get cloud progress directly from APIs
+      let cloudData: any[] = [];
+      try {
+        const data = await syncWatchProgressFromCloud();
+        if (data) cloudData = data;
+      } catch (e) { }
+
+      const cloudProgress: WatchProgress[] = cloudData.map((c: any) => ({
+        id: c.content_id,
+        type: c.content_type === "series" ? "tv" : c.content_type,
+        title: "Stream",
+        poster: "",
+        season: c.season || undefined,
+        episode: c.episode || undefined,
+        currentTime: c.position / 1000,
+        duration: c.duration / 1000,
+        updatedAt: c.last_watched
+      }));
+
+      // Merge and sort by most recently watched (default fallback)
+      const allProgress = [...local, ...cloudProgress];
+
+      // Helper to get sort weight for an item (prefers higher season/episode)
+      const getWeight = (p: any) => {
+        let weight = p.updatedAt;
+        if ((p.type === "tv" || p.type === "series") && (p.season === undefined || p.episode === undefined)) {
+          weight -= 1000000000000; // Heavy penalty
+        }
+        return weight;
+      };
+
+      // First pass deduplication: group by raw ID and pick the one with max weight
+      const uniqueMap = new Map<string, WatchProgress>();
+      for (const p of allProgress) {
+        const idStr = String(p.id);
+        if (!uniqueMap.has(idStr)) {
           uniqueMap.set(idStr, p);
+        } else {
+          const existing = uniqueMap.get(idStr)!;
+          if (getWeight(p) > getWeight(existing)) {
+            uniqueMap.set(idStr, p);
+          }
         }
       }
-    }
 
-    const uniqueProgress = Array.from(uniqueMap.values());
-    // Sort unique progress by updatedAt so recently watched shows remain at the front of the row
-    uniqueProgress.sort((a, b) => b.updatedAt - a.updatedAt);
+      const uniqueProgress = Array.from(uniqueMap.values());
+      uniqueProgress.sort((a, b) => b.updatedAt - a.updatedAt);
 
-    if (uniqueProgress.length > 0) {
-      setItems(uniqueProgress);
+      if (uniqueProgress.length > 0) {
+        setItems(uniqueProgress);
 
-      // Fetch details from TMDB to get images
-      Promise.all(uniqueProgress.map(async (p) => {
-        const cacheKey = `${p.id}:${p.type}`;
+        // Fetch details from TMDB to get images
+        const enriched = await Promise.all(uniqueProgress.map(async (p) => {
+          const cacheKey = `${p.id}:${p.type}`;
         if (tmdbResolutionCache.has(cacheKey)) {
           const cachedData = tmdbResolutionCache.get(cacheKey);
           return { ...p, ...cachedData };
@@ -206,33 +214,36 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
         } catch (e) {
           return { ...p, tmdbData: null };
         }
-      })).then((enriched) => {
-        // Second pass deduplication: cloud uses IMDb IDs, local uses TMDB IDs.
-        // Group by resolved TMDB ID and again pick max weight.
-        const finalMap = new Map<string, any>();
+      }));
 
-        for (const item of enriched) {
-          const resolvedId = String(item.tmdbData?.id || item.id);
-          if (!finalMap.has(resolvedId)) {
+      // Second pass deduplication: cloud uses IMDb IDs, local uses TMDB IDs.
+      // Group by resolved TMDB ID and again pick max weight.
+      const finalMap = new Map<string, any>();
+
+      for (const item of enriched) {
+        const resolvedId = String(item.tmdbData?.id || item.id);
+        if (!finalMap.has(resolvedId)) {
+          finalMap.set(resolvedId, item);
+        } else {
+          const existing = finalMap.get(resolvedId)!;
+          if (getWeight(item) > getWeight(existing)) {
             finalMap.set(resolvedId, item);
-          } else {
-            const existing = finalMap.get(resolvedId)!;
-            if (getWeight(item) > getWeight(existing)) {
-              finalMap.set(resolvedId, item);
-            }
           }
         }
+      }
 
-        const finalItems = Array.from(finalMap.values());
-        finalItems.sort((a, b) => b.updatedAt - a.updatedAt);
-        cachedEnrichedItems = finalItems;
-        setEnrichedItems(finalItems);
-      });
+      const finalItems = Array.from(finalMap.values());
+      finalItems.sort((a, b) => b.updatedAt - a.updatedAt);
+      cachedEnrichedItems = finalItems;
+      setEnrichedItems(finalItems);
     } else {
       setItems([]);
       setEnrichedItems([]);
       cachedEnrichedItems = [];
     }
+  }
+  
+  loadData();
   }, []);
 
   if (items.length === 0) return null;

@@ -348,6 +348,21 @@ export default function PlaybackSection() {
         </div>
       </div>
 
+      <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">Watch Progress</p>
+      <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl divide-y divide-white/5 mb-8">
+        {/* Local Watch History */}
+        <div className="px-5 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-white font-semibold text-sm">Local Watch History</p>
+            <p className="text-[#888] text-xs mt-0.5">Show movies and series played from your local device files in Continue Watching.</p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" className="sr-only peer" checked={settings.localWatchHistoryEnabled ?? false} onChange={e => updateSetting("localWatchHistoryEnabled", e.target.checked)} />
+            <div className="w-11 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-white/30"></div>
+          </label>
+        </div>
+      </div>
+
       <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-8">
         <p className="text-white font-semibold text-sm">External player</p>
         <p className="text-[#888] text-xs mt-1">

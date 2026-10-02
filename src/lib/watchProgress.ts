@@ -1,5 +1,7 @@
 import { supabase } from "./supabase";
 import { handleInvalidTokenError } from "./useAuth";
+import { getActiveProfileId } from "./profiles";
+import { getLocalPlaybackSettings } from "./playbackSettings";
 
 export interface WatchProgress {
   id: string;        // IMDb ID (tt-prefixed) if available, otherwise TMDB ID
@@ -15,16 +17,27 @@ export interface WatchProgress {
   updatedAt: number;
 }
 
-const STORAGE_KEY = "nuvio_watch_progress";
+const STORAGE_KEY_PREFIX = "nuvio_watch_progress_";
+function getProfileStorageKey() {
+  return `${STORAGE_KEY_PREFIX}${getActiveProfileId()}`;
+}
 
 export async function saveWatchProgress(progress: WatchProgress) {
   if (typeof window === "undefined") return;
+
+  const isLocal = String(progress.id).startsWith("local_");
+  const settings = getLocalPlaybackSettings();
+
+  if (isLocal && !settings.localWatchHistoryEnabled) {
+    return;
+  }
   
   const percent = progress.duration > 0 ? (progress.currentTime / progress.duration) : 0;
+  const profileKey = getProfileStorageKey();
 
   // 1. Save locally for instantaneous UI updates
   try {
-    const existingStr = localStorage.getItem(STORAGE_KEY);
+    const existingStr = localStorage.getItem(profileKey);
     let allProgress: WatchProgress[] = existingStr ? JSON.parse(existingStr) : [];
     
     allProgress = allProgress.filter(p => String(p.id) !== String(progress.id));
@@ -34,13 +47,13 @@ export async function saveWatchProgress(progress: WatchProgress) {
     }
     
     allProgress = allProgress.slice(0, 30);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(allProgress));
+    localStorage.setItem(profileKey, JSON.stringify(allProgress));
   } catch (e) {
     console.error("Failed to save watch progress locally", e);
   }
 
   // If local testing (indicated by "local_" prefix), skip cloud sync
-  if (String(progress.id).startsWith("local_")) {
+  if (isLocal) {
     return;
   }
 
@@ -119,7 +132,7 @@ export async function saveWatchProgress(progress: WatchProgress) {
 export function getWatchProgress(): WatchProgress[] {
   if (typeof window === "undefined") return [];
   try {
-    const existingStr = localStorage.getItem(STORAGE_KEY);
+    const existingStr = localStorage.getItem(getProfileStorageKey());
     return existingStr ? JSON.parse(existingStr) : [];
   } catch (e) {
     return [];
@@ -144,13 +157,15 @@ export async function syncWatchProgressFromCloud() {
       handleInvalidTokenError(error);
       return;
     }
-    if (!data) return;
+    if (!data) return [];
 
     // Cache the raw desktop RPC records so we can check them instantly on playback
-    localStorage.setItem("nuvio_cloud_progress", JSON.stringify(data));
+    localStorage.setItem(`nuvio_cloud_progress_${profileId}`, JSON.stringify(data));
+    return data;
   } catch (e) {
     console.error("Error pulling cloud progress", e);
     handleInvalidTokenError(e);
+    return [];
   }
 }
 
@@ -167,7 +182,9 @@ export function getResumeTime(id: string, type: string, season?: number, episode
   console.log("[getResumeTime] Local found:", localFound);
 
   try {
-    const cloudStr = localStorage.getItem("nuvio_cloud_progress");
+    const profileIdStr = localStorage.getItem("nuvio_active_profile_id") || "1";
+    const profileId = parseInt(profileIdStr, 10);
+    const cloudStr = localStorage.getItem(`nuvio_cloud_progress_${profileId}`);
     console.log("[getResumeTime] Cloud string from localStorage exists:", !!cloudStr);
     if (cloudStr) {
       const cloudData = JSON.parse(cloudStr);

@@ -20,6 +20,7 @@ export interface PlaybackSettings {
 
   skipIntroEnabled: boolean;
   animeSkipEnabled: boolean;
+  localWatchHistoryEnabled: boolean;
 }
 
 export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
@@ -40,6 +41,7 @@ export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
 
   skipIntroEnabled: true,
   animeSkipEnabled: false,
+  localWatchHistoryEnabled: false,
 };
 
 export function getLocalPlaybackSettings(): PlaybackSettings {
@@ -96,6 +98,7 @@ export async function pullPlaybackSettings(): Promise<PlaybackSettings> {
 
       skipIntroEnabled: getValue("skip_intro_enabled", DEFAULT_PLAYBACK_SETTINGS.skipIntroEnabled),
       animeSkipEnabled: getValue("anime_skip_enabled", DEFAULT_PLAYBACK_SETTINGS.animeSkipEnabled),
+      localWatchHistoryEnabled: getValue("local_watch_history_enabled", DEFAULT_PLAYBACK_SETTINGS.localWatchHistoryEnabled),
     };
     
     localStorage.setItem(`nuvio_playback_settings_${profileId}`, JSON.stringify(finalSettings));
@@ -160,6 +163,7 @@ export async function pushPlaybackSettings(settings: PlaybackSettings): Promise<
 
     ps["skip_intro_enabled"] = encodeBoolean(settings.skipIntroEnabled);
     ps["anime_skip_enabled"] = encodeBoolean(settings.animeSkipEnabled);
+    ps["local_watch_history_enabled"] = encodeBoolean(settings.localWatchHistoryEnabled);
 
     const { error } = await supabase.rpc("sync_push_profile_settings_blob", {
       p_platform: "mobile",

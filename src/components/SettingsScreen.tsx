@@ -27,7 +27,7 @@ const CATEGORIES = [
 export default function SettingsScreen() {
   const router = useRouter();
   const { displayName } = useAuth();
-  const [active, setActive] = useState("playback");
+  const [active, setActive] = useState("profiles");
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
