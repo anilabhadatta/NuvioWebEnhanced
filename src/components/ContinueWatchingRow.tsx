@@ -10,7 +10,15 @@ import { StreamItem } from "@/lib/addonService";
 
 let isHydrated = false;
 let cachedEnrichedItems: any[] = [];
+let cachedProfileId = "1";
 const tmdbResolutionCache = new Map<string, any>();
+
+if (typeof window !== "undefined") {
+  window.addEventListener("nuvio:profile-changed", () => {
+    cachedEnrichedItems = [];
+    isHydrated = false;
+  });
+}
 
 function getInitialProgress(): WatchProgress[] {
   if (typeof window === "undefined") return [];
@@ -244,6 +252,15 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
   }
   
   loadData();
+  
+  const handleProfileChange = () => {
+    setItems([]);
+    setEnrichedItems([]);
+    loadData();
+  };
+  
+  window.addEventListener("nuvio:profile-changed", handleProfileChange);
+  return () => window.removeEventListener("nuvio:profile-changed", handleProfileChange);
   }, []);
 
   if (items.length === 0) return null;

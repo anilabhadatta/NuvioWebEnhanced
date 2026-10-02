@@ -27,7 +27,8 @@ export default function CollectionRows({ onSelectMovie }: { onSelectMovie: (m: T
       setCollections(uniqueMerged.sort((a, b) => Number(b.pinToTop) - Number(a.pinToTop)));
 
       // Only hit Supabase if we haven't already fetched this session
-      const cacheKey = "nuvio_collections_pulled";
+      const profileIdStr = typeof window !== "undefined" ? (localStorage.getItem("nuvio_active_profile_id") || "1") : "1";
+      const cacheKey = `nuvio_collections_pulled_${profileIdStr}`;
       const cached = sessionStorage.getItem(cacheKey);
       let remoteCollections: any[] | null = null;
       if (cached) {
@@ -49,7 +50,17 @@ export default function CollectionRows({ onSelectMovie }: { onSelectMovie: (m: T
     };
     load();
 
-    return () => { cancelled = true; };
+    const handleProfileChange = () => {
+      setCollections([]);
+      load();
+    };
+    
+    window.addEventListener("nuvio:profile-changed", handleProfileChange);
+
+    return () => { 
+      cancelled = true; 
+      window.removeEventListener("nuvio:profile-changed", handleProfileChange);
+    };
   }, []);
 
   if (collections.length === 0) return null;
