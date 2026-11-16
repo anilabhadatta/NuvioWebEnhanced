@@ -148,8 +148,9 @@ export async function GET(req: NextRequest) {
     // Build response headers — pass through what's needed for video playback
     const responseHeaders = new Headers();
     responseHeaders.set("Access-Control-Allow-Origin", "*");
-    responseHeaders.set("Access-Control-Allow-Headers", "Range");
-    responseHeaders.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
+    responseHeaders.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    responseHeaders.set("Access-Control-Allow-Headers", "Range, Content-Type, Accept, Origin, User-Agent, X-Requested-With, Authorization");
+    responseHeaders.set("Access-Control-Expose-Headers", "*");
 
     const passthrough = [
       "content-type",
@@ -202,15 +203,68 @@ export async function HEAD(req: NextRequest) {
     return new NextResponse("Missing url parameter", { status: 400 });
   }
 
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Range",
-      "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
-      "Accept-Ranges": "bytes",
-    },
+  const customHeadersStr = searchParams.get("headers") || "{}";
+  let customHeaders: Record<string, string> = {};
+  try {
+    customHeaders = JSON.parse(customHeadersStr);
+  } catch (_) {}
+
+  const headersToSend: Record<string, string> = {
+    "user-agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    accept: "*/*",
+  };
+
+  Object.entries(customHeaders).forEach(([k, v]) => {
+    const key = k.toLowerCase();
+    if (!FORBIDDEN_UPSTREAM.has(key)) {
+      headersToSend[key] = v as string;
+    }
   });
+
+  const responseHeaders = new Headers();
+  responseHeaders.set("Access-Control-Allow-Origin", "*");
+  responseHeaders.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  responseHeaders.set("Access-Control-Allow-Headers", "Range, Content-Type, Accept, Origin, User-Agent, X-Requested-With, Authorization");
+  responseHeaders.set("Access-Control-Expose-Headers", "*");
+  responseHeaders.set("Accept-Ranges", "bytes");
+
+  try {
+    const headRes = await axios({
+      url: targetUrl,
+      method: "HEAD",
+      headers: headersToSend,
+      httpsAgent: agent,
+      maxRedirects: 5,
+      validateStatus: () => true,
+      timeout: 4000,
+    });
+
+    const passthrough = [
+      "content-type",
+      "content-length",
+      "content-range",
+      "accept-ranges",
+      "last-modified",
+      "etag",
+    ];
+    passthrough.forEach((h) => {
+      const v = headRes.headers[h];
+      if (v !== undefined) {
+        responseHeaders.set(h, Array.isArray(v) ? v.join(", ") : String(v));
+      }
+    });
+
+    return new NextResponse(null, {
+      status: headRes.status >= 200 && headRes.status < 400 ? headRes.status : 200,
+      headers: responseHeaders,
+    });
+  } catch (_) {
+    return new NextResponse(null, {
+      status: 200,
+      headers: responseHeaders,
+    });
+  }
 }
 
 export async function OPTIONS() {
@@ -222,9 +276,9 @@ export async function OPTIONS() {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Range, Content-Type",
-      "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "Range, Content-Type, Accept, Origin, User-Agent, X-Requested-With, Authorization",
+      "Access-Control-Expose-Headers": "*",
     },
   });
 }

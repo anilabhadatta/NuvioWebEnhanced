@@ -905,45 +905,55 @@ export default function MoviPlayerScreen() {
       }
 
 
-      // Strategy:
-      // 1. Direct fetch with redirect: "follow" — works for CORS-clean streams.
-      // 2. If CORS-blocked (debrid redirect chains like TorBox), fall back to
-      //    /api/resolve which follows redirects server-side and returns the final
-      //    CDN URL. The CDN itself is CORS-clean so movi-player plays directly.
-      // 3. Last resort: hand the raw URL to the player.
-
-      // Step 1: direct (covers most streams — no server call, zero latency overhead)
-      const controller = new AbortController();
-      try {
-        const res = await fetch(decoded, {
-          method: "GET",
-          headers: { Range: "bytes=0-0" },
-          redirect: "follow",
-          signal: controller.signal,
-        });
-        setResolvedSrc(res.url || decoded);
-        controller.abort();
-        return;
-      } catch (_directErr) {
-        // CORS blocked — fall through to server-side resolver
-      }
-
-      // Step 2: server-side resolve (handles TorBox/debrid CORS blocks)
+      // Universal Cross-Device Stream Resolution Strategy:
+      // Step 1: Follow any server-side redirects (debrid / TorBox / addon stream hops)
+      let candidateUrl = decoded;
       try {
         const resolverRes = await fetch(`/api/resolve?url=${encodeURIComponent(decoded)}`);
         if (resolverRes.ok) {
           const data = await resolverRes.json();
           if (data.url && typeof data.url === "string" && data.url.startsWith("http")) {
-            setResolvedSrc(data.url);
-            return;
+            candidateUrl = data.url;
           }
         }
       } catch (_resolverErr) {
-        // Resolver unavailable — fall through
+        // Resolver unavailable — fall back to original decoded URL
       }
 
-      // Step 3: last resort — hand raw URL to player
-      setResolvedSrc(decoded);
+      // Step 2: Client CORS accessibility check.
+      // Tests whether this specific client/device can directly fetch byte ranges from candidateUrl
+      // (e.g. desktop with Nuvio CORS extension active, or public CORS-enabled CDN).
+      try {
+        const testController = new AbortController();
+        const testTimeout = setTimeout(() => testController.abort(), 2000);
+        const testRes = await fetch(candidateUrl, {
+          method: "GET",
+          headers: { Range: "bytes=0-0" },
+          signal: testController.signal,
+        });
+        clearTimeout(testTimeout);
+
+        if (testRes.ok || testRes.status === 206) {
+          // Direct fetch works! Use direct CDN link for full WebCodecs hardware decoding
+          setResolvedSrc(candidateUrl);
+          return;
+        }
+      } catch (_corsErr) {
+        // Direct fetch failed with CORS TypeError or network block
+      }
+
+      // Step 3: Direct stream is CORS-blocked on this device (e.g. iOS Safari, iPadOS, Android, Smart TV, or PC without extension).
+      // Automatically route through /api/streamProxy with Access-Control-Allow-Origin: * for 100% universal compatibility!
+      if (streamProxyEnabled) {
+        console.warn("[MoviPlayer] Direct stream is CORS-restricted on this client. Auto-routing through /api/streamProxy for universal playback.");
+        let proxied = `/api/streamProxy?url=${encodeURIComponent(candidateUrl)}`;
+        if (streamHeadersStr) proxied += `&headers=${streamHeadersStr}`;
+        setResolvedSrc(proxied);
+        return;
+      }
+
+      // Step 4: Fallback
+      setResolvedSrc(candidateUrl);
     }
     resolveUrl();
   }, [streamUrl, streamHeadersStr]);
@@ -1339,7 +1349,21 @@ export default function MoviPlayerScreen() {
       playerReadyRef.current = true;
       scheduleAutoplay(video);
     }
-    else if (state === 'error') { setIsBuffering(false); setPlayerError("Failed to decode stream"); }
+    else if (state === 'error') {
+      setIsBuffering(false);
+      if (resolvedSrc && !resolvedSrc.includes("/api/streamProxy") && streamProxyEnabled) {
+        console.warn("[MoviPlayer] Stream state error on direct playback. Auto-recovering via /api/streamProxy...");
+        const target = lastResolvedUrl.current || streamUrl;
+        if (target) {
+          setPlayerError(null);
+          let proxied = `/api/streamProxy?url=${encodeURIComponent(decodeURIComponent(target))}`;
+          if (streamHeadersStr) proxied += `&headers=${streamHeadersStr}`;
+          setResolvedSrc(proxied);
+          return;
+        }
+      }
+      setPlayerError("Failed to decode stream");
+    }
   };
 
   const isLanguageMatch = (trackLang: string, trackLabel: string, pref: string) => {
@@ -1679,6 +1703,26 @@ export default function MoviPlayerScreen() {
       }
     }
 
+    const errStr = `${msg} ${errObj?.message || ''} ${JSON.stringify(collected)}`.toLowerCase();
+    const isCorsOrFetch =
+      errStr.includes("cors") ||
+      errStr.includes("failed to fetch video resource") ||
+      errStr.includes("check your connection or cors") ||
+      errStr.includes("failed to fetch");
+
+    // Self-healing: If direct stream threw a CORS or fetch error, auto-recover seamlessly through /api/streamProxy
+    if (isCorsOrFetch && resolvedSrc && !resolvedSrc.includes("/api/streamProxy") && streamProxyEnabled) {
+      console.warn("[MoviPlayer] Detected runtime CORS error on direct stream. Auto-recovering via /api/streamProxy...");
+      const target = lastResolvedUrl.current || streamUrl;
+      if (target) {
+        setPlayerError(null);
+        let proxied = `/api/streamProxy?url=${encodeURIComponent(decodeURIComponent(target))}`;
+        if (streamHeadersStr) proxied += `&headers=${streamHeadersStr}`;
+        setResolvedSrc(proxied);
+        return;
+      }
+    }
+
     const errMsg = `[Player Error]
 NativeCode: ${errObj?.code || 'none'}
 NativeMsg: ${errObj?.message || 'none'}
@@ -1687,7 +1731,13 @@ Msg: ${msg}
 ShakaData: ${JSON.stringify(shakaData || [])}
 EventDump: ${JSON.stringify(collected)}`;
 
-    console.error(errMsg);
+    // Avoid throwing fatal console.error overlays in development if it is an intercepted CORS/recovery issue
+    if (isCorsOrFetch && resolvedSrc.includes("/api/streamProxy")) {
+      console.warn(errMsg);
+      setPlayerError("Video stream could not be loaded. Please try another stream or external player.");
+    } else {
+      console.warn(errMsg);
+    }
   };
 
   const stableStateChange = useCallback((e: any) => onStateChangeRef.current?.(e), []);
