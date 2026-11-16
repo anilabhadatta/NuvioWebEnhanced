@@ -40,6 +40,7 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
   const [inLibrary, setInLibrary] = useState(false);
   const [libraryCat, setLibraryCat] = useState<LibraryCategory>("movie");
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  const [libraryBusy, setLibraryBusy] = useState(false);
 
   useEffect(() => {
     const checkLib = () => {
@@ -58,17 +59,22 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
     return () => window.removeEventListener("nuvio:library-updated", handleUpdate);
   }, [movie]);
 
-  const handleToggleLibrary = (preferredCat?: LibraryCategory) => {
+  const handleToggleLibrary = async (preferredCat?: LibraryCategory) => {
     const targetCat = preferredCat || libraryCat || autoDetectCategory(movie);
-    if (inLibrary && !preferredCat) {
-      removeFromLibrary(movie.id);
-      setInLibrary(false);
-    } else {
-      addToLibrary(movie, targetCat);
-      setInLibrary(true);
-      setLibraryCat(targetCat);
-    }
     setShowCategoryMenu(false);
+    setLibraryBusy(true);
+    try {
+      if (inLibrary && !preferredCat) {
+        setInLibrary(false);
+        await removeFromLibrary(movie.id);
+      } else {
+        setInLibrary(true);
+        setLibraryCat(targetCat);
+        await addToLibrary(movie, targetCat);
+      }
+    } finally {
+      setLibraryBusy(false);
+    }
   };
 
   const title = movie.title || movie.name || "";
@@ -223,45 +229,60 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
             </button>
 
             {/* Library button with category selection */}
-            <div className="relative">
-              <div className="flex items-center">
+            <div className="relative inline-flex items-center">
+              <div
+                className={`inline-flex items-stretch h-10 rounded-xl overflow-hidden backdrop-blur-md transition-all shadow-md ${
+                  inLibrary
+                    ? "bg-gradient-to-r from-orange-500/25 to-pink-500/25 border border-orange-500/50 shadow-orange-500/10"
+                    : "bg-white/10 hover:bg-white/15 border border-white/15 hover:border-white/25"
+                }`}
+              >
                 <button
                   onClick={() => handleToggleLibrary()}
-                  className={`flex items-center gap-2 px-5 py-2.5 rounded-l-lg transition-all text-sm backdrop-blur-md cursor-pointer font-semibold ${
-                    inLibrary
-                      ? "bg-gradient-to-r from-orange-500/20 to-pink-500/20 border border-orange-500/50 text-white"
-                      : "bg-white/10 hover:bg-white/20 border border-white/20 text-white"
-                  }`}
+                  disabled={libraryBusy}
+                  className="flex items-center gap-2 px-4 h-full text-sm font-semibold transition-colors cursor-pointer text-white disabled:opacity-75"
                 >
-                  {inLibrary ? (
+                  {libraryBusy ? (
                     <>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-orange-400">
+                      <svg className="animate-spin w-4 h-4 text-orange-400" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                      </svg>
+                      <span>Saving...</span>
+                    </>
+                  ) : inLibrary ? (
+                    <>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-orange-400 shrink-0">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                       </svg>
-                      <span>In Library</span>
-                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-white/10 text-orange-300">
+                      <span className="text-white font-semibold">In Library</span>
+                      <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-white/15 text-orange-300">
                         {libraryCat}
                       </span>
                     </>
                   ) : (
                     <>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-white shrink-0">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                       </svg>
-                      <span>Add to Library</span>
+                      <span className="text-white font-semibold">Add to Library</span>
                     </>
                   )}
                 </button>
+
+                {/* Vertical Divider */}
+                <div className={`w-[1px] my-1 ${inLibrary ? "bg-orange-500/30" : "bg-white/15"}`} />
+
                 <button
-                  onClick={() => setShowCategoryMenu(!showCategoryMenu)}
-                  className={`px-2 py-2.5 rounded-r-lg border-l-0 transition-all text-white backdrop-blur-md cursor-pointer ${
-                    inLibrary
-                      ? "bg-gradient-to-r from-orange-500/20 to-pink-500/20 border border-orange-500/50 hover:bg-white/20"
-                      : "bg-white/10 hover:bg-white/20 border border-white/20"
-                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowCategoryMenu(!showCategoryMenu);
+                  }}
+                  className="px-2.5 h-full flex items-center justify-center text-white/80 hover:text-white transition-colors cursor-pointer"
                   title="Choose Category"
+                  aria-label="Choose Category"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-3.5 h-3.5 transition-transform ${showCategoryMenu ? "rotate-180" : ""}`}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                   </svg>
                 </button>

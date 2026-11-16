@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   LibraryItem,
   LibraryCategory,
   getLibraryItems,
+  pullLibraryItems,
   removeFromLibrary,
   updateLibraryCategory,
   addToLibrary,
@@ -13,10 +14,22 @@ import {
 import { TMDBMovie, TMDB_IMAGE_W500, tmdb, TMDB_API_KEY } from "@/lib/tmdb";
 import MovieModal from "./MovieModal";
 import TorboxLibrary from "./TorboxLibrary";
+import { useAuth } from "@/lib/useAuth";
+import { useProfiles } from "@/lib/useProfiles";
 
 export default function LibraryView() {
-  const [items, setItems] = useState<LibraryItem[]>([]);
-  const [activeTab, setActiveTab] = useState<"all" | LibraryCategory | "cloud">("all");
+  const { isAuthenticated } = useAuth();
+  const { activeProfile } = useProfiles();
+
+  const [items, setItems] = useState<LibraryItem[]>(() => getLibraryItems());
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+
+  // Top level tabs: "saved" (Nuvio Saved Library) vs "cloud" (TorBox Cloud)
+  const [primaryTab, setPrimaryTab] = useState<"saved" | "cloud">("saved");
+
+  // Category sub-filter inside Saved tab
+  const [activeCategory, setActiveCategory] = useState<"all" | LibraryCategory>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"recent" | "title" | "rating" | "year">("recent");
 
@@ -29,20 +42,39 @@ export default function LibraryView() {
   const [addSearchResults, setAddSearchResults] = useState<TMDBMovie[]>([]);
   const [addSearching, setAddSearching] = useState(false);
 
-  // Load items and subscribe to updates
+  // Refresh items from cloud and local cache
+  const refreshLibrary = useCallback(async (force = false) => {
+    if (force) setSyncing(true);
+    try {
+      const pulled = await pullLibraryItems(force);
+      setItems(pulled);
+    } finally {
+      setLoading(false);
+      if (force) setTimeout(() => setSyncing(false), 600);
+    }
+  }, []);
+
+  // Initial load and subscriptions
   useEffect(() => {
-    const load = () => {
+    refreshLibrary(false);
+
+    const handleUpdate = () => {
       setItems(getLibraryItems());
     };
-    load();
-    const handleUpdate = () => load();
+
+    const handleProfileChange = () => {
+      setLoading(true);
+      refreshLibrary(true);
+    };
+
     window.addEventListener("nuvio:library-updated", handleUpdate);
-    window.addEventListener("nuvio:profile-changed", handleUpdate);
+    window.addEventListener("nuvio:profile-changed", handleProfileChange);
+
     return () => {
       window.removeEventListener("nuvio:library-updated", handleUpdate);
-      window.removeEventListener("nuvio:profile-changed", handleUpdate);
+      window.removeEventListener("nuvio:profile-changed", handleProfileChange);
     };
-  }, []);
+  }, [refreshLibrary]);
 
   // Counts
   const counts = useMemo(() => {
@@ -57,8 +89,8 @@ export default function LibraryView() {
   // Filtered and sorted items
   const displayedItems = useMemo(() => {
     let list = items;
-    if (activeTab !== "all" && activeTab !== "cloud") {
-      list = list.filter((i) => i.category === activeTab);
+    if (activeCategory !== "all") {
+      list = list.filter((i) => i.category === activeCategory);
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -75,7 +107,7 @@ export default function LibraryView() {
       }
       return 0;
     });
-  }, [items, activeTab, searchQuery, sortBy]);
+  }, [items, activeCategory, searchQuery, sortBy]);
 
   // Search TMDB for "+ Add to Library"
   useEffect(() => {
@@ -88,9 +120,13 @@ export default function LibraryView() {
     const timer = setTimeout(async () => {
       try {
         const res = await tmdb.get(
-          `/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(addSearchQuery)}&language=en-US`
+          `/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(
+            addSearchQuery
+          )}&language=en-US`
         );
-        const filtered = (res.data.results || []).filter((r: any) => r.media_type !== "person");
+        const filtered = (res.data.results || []).filter(
+          (r: any) => r.media_type !== "person"
+        );
         setAddSearchResults(filtered);
       } catch (e) {
         console.error("Add search failed", e);
@@ -102,9 +138,11 @@ export default function LibraryView() {
   }, [addSearchQuery]);
 
   const handleCardClick = (item: LibraryItem) => {
-    // Construct TMDBMovie compatible object to pass to MovieModal
     const movieObj: TMDBMovie = {
-      id: typeof item.id === "string" && !isNaN(Number(item.id)) ? Number(item.id) : (item.id as any),
+      id:
+        typeof item.id === "string" && !isNaN(Number(item.id))
+          ? Number(item.id)
+          : (item.id as any),
       title: item.title,
       name: item.title,
       overview: item.overview || "",
@@ -120,18 +158,22 @@ export default function LibraryView() {
     setSelectedMovie(movieObj);
   };
 
-  const handleRemove = (e: React.MouseEvent, id: string | number) => {
+  const handleRemove = async (e: React.MouseEvent, id: string | number) => {
     e.stopPropagation();
-    removeFromLibrary(id);
+    await removeFromLibrary(id);
   };
 
-  const handleChangeCategory = (e: React.MouseEvent, id: string | number, cat: LibraryCategory) => {
+  const handleChangeCategory = async (
+    e: React.MouseEvent,
+    id: string | number,
+    cat: LibraryCategory
+  ) => {
     e.stopPropagation();
-    updateLibraryCategory(id, cat);
+    await updateLibraryCategory(id, cat);
   };
 
-  const handleQuickAdd = (m: TMDBMovie, cat: LibraryCategory) => {
-    addToLibrary(m, cat);
+  const handleQuickAdd = async (m: TMDBMovie, cat: LibraryCategory) => {
+    await addToLibrary(m, cat);
   };
 
   const getCategoryBadge = (cat: LibraryCategory) => {
@@ -151,114 +193,199 @@ export default function LibraryView() {
       {/* Header controls & stats */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-1">Library</h1>
-          <p className="text-[#888] text-sm">
-            Saved movies, series, anime, and connected cloud storage.
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-white tracking-tight">Library</h1>
+            <span
+              className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
+                isAuthenticated
+                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                  : "bg-white/10 text-[#888] border-white/10"
+              }`}
+            >
+              {isAuthenticated ? (activeProfile?.name ? `${activeProfile.name} • Cloud Synced` : "Cloud Synced") : "Local Mode"}
+            </span>
+          </div>
+          <p className="text-[#888] text-sm mt-1">
+            Your saved movies, series, anime, and connected cloud storage.
           </p>
         </div>
 
+        <div className="flex items-center gap-2.5 self-start sm:self-auto">
+          {/* Sync Button */}
+          <button
+            onClick={() => refreshLibrary(true)}
+            disabled={syncing}
+            className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white/90 hover:text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+            title="Sync with cloud"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              className={`w-3.5 h-3.5 ${syncing ? "animate-spin text-orange-400" : ""}`}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            <span>{syncing ? "Syncing..." : "Sync"}</span>
+          </button>
+
+          {/* Add to Library Button */}
+          <button
+            onClick={() => {
+              setAddSearchQuery("");
+              setAddSearchResults([]);
+              setShowAddModal(true);
+            }}
+            className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white font-bold text-sm px-4.5 py-2.5 rounded-xl shadow-lg transition-all cursor-pointer hover:scale-105"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span>Add to Library</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Primary Section Toggle: [Saved] vs [TorBox Cloud] (matching Nuvio Android) */}
+      <div className="flex items-center gap-2 mb-6">
         <button
-          onClick={() => {
-            setAddSearchQuery("");
-            setAddSearchResults([]);
-            setShowAddModal(true);
-          }}
-          className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow-lg transition-all cursor-pointer self-start sm:self-auto"
+          onClick={() => setPrimaryTab("saved")}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+            primaryTab === "saved"
+              ? "bg-white text-black shadow-lg"
+              : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/5"
+          }`}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          <span>Saved</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              primaryTab === "saved" ? "bg-black/10 text-black" : "bg-white/10 text-white/60"
+            }`}
+          >
+            {counts.all}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setPrimaryTab("cloud")}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+            primaryTab === "cloud"
+              ? "bg-white text-black shadow-lg"
+              : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/5"
+          }`}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" />
           </svg>
-          Add to Library
+          <span>TorBox Cloud</span>
         </button>
       </div>
 
-      {/* Navigation tabs */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-4 mb-6">
-        {[
-          { id: "all", label: "All Items", count: counts.all },
-          { id: "movie", label: "Movies", count: counts.movie },
-          { id: "series", label: "TV Series", count: counts.series },
-          { id: "anime", label: "Anime", count: counts.anime },
-          { id: "cloud", label: "TorBox Cloud", count: null },
-        ].map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                isActive
-                  ? "bg-white text-black shadow-md"
-                  : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white"
-              }`}
-            >
-              <span>{tab.label}</span>
-              {tab.count !== null && (
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                    isActive ? "bg-black/10 text-black" : "bg-white/10 text-white/60"
-                  }`}
-                >
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
       {/* Cloud tab display */}
-      {activeTab === "cloud" ? (
-        <div className="mt-4">
+      {primaryTab === "cloud" ? (
+        <div className="mt-2">
           <TorboxLibrary />
         </div>
       ) : (
         <>
-          {/* Search & Sort Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-            <div className="relative flex-1 max-w-md">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                className="w-4 h-4 text-[#777] absolute left-3.5 top-1/2 -translate-y-1/2"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-              </svg>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={`Search ${activeTab === "all" ? "library" : activeTab}...`}
-                className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white placeholder-[#555] outline-none focus:border-white/30 transition-colors"
-              />
+          {/* Category filter sub-bar & Search/Sort */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4 mb-6">
+            {/* Category pills */}
+            <div className="flex flex-wrap items-center gap-2">
+              {[
+                { id: "all", label: "All Items", count: counts.all },
+                { id: "movie", label: "Movies", count: counts.movie },
+                { id: "series", label: "TV Series", count: counts.series },
+                { id: "anime", label: "Anime", count: counts.anime },
+              ].map((tab) => {
+                const isActive = activeCategory === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveCategory(tab.id as any)}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      isActive
+                        ? "bg-white/20 text-white border border-white/30"
+                        : "bg-white/5 hover:bg-white/10 text-white/60 hover:text-white border border-white/5"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        isActive ? "bg-white text-black" : "bg-white/10 text-white/50"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="flex items-center gap-2 self-end sm:self-auto">
-              <span className="text-xs text-[#777] font-semibold">Sort:</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="bg-[#1a1a1a] border border-white/10 text-white text-xs font-semibold rounded-xl px-3 py-2 outline-none cursor-pointer focus:border-white/30"
-              >
-                <option value="recent">Recently Added</option>
-                <option value="title">Title (A-Z)</option>
-                <option value="rating">Rating (Highest)</option>
-                <option value="year">Release Year (Newest)</option>
-              </select>
+            {/* Search and Sort controls */}
+            <div className="flex items-center gap-3">
+              <div className="relative w-full sm:w-64">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  className="w-4 h-4 text-[#777] absolute left-3 top-1/2 -translate-y-1/2"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={`Search saved ${activeCategory === "all" ? "media" : activeCategory}...`}
+                  className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-[#555] outline-none focus:border-white/30 transition-colors"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-xs text-[#777] font-semibold">Sort:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="bg-[#1a1a1a] border border-white/10 text-white text-xs font-semibold rounded-xl px-2.5 py-1.5 outline-none cursor-pointer focus:border-white/30"
+                >
+                  <option value="recent">Recently Added</option>
+                  <option value="title">Title (A-Z)</option>
+                  <option value="rating">Rating (Highest)</option>
+                  <option value="year">Release Year (Newest)</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          {/* Library Cards Grid */}
-          {displayedItems.length > 0 ? (
+          {/* Loading Skeleton State */}
+          {loading && items.length === 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+              {Array.from({ length: 12 }).map((_, idx) => (
+                <div
+                  key={idx}
+                  className="bg-[#181818] border border-white/5 rounded-2xl overflow-hidden flex flex-col animate-pulse"
+                >
+                  <div className="aspect-[2/3] w-full bg-white/5" />
+                  <div className="p-3 space-y-2">
+                    <div className="h-3.5 bg-white/10 rounded w-3/4" />
+                    <div className="h-2.5 bg-white/5 rounded w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : displayedItems.length > 0 ? (
+            /* Populated Cards Grid */
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {displayedItems.map((item) => {
                 const badge = getCategoryBadge(item.category);
-                const imgSrc = item.posterPath
-                  ? `${TMDB_IMAGE_W500}${item.posterPath}`
-                  : item.backdropPath
-                  ? `${TMDB_IMAGE_W500}${item.backdropPath}`
+                const rawPoster = item.posterPath || item.backdropPath;
+                const imgSrc = rawPoster?.startsWith("http")
+                  ? rawPoster
+                  : rawPoster
+                  ? `${TMDB_IMAGE_W500}${rawPoster}`
                   : null;
                 const year = item.releaseDate ? item.releaseDate.slice(0, 4) : "";
 
@@ -280,8 +407,18 @@ export default function LibraryView() {
                         />
                       ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center text-[#555] text-xs">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-8 h-8 mb-2 opacity-50">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.5}
+                            className="w-8 h-8 mb-2 opacity-50"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
+                            />
                           </svg>
                           <span>{item.title}</span>
                         </div>
@@ -289,7 +426,9 @@ export default function LibraryView() {
 
                       {/* Top Badges */}
                       <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10 pointer-events-none">
-                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-md ${badge.bg}`}>
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-md ${badge.bg}`}
+                        >
                           {badge.label}
                         </span>
 
@@ -313,7 +452,9 @@ export default function LibraryView() {
                           <button
                             onClick={(e) => handleChangeCategory(e, item.id, "movie")}
                             className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-colors ${
-                              item.category === "movie" ? "bg-blue-500 text-white" : "text-[#aaa] hover:text-white"
+                              item.category === "movie"
+                                ? "bg-blue-500 text-white"
+                                : "text-[#aaa] hover:text-white"
                             }`}
                             title="Set as Movie"
                           >
@@ -322,7 +463,9 @@ export default function LibraryView() {
                           <button
                             onClick={(e) => handleChangeCategory(e, item.id, "series")}
                             className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-colors ${
-                              item.category === "series" ? "bg-purple-500 text-white" : "text-[#aaa] hover:text-white"
+                              item.category === "series"
+                                ? "bg-purple-500 text-white"
+                                : "text-[#aaa] hover:text-white"
                             }`}
                             title="Set as TV Series"
                           >
@@ -331,7 +474,9 @@ export default function LibraryView() {
                           <button
                             onClick={(e) => handleChangeCategory(e, item.id, "anime")}
                             className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-colors ${
-                              item.category === "anime" ? "bg-pink-500 text-white" : "text-[#aaa] hover:text-white"
+                              item.category === "anime"
+                                ? "bg-pink-500 text-white"
+                                : "text-[#aaa] hover:text-white"
                             }`}
                             title="Set as Anime"
                           >
@@ -369,23 +514,31 @@ export default function LibraryView() {
             <div className="bg-[#181818] border border-white/5 rounded-3xl p-12 text-center max-w-lg mx-auto my-12">
               <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-4 text-[#888]">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-8 h-8">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"
+                  />
                 </svg>
               </div>
               <h3 className="text-white font-bold text-lg mb-1">
-                {searchQuery ? "No matching titles found" : "Your library is empty"}
+                {searchQuery
+                  ? "No matching titles found"
+                  : activeCategory !== "all"
+                  ? `No ${activeCategory === "movie" ? "movies" : activeCategory === "series" ? "TV series" : "anime"} saved yet`
+                  : "Your library is empty"}
               </h3>
               <p className="text-[#888] text-xs max-w-sm mx-auto mb-6">
                 {searchQuery
                   ? "Try searching for a different movie, series, or anime."
-                  : "Save your favorite movies, TV shows, and anime to keep track of what you want to watch."}
+                  : "Save your favorite movies, TV shows, and anime to keep track of what you want to watch across all your devices."}
               </p>
               <button
                 onClick={() => {
                   setAddSearchQuery("");
                   setShowAddModal(true);
                 }}
-                className="bg-white hover:bg-gray-200 text-black font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg cursor-pointer"
+                className="bg-white hover:bg-gray-200 text-black font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg cursor-pointer hover:scale-105"
               >
                 + Add Media to Library
               </button>
@@ -450,80 +603,68 @@ export default function LibraryView() {
             <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
               {addSearchResults.length > 0 ? (
                 addSearchResults.map((m) => {
-                  const title = m.title || m.name || "Untitled";
-                  const year = (m.release_date || m.first_air_date || "").slice(0, 4);
                   const isSaved = isInLibrary(m.id);
-                  const imgSrc = m.poster_path ? `${TMDB_IMAGE_W500}${m.poster_path}` : null;
+                  const title = m.title || m.name || "";
+                  const year = (m.release_date || m.first_air_date || "").slice(0, 4);
+                  const isTv = m.media_type === "tv";
+                  const poster = m.poster_path ? `${TMDB_IMAGE_W500}${m.poster_path}` : null;
 
                   return (
                     <div
                       key={m.id}
-                      className="flex items-center justify-between p-3 rounded-2xl bg-white/5 hover:bg-white/[0.08] border border-white/5 transition-colors gap-3"
+                      className="flex items-center gap-3 bg-white/5 hover:bg-white/[0.08] p-2.5 rounded-2xl border border-white/5 transition-colors"
                     >
-                      <div className="flex items-center gap-3 min-w-0">
-                        {imgSrc ? (
-                          <img
-                            src={imgSrc}
-                            alt={title}
-                            className="w-10 h-14 object-cover rounded-lg flex-shrink-0 bg-[#222]"
-                            crossOrigin="anonymous"
-                          />
+                      <div className="w-12 h-16 rounded-xl bg-[#222] overflow-hidden shrink-0">
+                        {poster ? (
+                          <img src={poster} alt={title} className="w-full h-full object-cover" />
                         ) : (
-                          <div className="w-10 h-14 rounded-lg bg-[#222] flex-shrink-0 flex items-center justify-center text-[10px] text-[#666]">
+                          <div className="w-full h-full flex items-center justify-center text-[10px] text-[#555]">
                             No img
                           </div>
                         )}
-                        <div className="min-w-0">
-                          <p className="text-white font-bold text-sm truncate">{title}</p>
-                          <div className="flex items-center gap-2 text-xs text-[#888] mt-0.5">
-                            <span>{year || "—"}</span>
-                            <span>•</span>
-                            <span className="capitalize">{m.media_type || "media"}</span>
-                            {m.vote_average ? (
-                              <>
-                                <span>•</span>
-                                <span className="text-yellow-400">★ {m.vote_average.toFixed(1)}</span>
-                              </>
-                            ) : null}
-                          </div>
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-semibold truncate">{title}</p>
+                        <div className="flex items-center gap-2 text-xs text-[#888] mt-0.5">
+                          <span>{year || "—"}</span>
+                          <span>•</span>
+                          <span className="capitalize">{isTv ? "TV Series" : "Movie"}</span>
+                          {m.vote_average && m.vote_average > 0 ? (
+                            <>
+                              <span>•</span>
+                              <span className="text-yellow-400 font-bold">
+                                ★ {m.vote_average.toFixed(1)}
+                              </span>
+                            </>
+                          ) : null}
                         </div>
                       </div>
 
-                      {/* Add Buttons */}
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {isSaved ? (
-                          <span className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-orange-500/20 text-orange-400 border border-orange-500/30 flex items-center gap-1">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-3.5 h-3.5">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                            </svg>
-                            Saved
-                          </span>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => handleQuickAdd(m, "movie")}
-                              className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 transition-colors cursor-pointer"
-                              title="Add as Movie"
-                            >
-                              + Movie
-                            </button>
-                            <button
-                              onClick={() => handleQuickAdd(m, "series")}
-                              className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition-colors cursor-pointer"
-                              title="Add as Series"
-                            >
-                              + Series
-                            </button>
-                            <button
-                              onClick={() => handleQuickAdd(m, "anime")}
-                              className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-pink-500/20 hover:bg-pink-500/30 text-pink-300 border border-pink-500/30 transition-colors cursor-pointer"
-                              title="Add as Anime"
-                            >
-                              + Anime
-                            </button>
-                          </>
-                        )}
-                      </div>
+                      {isSaved ? (
+                        <div className="flex items-center gap-1.5 shrink-0 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs font-bold">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-3.5 h-3.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                          </svg>
+                          <span>Saved</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => handleQuickAdd(m, isTv ? "series" : "movie")}
+                            className="bg-white hover:bg-gray-200 text-black font-bold text-xs px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                          >
+                            + {isTv ? "Series" : "Movie"}
+                          </button>
+                          <button
+                            onClick={() => handleQuickAdd(m, "anime")}
+                            className="bg-pink-500/20 hover:bg-pink-500/30 text-pink-300 border border-pink-500/40 font-bold text-xs px-2.5 py-1.5 rounded-xl transition-all cursor-pointer"
+                            title="Add as Anime"
+                          >
+                            + Anime
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })
