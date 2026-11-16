@@ -12,6 +12,7 @@ import {
   buildMpvCommandLine,
   downloadM3UPlaylist,
 } from "@/lib/externalPlayer";
+import { useLockBodyScroll } from "@/lib/useLockBodyScroll";
 
 interface ExternalPlayerModalProps {
   isOpen: boolean;
@@ -26,6 +27,7 @@ export default function ExternalPlayerModal({
   meta,
   onDefaultChanged,
 }: ExternalPlayerModalProps) {
+  useLockBodyScroll(isOpen);
   const [defaultPlayer, setDefPlayer] = useState<ExternalPlayerId>("system");
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -102,11 +104,13 @@ export default function ExternalPlayerModal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-6"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-6 overscroll-contain"
+      style={{ overscrollBehavior: "contain" }}
       onClick={onClose}
     >
       <div
-        className="bg-[#18181b] border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col"
+        className="bg-[#18181b] border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col overscroll-contain"
+        style={{ overscrollBehavior: "contain" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

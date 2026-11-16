@@ -11,6 +11,7 @@ import {
 } from "@/lib/plugins";
 import { config } from "@/lib/config";
 import { executeScraper } from "@/lib/pluginRuntime";
+import { useLockBodyScroll } from "@/lib/useLockBodyScroll";
 
 interface StreamPickerModalProps {
   tmdbId: number | string;
@@ -22,6 +23,7 @@ interface StreamPickerModalProps {
 }
 
 export default function StreamPickerModal({ tmdbId, type: mediaType, season, episode, onClose, onPlayStream }: StreamPickerModalProps) {
+  useLockBodyScroll(true);
   const [addons, setAddons] = useState<NuvioAddon[]>([]);
   const [streams, setStreams] = useState<StreamItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -211,11 +213,14 @@ export default function StreamPickerModal({ tmdbId, type: mediaType, season, epi
 
   const modalContent = (
     <div
-      className="modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.85)" }}
+      className="modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4 overscroll-contain"
+      style={{ background: "rgba(0,0,0,0.85)", overscrollBehavior: "contain" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="slide-up relative bg-[#1a1a1a] rounded-2xl overflow-hidden w-full max-w-xl max-h-[80vh] flex flex-col shadow-2xl border border-white/10">
+      <div
+        className="slide-up relative bg-[#1a1a1a] rounded-2xl overflow-hidden w-full max-w-xl max-h-[80vh] flex flex-col shadow-2xl border border-white/10 overscroll-contain"
+        style={{ overscrollBehavior: "contain" }}
+      >
         
         {/* Header */}
         <div className="p-5 border-b border-white/10 flex justify-between items-center">

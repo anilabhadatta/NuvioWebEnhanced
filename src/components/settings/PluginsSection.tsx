@@ -26,6 +26,7 @@ import {
 } from "@/lib/plugins";
 import { executeGetSettingsLayout } from "@/lib/pluginRuntime";
 import { config } from "@/lib/config";
+import { useLockBodyScroll } from "@/lib/useLockBodyScroll";
 
 interface SettingsModalProps {
   repoUrl: string;
@@ -34,6 +35,7 @@ interface SettingsModalProps {
 }
 
 function ScraperSettingsModal({ repoUrl, scraper, onClose }: SettingsModalProps) {
+  useLockBodyScroll(true);
   const [loading, setLoading] = useState(true);
   const [layout, setLayout] = useState<any[] | null>(null);
   const [settings, setSettings] = useState<any>({});
@@ -74,8 +76,14 @@ function ScraperSettingsModal({ repoUrl, scraper, onClose }: SettingsModalProps)
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overscroll-contain"
+      style={{ overscrollBehavior: "contain" }}
+    >
+      <div
+        className="bg-[#1a1a1a] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col max-h-[85vh] overscroll-contain"
+        style={{ overscrollBehavior: "contain" }}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
           <h3 className="text-base font-bold text-white">

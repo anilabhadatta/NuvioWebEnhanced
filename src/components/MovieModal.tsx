@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { TMDB_IMAGE_BASE, TMDB_IMAGE_W500, TMDBMovie, getGenreNames, fetchTvDetails, fetchTvSeason, fetchExternalIds } from "@/lib/tmdb";
 import StreamPickerModal from "./StreamPickerModal";
 import { StreamItem } from "@/lib/addonService";
 import { config } from "@/lib/config";
 import { fetchExternalRatings, ExternalRating } from "@/lib/mdblist";
+import { useLockBodyScroll } from "@/lib/useLockBodyScroll";
 import {
   LibraryCategory,
   isInLibrary,
@@ -22,6 +23,10 @@ interface MovieModalProps {
 }
 
 export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) {
+  // Prevent background scrolling when MovieModal is active
+  useLockBodyScroll(true);
+  const backdropRef = useRef<HTMLDivElement>(null);
+
   const [tvDetails, setTvDetails] = useState<any>(null);
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [episodes, setEpisodes] = useState<any[]>([]);
@@ -173,6 +178,23 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
     return () => window.removeEventListener("keydown", handler);
   }, [onClose, showStreamPicker]);
 
+  // Prevent wheel and touch scrolling on backdrop from propagating to underlying page
+  useEffect(() => {
+    const backdrop = backdropRef.current;
+    if (!backdrop) return;
+    const preventScroll = (e: WheelEvent | TouchEvent) => {
+      if (e.target === backdrop) {
+        e.preventDefault();
+      }
+    };
+    backdrop.addEventListener("wheel", preventScroll, { passive: false });
+    backdrop.addEventListener("touchmove", preventScroll, { passive: false });
+    return () => {
+      backdrop.removeEventListener("wheel", preventScroll);
+      backdrop.removeEventListener("touchmove", preventScroll);
+    };
+  }, []);
+
   const handlePlayClick = (s?: number, e?: number) => {
     setTargetSeason(s);
     setTargetEpisode(e);
@@ -186,11 +208,15 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
 
   return (
     <div
-      className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.75)" }}
+      ref={backdropRef}
+      className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 overscroll-contain"
+      style={{ background: "rgba(0,0,0,0.75)", overscrollBehavior: "contain" }}
       onClick={(e) => { if (e.target === e.currentTarget && !showStreamPicker) onClose(); }}
     >
-      <div className={`slide-up relative bg-[#1a1a1a] rounded-2xl overflow-hidden w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl ${showStreamPicker ? 'hidden' : ''}`}>
+      <div
+        className={`slide-up relative bg-[#1a1a1a] rounded-2xl overflow-hidden w-full max-w-3xl max-h-[90vh] overflow-y-auto overscroll-contain shadow-2xl ${showStreamPicker ? 'hidden' : ''}`}
+        style={{ overscrollBehavior: "contain" }}
+      >
         {/* Backdrop image */}
         <div className="relative h-80 w-full">
           {movie.backdrop_path ? (

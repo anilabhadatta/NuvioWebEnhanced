@@ -16,6 +16,7 @@ import MovieModal from "./MovieModal";
 import TorboxLibrary from "./TorboxLibrary";
 import { useAuth } from "@/lib/useAuth";
 import { useProfiles } from "@/lib/useProfiles";
+import { useLockBodyScroll } from "@/lib/useLockBodyScroll";
 
 export default function LibraryView() {
   const { isAuthenticated } = useAuth();
@@ -41,6 +42,9 @@ export default function LibraryView() {
   const [addSearchQuery, setAddSearchQuery] = useState("");
   const [addSearchResults, setAddSearchResults] = useState<TMDBMovie[]>([]);
   const [addSearching, setAddSearching] = useState(false);
+
+  // Prevent background scrolling when Add to Library modal is open
+  useLockBodyScroll(showAddModal);
 
   // Refresh items from cloud and local cache
   const refreshLibrary = useCallback(async (force = false) => {
@@ -550,11 +554,13 @@ export default function LibraryView() {
       {/* "+ Add to Library" search modal */}
       {showAddModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overscroll-contain"
+          style={{ overscrollBehavior: "contain" }}
           onClick={() => setShowAddModal(false)}
         >
           <div
-            className="bg-[#1a1a1a] border border-white/15 rounded-3xl w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl"
+            className="bg-[#1a1a1a] border border-white/15 rounded-3xl w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl overscroll-contain"
+            style={{ overscrollBehavior: "contain" }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}

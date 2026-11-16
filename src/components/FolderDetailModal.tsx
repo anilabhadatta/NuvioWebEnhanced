@@ -5,6 +5,7 @@ import { CollectionFolder } from "@/lib/collections";
 import { fetchAddons, fetchAddonManifest } from "@/lib/addons";
 import { fetchCollectionCatalog, CatalogMeta } from "@/lib/catalogs";
 import { fetchTmdbCollectionSource, TMDBMovie, resolveStremioIdToMovie } from "@/lib/tmdb";
+import { useLockBodyScroll } from "@/lib/useLockBodyScroll";
 
 interface FolderDetailModalProps {
   folder: CollectionFolder;
@@ -13,6 +14,7 @@ interface FolderDetailModalProps {
 }
 
 export default function FolderDetailModal({ folder, onClose, onSelectMovie }: FolderDetailModalProps) {
+  useLockBodyScroll(true);
   const [metas, setMetas] = useState<CatalogMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
@@ -95,11 +97,14 @@ export default function FolderDetailModal({ folder, onClose, onSelectMovie }: Fo
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.85)" }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 overscroll-contain"
+      style={{ background: "rgba(0,0,0,0.85)", overscrollBehavior: "contain" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="relative bg-[#181818] rounded-2xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl border border-white/10 overflow-hidden">
+      <div
+        className="relative bg-[#181818] rounded-2xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl border border-white/10 overflow-hidden overscroll-contain"
+        style={{ overscrollBehavior: "contain" }}
+      >
         {/* Header */}
         <div className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-[#202020]">
           <div className="flex items-center gap-3">
