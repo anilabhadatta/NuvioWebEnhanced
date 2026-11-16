@@ -20,6 +20,7 @@ interface ExternalPlayerModalProps {
   onClose: () => void;
   meta: ExternalPlayerMediaMeta;
   onDefaultChanged?: (newDefault: ExternalPlayerId) => void;
+  onLaunch?: (id: ExternalPlayerId) => void;
 }
 
 export default function ExternalPlayerModal({
@@ -27,6 +28,7 @@ export default function ExternalPlayerModal({
   onClose,
   meta,
   onDefaultChanged,
+  onLaunch,
 }: ExternalPlayerModalProps) {
   useLockBodyScroll(isOpen);
   const [defaultPlayer, setDefPlayer] = useState<ExternalPlayerId>("system");
@@ -44,6 +46,7 @@ export default function ExternalPlayerModal({
   if (!isOpen) return null;
 
   const handleLaunch = (id: ExternalPlayerId) => {
+    if (onLaunch) onLaunch(id);
     const rawUrl = extractDirectStreamUrl(meta.url);
     const res = launchExternalPlayer(id, { ...meta, url: rawUrl });
     if (res.success) {

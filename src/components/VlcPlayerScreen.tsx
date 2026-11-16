@@ -1720,10 +1720,58 @@ EventDump: ${JSON.stringify(collected)}`;
         return;
       }
 
+      // Pause web player to stop background network buffering
+      if (videoRef.current && typeof videoRef.current.pause === "function") {
+        videoRef.current.pause();
+        setUserPaused(true);
+      }
+
       launchExternalPlayer(defaultPlayer, externalMediaMeta);
     },
     [externalMediaMeta]
   );
+
+  // Pause playback and halt active network buffering when tab is hidden (switched tabs / minimized)
+  const wasPlayingBeforeHiddenRef = useRef(false);
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      if (document.hidden) {
+        if (isPlayingRef.current) {
+          wasPlayingBeforeHiddenRef.current = true;
+          if (typeof video.pause === "function") video.pause();
+        }
+      } else {
+        if (wasPlayingBeforeHiddenRef.current) {
+          wasPlayingBeforeHiddenRef.current = false;
+          if (typeof video.play === "function") {
+            video.play().catch(() => {});
+          }
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  // Complete teardown on unmount
+  useEffect(() => {
+    return () => {
+      const video = videoRef.current;
+      if (video) {
+        try {
+          if (typeof video.pause === "function") video.pause();
+          if ("src" in video) video.src = "";
+          if (typeof video.unload === "function") video.unload();
+          else if (typeof video.destroy === "function") video.destroy();
+          if (typeof video.load === "function") video.load();
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   const handleAudioChange = (id: number) => {
     setSelectedAudio(id);
@@ -2509,6 +2557,12 @@ EventDump: ${JSON.stringify(collected)}`;
         isOpen={showExternalPlayer}
         onClose={() => setShowExternalPlayer(false)}
         meta={externalMediaMeta}
+        onLaunch={() => {
+          if (videoRef.current && typeof videoRef.current.pause === "function") {
+            videoRef.current.pause();
+            setUserPaused(true);
+          }
+        }}
       />
 
       {/* Click outside menus to close */}

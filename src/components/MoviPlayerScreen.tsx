@@ -846,6 +846,9 @@ export default function MoviPlayerScreen() {
     setResolvedSrc("");
     setPlayerError(null);
 
+    const abortController = new AbortController();
+    let isCancelled = false;
+
     async function resolveUrl() {
       // Scraper streams: probe server-side first to decide the best playback strategy.
       //
@@ -855,8 +858,10 @@ export default function MoviPlayerScreen() {
       //
       // For non-scraper streams, fall through to the standard direct/resolve logic below.
       if (forceProxy && !streamProxyEnabled) {
-        setPlayerError("Stream proxy is disabled by environment configuration.");
-        setResolvedSrc(decoded);
+        if (!isCancelled) {
+          setPlayerError("Stream proxy is disabled by environment configuration.");
+          setResolvedSrc(decoded);
+        }
         return;
       }
 
@@ -873,9 +878,11 @@ export default function MoviPlayerScreen() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: decoded, headers: parsedHeaders }),
+            signal: abortController.signal,
           });
           if (probeRes.ok) {
             const probe = await probeRes.json();
+            if (isCancelled) return;
 
             if (probe.strategy === "hls" || probe.strategy === "proxy") {
               // Proxied streams: route through /api/streamProxy to inject custom headers/cookies,
@@ -895,9 +902,11 @@ export default function MoviPlayerScreen() {
             return;
           }
         } catch (_probeErr) {
+          if (isCancelled) return;
           // Probe failed — fall back to proxying the original URL
         }
 
+        if (isCancelled) return;
         // Fallback: proxy the original URL
         let proxiedUrl = `/api/streamProxy?url=${encodeURIComponent(decoded)}`;
         if (streamHeadersStr) proxiedUrl += `&headers=${streamHeadersStr}`;
@@ -910,7 +919,9 @@ export default function MoviPlayerScreen() {
       // Step 1: Follow any server-side redirects (debrid / TorBox / addon stream hops)
       let candidateUrl = decoded;
       try {
-        const resolverRes = await fetch(`/api/resolve?url=${encodeURIComponent(decoded)}`);
+        const resolverRes = await fetch(`/api/resolve?url=${encodeURIComponent(decoded)}`, {
+          signal: abortController.signal,
+        });
         if (resolverRes.ok) {
           const data = await resolverRes.json();
           if (data.url && typeof data.url === "string" && data.url.startsWith("http")) {
@@ -918,8 +929,11 @@ export default function MoviPlayerScreen() {
           }
         }
       } catch (_resolverErr) {
+        if (isCancelled) return;
         // Resolver unavailable — fall back to original decoded URL
       }
+
+      if (isCancelled) return;
 
       // Step 2: Client CORS accessibility check.
       // Tests whether this specific client/device can directly fetch byte ranges from candidateUrl
@@ -935,13 +949,16 @@ export default function MoviPlayerScreen() {
         clearTimeout(testTimeout);
 
         if (testRes.ok || testRes.status === 206) {
-          // Direct fetch works! Use direct CDN link for full WebCodecs hardware decoding
-          setResolvedSrc(candidateUrl);
+          if (!isCancelled) {
+            setResolvedSrc(candidateUrl);
+          }
           return;
         }
       } catch (_corsErr) {
         // Direct fetch failed with CORS TypeError or network block
       }
+
+      if (isCancelled) return;
 
       // Step 3: Direct stream is CORS-blocked on this device (e.g. iOS Safari, iPadOS, Android, Smart TV, or PC without extension).
       // Automatically route through /api/streamProxy with Access-Control-Allow-Origin: * for 100% universal compatibility!
@@ -949,14 +966,23 @@ export default function MoviPlayerScreen() {
         console.warn("[MoviPlayer] Direct stream is CORS-restricted on this client. Auto-routing through /api/streamProxy for universal playback.");
         let proxied = `/api/streamProxy?url=${encodeURIComponent(candidateUrl)}`;
         if (streamHeadersStr) proxied += `&headers=${streamHeadersStr}`;
-        setResolvedSrc(proxied);
+        if (!isCancelled) {
+          setResolvedSrc(proxied);
+        }
         return;
       }
 
       // Step 4: Fallback
-      setResolvedSrc(candidateUrl);
+      if (!isCancelled) {
+        setResolvedSrc(candidateUrl);
+      }
     }
     resolveUrl();
+
+    return () => {
+      isCancelled = true;
+      abortController.abort();
+    };
   }, [streamUrl, streamHeadersStr]);
 
   const lastFetchedSubsId = useRef<string | null>(null);
@@ -2576,6 +2602,12 @@ EventDump: ${JSON.stringify(collected)}`;
         return;
       }
 
+      // Immediately pause web player to stop network streaming while external player runs
+      if (videoRef.current && typeof videoRef.current.pause === "function") {
+        videoRef.current.pause();
+        setUserPaused(true);
+      }
+
       const res = launchExternalPlayer(defaultPlayer, externalMediaMeta);
       showOsd(res.message);
     },
@@ -2589,11 +2621,63 @@ EventDump: ${JSON.stringify(collected)}`;
       if (getAlwaysExternalPlayer()) {
         autoLaunchedExternalRef.current = resolvedSrc;
         const defaultPlayer = getDefaultExternalPlayer();
+
+        // Immediately pause web player to stop network streaming
+        if (videoRef.current && typeof videoRef.current.pause === "function") {
+          videoRef.current.pause();
+          setUserPaused(true);
+        }
+
         const res = launchExternalPlayer(defaultPlayer === "chooser" ? "mpv" : defaultPlayer, externalMediaMeta);
         showOsd(res.message);
       }
     }
   }, [resolvedSrc, externalMediaMeta, showOsd]);
+
+  // Pause playback and halt active network buffering when tab is hidden (switched tabs / minimized)
+  // Resumes automatically when user returns to the tab.
+  const wasPlayingBeforeHiddenRef = useRef(false);
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      if (document.hidden) {
+        // Tab is hidden / user switched away
+        if (isPlayingRef.current) {
+          wasPlayingBeforeHiddenRef.current = true;
+          if (typeof video.pause === "function") video.pause();
+        }
+      } else {
+        // Tab is visible again / user returned
+        if (wasPlayingBeforeHiddenRef.current) {
+          wasPlayingBeforeHiddenRef.current = false;
+          if (typeof video.play === "function") {
+            video.play().catch(() => {});
+          }
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  // Complete teardown on unmount — drops active network range requests and frees memory
+  useEffect(() => {
+    return () => {
+      const video = videoRef.current;
+      if (video) {
+        try {
+          if (typeof video.pause === "function") video.pause();
+          if ("src" in video) video.src = "";
+          if (typeof video.unload === "function") video.unload();
+          else if (typeof video.destroy === "function") video.destroy();
+          if (typeof video.load === "function") video.load();
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   const handleAudioChange = (id: number) => {
     setSelectedAudio(id);
@@ -3546,6 +3630,12 @@ EventDump: ${JSON.stringify(collected)}`;
         isOpen={showExternalPlayer}
         onClose={() => setShowExternalPlayer(false)}
         meta={externalMediaMeta}
+        onLaunch={() => {
+          if (videoRef.current && typeof videoRef.current.pause === "function") {
+            videoRef.current.pause();
+            setUserPaused(true);
+          }
+        }}
       />
 
       {/* Click outside menus to close */}
