@@ -1,74 +1,85 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <!-- Background Radial Gradient (Deep Void with Indigo Underglow) -->
-    <radialGradient id="bg" cx="50%" cy="30%" r="76%">
-      <stop offset="0%" stop-color="#241b34"/>
-      <stop offset="55%" stop-color="#120e1a"/>
-      <stop offset="100%" stop-color="#06050a"/>
+    <!-- Background Radial Gradient -->
+    <radialGradient id="bg" cx="50%" cy="32%" r="72%">
+      <stop offset="0%" stop-color="#1e182a"/>
+      <stop offset="50%" stop-color="#100d17"/>
+      <stop offset="100%" stop-color="#060608"/>
     </radialGradient>
     
-    <!-- Outer Rim Stroke -->
+    <!-- Outer Rim Subtle Stroke Gradient -->
     <linearGradient id="border" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
-      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.1"/>
-      <stop offset="100%" stop-color="#ff2a7a" stop-opacity="0.45"/>
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ff3366" stop-opacity="0.28"/>
     </linearGradient>
 
-    <!-- Core Ambient Glow -->
+    <!-- Core Ambient Back Glow -->
     <radialGradient id="glow" cx="50%" cy="50%" r="48%">
-      <stop offset="0%" stop-color="#FF5000" stop-opacity="0.6"/>
-      <stop offset="45%" stop-color="#E11D48" stop-opacity="0.32"/>
-      <stop offset="100%" stop-color="#A855F7" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#FF5722" stop-opacity="0.45"/>
+      <stop offset="45%" stop-color="#E11D48" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#7C3AED" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Left Pillar: High-Luminance Sunset Gold to Neon Pink -->
+    <!-- Left Pillar Gradient (Warm Sunset Orange to Bright Coral) -->
     <linearGradient id="stemL" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#FFA800"/>
-      <stop offset="100%" stop-color="#FF1A75"/>
+      <stop offset="0%" stop-color="#FF7A1A"/>
+      <stop offset="100%" stop-color="#FF1A66"/>
     </linearGradient>
 
-    <!-- Right Pillar: Vivid Hot Pink to Luminous Orchid (Never dark, clearly visible on dark tabs) -->
+    <!-- Right Pillar Gradient (Neon Coral to Royal Violet) -->
     <linearGradient id="stemR" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#FF1475"/>
-      <stop offset="100%" stop-color="#BD50FF"/>
+      <stop offset="0%" stop-color="#E11D48"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
     </linearGradient>
 
-    <!-- Crossing Diagonal Ribbon -->
+    <!-- Crossing Diagonal Ribbon Gradient (Golden Orange -> Pink -> Violet) -->
     <linearGradient id="ribbon" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFC01E"/>
-      <stop offset="28%" stop-color="#FF2A7A"/>
-      <stop offset="68%" stop-color="#F41865"/>
-      <stop offset="100%" stop-color="#BD50FF"/>
+      <stop offset="0%" stop-color="#FFA033"/>
+      <stop offset="28%" stop-color="#FF2A6D"/>
+      <stop offset="68%" stop-color="#E11D48"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
     </linearGradient>
 
-    <!-- Ribbon Drop Shadow -->
+    <!-- Ribbon Drop Shadow for Tactile Dimensionality -->
     <filter id="ribbonShadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="-4" dy="6" stdDeviation="5" flood-color="#000000" flood-opacity="0.85"/>
+      <feDropShadow dx="-4" dy="6" stdDeviation="9" flood-color="#000000" flood-opacity="0.75"/>
     </filter>
 
     <!-- Top-left Specular Sheen -->
     <linearGradient id="sheen" x1="0%" y1="0%" x2="50%" y2="50%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.65"/>
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35"/>
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
 </defs>
-  <!-- Full-bleed squircle tile (0 margins, 100% space utilization) -->
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <rect width="512" height="512" rx="112" fill="none" stroke="url(#border)" stroke-width="6"/>
-  <circle cx="256" cy="256" r="235" fill="url(#glow)"/>
+  <!-- Background Squircle Tile -->
+  <rect x="20" y="20" width="472" height="472" rx="112" fill="url(#bg)"/>
+  <rect x="20" y="20" width="472" height="472" rx="112" fill="none" stroke="url(#border)" stroke-width="2.5"/>
 
-  <!-- Centered Scaled N Mark (scale=1.72, translate = 256 - 256*1.72 = -184.32) -->
-  <g transform="translate(-184.32, -184.32) scale(1.72)">
-    <!-- Left Stem -->
-    <rect x="130" y="118" width="62" height="276" rx="31" fill="url(#stemL)"/>
-    <!-- Right Stem -->
-    <rect x="320" y="118" width="62" height="276" rx="31" fill="url(#stemR)"/>
-    <!-- Crossing Diagonal Ribbon -->
-    <path d="M 137.82 169.58 A 31 31 0 1 1 184.18 128.42 L 374.18 342.42 A 31 31 0 1 1 327.82 383.58 Z"
-          fill="url(#ribbon)"
-          filter="url(#ribbonShadow)"/>
-    <!-- Top-left Specular Sheen -->
-    <path d="M 161 120 A 29 29 0 0 1 182 129 L 260 220 C 248 215 236 210 224 205 L 137 165 A 29 29 0 0 1 161 120 Z"
-          fill="url(#sheen)"/>
-  </g>
+  <!-- Core Glow -->
+  <circle cx="256" cy="256" r="160" fill="url(#glow)"/>
+
+  <!-- Left Stem -->
+  <rect x="130" y="118" width="62" height="276" rx="31" fill="url(#stemL)"/>
+
+  <!-- Right Stem -->
+  <rect x="320" y="118" width="62" height="276" rx="31" fill="url(#stemR)"/>
+
+  <!-- Crossing Diagonal Ribbon -->
+  <path d="M 137.82 169.58
+           A 31 31 0 1 1 184.18 128.42
+           L 374.18 342.42
+           A 31 31 0 1 1 327.82 383.58
+           Z"
+        fill="url(#ribbon)"
+        filter="url(#ribbonShadow)"/>
+
+  <!-- Top-left Specular Sheen -->
+  <path d="M 161 120
+           A 29 29 0 0 1 182 129
+           L 260 220
+           C 248 215 236 210 224 205
+           L 137 165
+           A 29 29 0 0 1 161 120 Z"
+        fill="url(#sheen)"/>
 </svg>
