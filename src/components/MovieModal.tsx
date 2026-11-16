@@ -45,6 +45,7 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
   const [inLibrary, setInLibrary] = useState(false);
   const [libraryCat, setLibraryCat] = useState<LibraryCategory>("movie");
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [libraryBusy, setLibraryBusy] = useState(false);
 
   useEffect(() => {
@@ -254,8 +255,43 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
               {isSeries ? "Play S" + selectedSeason + " E" + (episodes[0]?.episode_number || 1) : "Play"}
             </button>
 
-            {/* Library button with category selection */}
+            {/* Library button with category selection & two-step remove confirmation */}
             <div className="relative inline-flex items-center">
+              {/* Two-step remove confirmation popover */}
+              {showRemoveConfirm && (
+                <div
+                  className="absolute bottom-full mb-2 left-0 bg-[#1a1a1a] border border-red-500/40 rounded-2xl p-3.5 shadow-2xl z-30 w-64 backdrop-blur-md animate-fade-in"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center gap-2 mb-1.5 text-red-400 font-bold text-xs">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                    </svg>
+                    <span>Remove from Library?</span>
+                  </div>
+                  <p className="text-[#888] text-[11px] leading-relaxed mb-3">
+                    This will remove &apos;{title}&apos; from your web library and mobile devices.
+                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => setShowRemoveConfirm(false)}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#aaa] hover:text-white bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowRemoveConfirm(false);
+                        handleToggleLibrary();
+                      }}
+                      className="px-3 py-1 rounded-lg text-[11px] font-bold text-white bg-red-600 hover:bg-red-500 shadow-md shadow-red-600/30 transition-colors cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div
                 className={`inline-flex items-stretch h-10 rounded-xl overflow-hidden backdrop-blur-md transition-all shadow-md ${
                   inLibrary
@@ -264,7 +300,13 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
                 }`}
               >
                 <button
-                  onClick={() => handleToggleLibrary()}
+                  onClick={() => {
+                    if (inLibrary) {
+                      setShowRemoveConfirm(!showRemoveConfirm);
+                    } else {
+                      handleToggleLibrary();
+                    }
+                  }}
                   disabled={libraryBusy}
                   className="flex items-center gap-2 px-4 h-full text-sm font-semibold transition-colors cursor-pointer text-white disabled:opacity-75"
                 >

@@ -2,6 +2,7 @@ import { supabase } from "./supabase";
 import { getActiveProfileId } from "./profiles";
 import { TMDBMovie } from "./tmdb";
 import { handleInvalidTokenError } from "./useAuth";
+import { saveLibraryToIndexedDB } from "./db";
 
 export type LibraryCategory = "movie" | "series" | "anime";
 
@@ -113,34 +114,53 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
       return cached;
     }
 
+    let rows: any[] = [];
+
     // 1. Primary: Supabase RPC `sync_pull_library`
-    let rows: any[] | null = null;
-    const { data: rpcData, error: rpcError } = await supabase.rpc("sync_pull_library", {
-      p_profile_id: profileId,
-      p_limit: 1000,
-      p_offset: 0,
-    });
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc("sync_pull_library", {
+        p_profile_id: profileId,
+        p_limit: 1000,
+        p_offset: 0,
+      });
 
-    if (!rpcError && Array.isArray(rpcData)) {
-      rows = rpcData;
-    } else {
-      if (rpcError) {
+      if (!rpcError && Array.isArray(rpcData) && rpcData.length > 0) {
+        rows = rpcData;
+      } else if (rpcError) {
         handleInvalidTokenError(rpcError);
-        console.warn("sync_pull_library RPC failed, trying direct table query", rpcError);
+        console.warn("sync_pull_library RPC returned error, querying library_items table", rpcError);
       }
-      // 2. Fallback: Direct select on `library_items`
-      const { data: tableData, error: tableError } = await supabase
-        .from("library_items")
-        .select("*")
-        .eq("profile_id", profileId)
-        .order("added_at", { ascending: false });
+    } catch (e) {
+      console.warn("sync_pull_library exception", e);
+    }
 
-      if (!tableError && Array.isArray(tableData)) {
-        rows = tableData;
+    // 2. Comprehensive Table Query: Fetch all rows for this user
+    // Scoped by profile_id or null (legacy/global mobile items)
+    if (rows.length === 0) {
+      try {
+        const { data: tableData, error: tableError } = await supabase
+          .from("library_items")
+          .select("*")
+          .eq("user_id", session.user.id)
+          .order("added_at", { ascending: false });
+
+        if (!tableError && Array.isArray(tableData) && tableData.length > 0) {
+          // Filter to this profile or shared profile items
+          const profileRows = tableData.filter(
+            (r: any) =>
+              r.profile_id === profileId ||
+              r.profile_id === null ||
+              r.profile_id === undefined ||
+              (profileId === 1 && (r.profile_id === 0 || !r.profile_id))
+          );
+          rows = profileRows.length > 0 ? profileRows : tableData;
+        }
+      } catch (e) {
+        console.warn("Direct library_items select error", e);
       }
     }
 
-    if (rows && Array.isArray(rows)) {
+    if (rows && Array.isArray(rows) && rows.length > 0) {
       const mapped: LibraryItem[] = rows.map((r: any) => {
         const rawType = (r.content_type || "").toLowerCase();
         let cat: LibraryCategory = "movie";
@@ -149,28 +169,42 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
         else cat = "movie";
 
         // Normalize poster & backdrop URLs
-        let poster = r.poster || null;
-        let backdrop = r.background || null;
+        let poster = r.poster || r.poster_path || null;
+        let backdrop = r.background || r.backdrop_path || null;
 
         return {
           id: r.content_id || r.id,
           supabaseId: r.id,
-          title: r.name || "Untitled",
+          title: r.name || r.title || "Untitled",
           type: cat === "series" ? "series" : "movie",
           category: cat,
           posterPath: poster,
           backdropPath: backdrop,
-          overview: r.description || "",
-          releaseDate: r.release_info || "",
-          rating: r.imdb_rating ? Number(r.imdb_rating) : undefined,
+          overview: r.description || r.overview || "",
+          releaseDate: r.release_info || r.release_date || "",
+          rating: r.imdb_rating ? Number(r.imdb_rating) : (r.vote_average ? Number(r.vote_average) : undefined),
           genres: Array.isArray(r.genres) ? r.genres : [],
-          addedAt: r.added_at ? Number(r.added_at) : Date.now(),
+          addedAt: r.added_at ? Number(r.added_at) : (r.created_at ? new Date(r.created_at).getTime() : Date.now()),
         };
       });
 
-      // Save to local cache
-      saveLibraryItems(mapped);
-      return mapped;
+      // Smart Union: Merge cloud items with local cached items by content_id
+      const unionMap = new Map<string, LibraryItem>();
+      for (const item of mapped) {
+        unionMap.set(String(item.id), item);
+      }
+      for (const item of cached) {
+        if (!unionMap.has(String(item.id))) {
+          unionMap.set(String(item.id), item);
+        }
+      }
+
+      const merged = Array.from(unionMap.values()).sort((a, b) => b.addedAt - a.addedAt);
+
+      // Save to local cache & Dexie IndexedDB
+      saveLibraryItems(merged);
+      saveLibraryToIndexedDB(merged, profileId);
+      return merged;
     }
 
     return cached;
@@ -256,13 +290,14 @@ export async function addToLibrary(
   }
 
   // 1. Save locally for instant optimistic UI
+  const profileId = getActiveProfileId();
   saveLibraryItems(updated);
+  saveLibraryToIndexedDB(updated, profileId);
 
   // 2. Sync to Supabase in the background
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-      const profileId = getActiveProfileId();
       const payload = {
         content_id: idStr,
         content_type: category,
@@ -278,33 +313,43 @@ export async function addToLibrary(
         profile_id: profileId,
       };
 
-      // Push via sync_push_library RPC
-      const { error: rpcError } = await supabase.rpc("sync_push_library", {
-        p_profile_id: profileId,
-        p_origin_client_id: getSyncClientId(),
-        p_items: [payload],
-      });
-
-      if (rpcError) {
-        console.warn("sync_push_library RPC error, upserting to library_items", rpcError);
-        handleInvalidTokenError(rpcError);
-        // Fallback direct upsert
-        await supabase.from("library_items").upsert({
-          user_id: session.user.id,
-          profile_id: profileId,
-          content_id: idStr,
-          content_type: category,
-          name: title,
-          poster: normalizeImageUrl(poster, "w500"),
-          poster_shape: "POSTER",
-          background: normalizeImageUrl(backdrop, "original"),
-          description: newItem.overview || "",
-          release_info: newItem.releaseDate || "",
-          imdb_rating: newItem.rating ? Number(newItem.rating) : 0,
-          genres: newItem.genres || [],
-          added_at: newItem.addedAt,
-        }, { onConflict: "user_id,profile_id,content_id" });
+      // 2a. Push via sync_push_library RPC
+      try {
+        await supabase.rpc("sync_push_library", {
+          p_profile_id: profileId,
+          p_origin_client_id: getSyncClientId(),
+          p_items: [payload],
+        });
+      } catch (rpcErr) {
+        console.warn("sync_push_library RPC notice:", rpcErr);
       }
+
+      // 2b. Guaranteed direct upsert to library_items table (matches mobile table schema)
+      await supabase.from("library_items").upsert({
+        user_id: session.user.id,
+        profile_id: profileId,
+        content_id: idStr,
+        content_type: category,
+        name: title,
+        poster: normalizeImageUrl(poster, "w500"),
+        poster_shape: "POSTER",
+        background: normalizeImageUrl(backdrop, "original"),
+        description: newItem.overview || "",
+        release_info: newItem.releaseDate || "",
+        imdb_rating: newItem.rating ? Number(newItem.rating) : 0,
+        genres: newItem.genres || [],
+        added_at: newItem.addedAt,
+      }, { onConflict: "user_id,profile_id,content_id" });
+
+      // 2c. Broadcast sync invalidation so Android mobile apps auto-refresh!
+      try {
+        await supabase.rpc("emit_sync_invalidation", {
+          p_user_id: session.user.id,
+          p_profile_id: profileId,
+          p_surface: "library",
+          p_metadata: { source: "nuvio-web", content_id: idStr, action: "add" },
+        });
+      } catch {}
     }
   } catch (err) {
     console.error("Failed to push library item to Supabase", err);
@@ -314,25 +359,35 @@ export async function addToLibrary(
 }
 
 /**
- * Removes an item from the library (both local cache and Supabase cloud).
+ * Removes an item from the library (both local cache, Dexie, and Supabase cloud).
  */
 export async function removeFromLibrary(id: string | number): Promise<void> {
   const items = getLibraryItems();
   const idStr = String(id);
   const updated = items.filter((i) => String(i.id) !== idStr);
+  const profileId = getActiveProfileId();
 
-  // 1. Optimistic local update
+  // 1. Optimistic local & IndexedDB update
   saveLibraryItems(updated);
+  saveLibraryToIndexedDB(updated, profileId);
 
   // 2. Remove from Supabase
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-      const profileId = getActiveProfileId();
       await supabase
         .from("library_items")
         .delete()
-        .match({ content_id: idStr, profile_id: profileId });
+        .match({ user_id: session.user.id, content_id: idStr });
+
+      try {
+        await supabase.rpc("emit_sync_invalidation", {
+          p_user_id: session.user.id,
+          p_profile_id: profileId,
+          p_surface: "library",
+          p_metadata: { source: "nuvio-web", content_id: idStr, action: "delete" },
+        });
+      } catch {}
     }
   } catch (err) {
     console.error("Failed to delete library item from Supabase", err);
@@ -364,17 +419,27 @@ export async function updateLibraryCategory(
     }
     return item;
   });
+  const profileId = getActiveProfileId();
 
   saveLibraryItems(updated);
+  saveLibraryToIndexedDB(updated, profileId);
 
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-      const profileId = getActiveProfileId();
       await supabase
         .from("library_items")
         .update({ content_type: newCategory })
-        .match({ content_id: idStr, profile_id: profileId });
+        .match({ user_id: session.user.id, content_id: idStr });
+
+      try {
+        await supabase.rpc("emit_sync_invalidation", {
+          p_user_id: session.user.id,
+          p_profile_id: profileId,
+          p_surface: "library",
+          p_metadata: { source: "nuvio-web", content_id: idStr, action: "category_change" },
+        });
+      } catch {}
     }
   } catch (err) {
     console.error("Failed to update library category in Supabase", err);

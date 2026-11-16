@@ -43,8 +43,13 @@ export default function LibraryView() {
   const [addSearchResults, setAddSearchResults] = useState<TMDBMovie[]>([]);
   const [addSearching, setAddSearching] = useState(false);
 
-  // Prevent background scrolling when Add to Library modal is open
-  useLockBodyScroll(showAddModal);
+  // Two-step deletion confirmation state
+  const [itemToDelete, setItemToDelete] = useState<LibraryItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [lastSyncedText, setLastSyncedText] = useState<string>("Synced just now");
+
+  // Prevent background scrolling when Add to Library modal or delete confirmation is open
+  useLockBodyScroll(showAddModal || !!itemToDelete);
 
   // Refresh items from cloud and local cache
   const refreshLibrary = useCallback(async (force = false) => {
@@ -52,6 +57,7 @@ export default function LibraryView() {
     try {
       const pulled = await pullLibraryItems(force);
       setItems(pulled);
+      setLastSyncedText("Synced just now");
     } finally {
       setLoading(false);
       if (force) setTimeout(() => setSyncing(false), 600);
@@ -162,9 +168,15 @@ export default function LibraryView() {
     setSelectedMovie(movieObj);
   };
 
-  const handleRemove = async (e: React.MouseEvent, id: string | number) => {
-    e.stopPropagation();
-    await removeFromLibrary(id);
+  const handleConfirmDelete = async () => {
+    if (!itemToDelete) return;
+    setIsDeleting(true);
+    try {
+      await removeFromLibrary(itemToDelete.id);
+      setItemToDelete(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleChangeCategory = async (
@@ -215,24 +227,33 @@ export default function LibraryView() {
         </div>
 
         <div className="flex items-center gap-2.5 self-start sm:self-auto">
-          {/* Sync Button */}
-          <button
-            onClick={() => refreshLibrary(true)}
-            disabled={syncing}
-            className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white/90 hover:text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50"
-            title="Sync with cloud"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              className={`w-3.5 h-3.5 ${syncing ? "animate-spin text-orange-400" : ""}`}
+          {/* Sync Button with Tooltip and Status */}
+          <div className="relative group">
+            <button
+              onClick={() => refreshLibrary(true)}
+              disabled={syncing}
+              className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white/90 hover:text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+              title="Bi-directional cloud sync with Nuvio Android and Supabase"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-            </svg>
-            <span>{syncing ? "Syncing..." : "Sync"}</span>
-          </button>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                className={`w-3.5 h-3.5 ${syncing ? "animate-spin text-orange-400" : ""}`}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+              <span>{syncing ? "Syncing..." : "Sync"}</span>
+            </button>
+
+            {/* Hover Tooltip */}
+            <div className="absolute right-0 top-full mt-2 hidden group-hover:flex flex-col w-56 p-2.5 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl text-[11px] text-[#aaa] z-30 pointer-events-none">
+              <span className="font-semibold text-white mb-0.5">Bi-Directional Cloud Sync</span>
+              <span>Pulls items from your Nuvio Android app and pushes web additions to your cloud profile.</span>
+              <span className="text-[10px] text-emerald-400 mt-1.5 font-medium">{lastSyncedText}</span>
+            </div>
+          </div>
 
           {/* Add to Library Button */}
           <button
@@ -487,7 +508,10 @@ export default function LibraryView() {
                             Anime
                           </button>
                           <button
-                            onClick={(e) => handleRemove(e, item.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setItemToDelete(item);
+                            }}
                             className="text-[#aaa] hover:text-red-400 p-1 transition-colors"
                             title="Remove from library"
                           >
@@ -679,6 +703,89 @@ export default function LibraryView() {
               ) : (
                 <p className="text-[#666] text-xs text-center py-8">Type in the search bar above to find media.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Two-Step Deletion Confirmation Modal */}
+      {itemToDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overscroll-contain animate-fade-in"
+          style={{ overscrollBehavior: "contain" }}
+          onClick={() => !isDeleting && setItemToDelete(null)}
+        >
+          <div
+            className="bg-[#18181b] border border-white/15 rounded-3xl w-full max-w-md p-6 shadow-2xl relative overscroll-contain"
+            style={{ overscrollBehavior: "contain" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Trash Warning Icon */}
+            <div className="w-12 h-12 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 mb-4 shadow-lg shadow-red-500/10">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-6 h-6">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+              </svg>
+            </div>
+
+            <h3 className="text-lg font-bold text-white mb-1">Remove from Library?</h3>
+            <p className="text-[#888] text-xs mb-4">
+              Are you sure you want to remove this title?
+            </p>
+
+            {/* Item Card Preview */}
+            <div className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-2xl p-3 mb-5">
+              {itemToDelete.posterPath ? (
+                <img
+                  src={itemToDelete.posterPath.startsWith("http") ? itemToDelete.posterPath : `${TMDB_IMAGE_W500}${itemToDelete.posterPath}`}
+                  alt={itemToDelete.title}
+                  className="w-12 h-16 object-cover rounded-xl shadow-md shrink-0"
+                />
+              ) : (
+                <div className="w-12 h-16 bg-[#222] rounded-xl flex items-center justify-center text-[#555] text-xs shrink-0">
+                  No Pic
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-white font-bold text-sm truncate">{itemToDelete.title}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-white/10 text-white/80">
+                    {itemToDelete.category}
+                  </span>
+                  <span className="text-xs text-[#888]">{itemToDelete.releaseDate ? itemToDelete.releaseDate.slice(0, 4) : "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#aaa] leading-relaxed mb-6">
+              This item will be deleted from your web library and automatically un-synced from your connected Android mobile devices.
+            </p>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setItemToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-[#aaa] hover:text-white bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 transition-all shadow-lg shadow-red-600/30 cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <svg className="animate-spin w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                    </svg>
+                    <span>Removing...</span>
+                  </>
+                ) : (
+                  <span>Remove Item</span>
+                )}
+              </button>
             </div>
           </div>
         </div>

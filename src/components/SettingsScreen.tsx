@@ -14,6 +14,7 @@ import ProfilesSection from "./settings/ProfilesSection";
 import CollectionsSection from "./settings/CollectionsSection";
 import IntegrationsSection from "./settings/IntegrationsSection";
 import PlaybackSection from "./settings/PlaybackSection";
+import AdvancedSection from "./settings/AdvancedSection";
 
 const CATEGORIES = [
   { id: "account", label: "Account" },
@@ -103,26 +104,7 @@ export default function SettingsScreen() {
 
           {active === "playback" && <PlaybackSection />}
 
-          {active === "advanced" && (
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-8">Advanced</h2>
-              <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl overflow-hidden">
-                {[
-                  { label: "Clear local cache", desc: "Remove cached addons, plugins, and progress", action: () => { ["nuvio_addons", "nuvio_plugin_repos", "nuvio_collections", "nuvio_cloud_progress"].forEach((k) => localStorage.removeItem(k)); location.reload(); } },
-                ].map((item, i, arr) => (
-                  <button key={item.label} onClick={item.action} className={`flex items-center justify-between px-5 py-4 w-full text-left hover:bg-white/5 transition-colors ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
-                    <div>
-                      <p className="text-white font-semibold text-sm">{item.label}</p>
-                      <p className="text-[#666] text-xs mt-0.5">{item.desc}</p>
-                    </div>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-[#555]">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                    </svg>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {active === "advanced" && <AdvancedSection />}
 
           {/* Footer */}
           <div className="mt-16 text-center text-[#555] text-xs flex flex-col items-center gap-1">
