@@ -10,6 +10,7 @@ import {
   updateLibraryCategory,
   addToLibrary,
   isInLibrary,
+  restoreVerifiedSavedItems,
 } from "@/lib/library";
 import { TMDBMovie, TMDB_IMAGE_W500, tmdb, TMDB_API_KEY } from "@/lib/tmdb";
 import MovieModal from "./MovieModal";
@@ -147,12 +148,18 @@ export default function LibraryView() {
     return () => clearTimeout(timer);
   }, [addSearchQuery]);
 
+  const [restoring, setRestoring] = useState(false);
+  const [failedPosters, setFailedPosters] = useState<Record<string, boolean>>({});
+
   const handleCardClick = (item: LibraryItem) => {
+    const numericId = item.tmdbId
+      ? Number(item.tmdbId)
+      : typeof item.id === "string" && !isNaN(Number(item.id))
+      ? Number(item.id)
+      : (item.id as any);
+
     const movieObj: TMDBMovie = {
-      id:
-        typeof item.id === "string" && !isNaN(Number(item.id))
-          ? Number(item.id)
-          : (item.id as any),
+      id: numericId,
       title: item.title,
       name: item.title,
       overview: item.overview || "",
@@ -165,6 +172,7 @@ export default function LibraryView() {
       genre_ids: [],
       original_language: item.originalLanguage || "en",
     };
+    (movieObj as any).imdb_id = item.imdbId || (String(item.id).startsWith("tt") ? item.id : undefined);
     setSelectedMovie(movieObj);
   };
 
@@ -254,6 +262,28 @@ export default function LibraryView() {
               <span className="text-[10px] text-emerald-400 mt-1.5 font-medium">{lastSyncedText}</span>
             </div>
           </div>
+
+          {/* Restore Saved Movies Button */}
+          <button
+            onClick={async () => {
+              setRestoring(true);
+              try {
+                const restored = await restoreVerifiedSavedItems();
+                setItems(restored);
+                setLastSyncedText("Synced just now");
+              } finally {
+                setRestoring(false);
+              }
+            }}
+            disabled={restoring}
+            className="flex items-center gap-1.5 bg-orange-500/15 hover:bg-orange-500/25 border border-orange-500/30 text-orange-400 font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer hover:scale-105 disabled:opacity-50"
+            title="Restore and re-sync your 6 saved movies (Decision to Leave, Gone Girl, The Machinist, The Sixth Sense, Rorschach, Heart of the Beast)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-3.5 h-3.5 ${restoring ? "animate-spin" : ""}`}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            <span>{restoring ? "Restoring..." : "Restore Saved (6)"}</span>
+          </button>
 
           {/* Add to Library Button */}
           <button
@@ -422,16 +452,17 @@ export default function LibraryView() {
                   >
                     {/* Poster container */}
                     <div className="aspect-[2/3] w-full relative bg-[#222] overflow-hidden">
-                      {imgSrc ? (
+                      {imgSrc && !failedPosters[String(item.id)] ? (
                         <img
                           src={imgSrc}
                           alt={item.title}
                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                           crossOrigin="anonymous"
                           loading="lazy"
+                          onError={() => setFailedPosters((prev) => ({ ...prev, [String(item.id)]: true }))}
                         />
                       ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center text-[#555] text-xs">
+                        <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center text-[#888] text-xs bg-gradient-to-br from-[#202020] to-[#121212]">
                           <svg
                             viewBox="0 0 24 24"
                             fill="none"
@@ -445,7 +476,7 @@ export default function LibraryView() {
                               d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
                             />
                           </svg>
-                          <span>{item.title}</span>
+                          <span className="font-semibold text-white/90 line-clamp-2">{item.title}</span>
                         </div>
                       )}
 
@@ -561,15 +592,36 @@ export default function LibraryView() {
                   ? "Try searching for a different movie, series, or anime."
                   : "Save your favorite movies, TV shows, and anime to keep track of what you want to watch across all your devices."}
               </p>
-              <button
-                onClick={() => {
-                  setAddSearchQuery("");
-                  setShowAddModal(true);
-                }}
-                className="bg-white hover:bg-gray-200 text-black font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg cursor-pointer hover:scale-105"
-              >
-                + Add Media to Library
-              </button>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={() => {
+                    setAddSearchQuery("");
+                    setShowAddModal(true);
+                  }}
+                  className="bg-white hover:bg-gray-200 text-black font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg cursor-pointer hover:scale-105"
+                >
+                  + Add Media to Library
+                </button>
+                <button
+                  onClick={async () => {
+                    setRestoring(true);
+                    try {
+                      const restored = await restoreVerifiedSavedItems();
+                      setItems(restored);
+                      setLastSyncedText("Synced just now");
+                    } finally {
+                      setRestoring(false);
+                    }
+                  }}
+                  disabled={restoring}
+                  className="bg-orange-500/15 hover:bg-orange-500/25 border border-orange-500/40 text-orange-400 font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg cursor-pointer hover:scale-105 flex items-center gap-2"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-3.5 h-3.5 ${restoring ? "animate-spin" : ""}`}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  {restoring ? "Restoring to Cloud..." : "Restore Saved Library (6 Movies)"}
+                </button>
+              </div>
             </div>
           )}
         </>

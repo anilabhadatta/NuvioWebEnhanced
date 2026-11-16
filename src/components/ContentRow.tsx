@@ -80,6 +80,28 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
     return () => { cancelled = true; };
   }, [url]);
 
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+
+  const checkScroll = () => {
+    if (!rowRef.current) return;
+    const { scrollLeft, scrollWidth, clientWidth } = rowRef.current;
+    setCanScrollLeft(scrollLeft > 10);
+    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 10);
+  };
+
+  useEffect(() => {
+    checkScroll();
+    const el = rowRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", checkScroll, { passive: true });
+    window.addEventListener("resize", checkScroll);
+    return () => {
+      el.removeEventListener("scroll", checkScroll);
+      window.removeEventListener("resize", checkScroll);
+    };
+  }, [movies]);
+
   const scrollLeft = () => rowRef.current?.scrollBy({ left: -600, behavior: "smooth" });
   const scrollRight = () => rowRef.current?.scrollBy({ left: 600, behavior: "smooth" });
 
@@ -111,28 +133,6 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
         <h2 className="text-white font-semibold text-[17px] mb-3 ml-1">{title}</h2>
 
         <div className="relative">
-          {/* Left scroll button */}
-          <button
-            onClick={scrollLeft}
-            className="absolute left-1 top-1/2 -translate-y-1/2 z-30 w-10 h-10 bg-black/80 hover:bg-black/95 backdrop-blur-md border border-white/25 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95 shadow-xl cursor-pointer pointer-events-auto"
-            aria-label="Scroll left"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-          </button>
-
-          {/* Right scroll button */}
-          <button
-            onClick={scrollRight}
-            className="absolute right-1 top-1/2 -translate-y-1/2 z-30 w-10 h-10 bg-black/80 hover:bg-black/95 backdrop-blur-md border border-white/25 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95 shadow-xl cursor-pointer pointer-events-auto"
-            aria-label="Scroll right"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-            </svg>
-          </button>
-
           {/* Scroll row */}
           <div
             ref={rowRef}
@@ -192,6 +192,31 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
               );
             })}
           </div>
+
+          {/* Floating row navigation arrows rendered after row to ensure top stacking context */}
+          {canScrollLeft && (
+            <button
+              onClick={scrollLeft}
+              className="absolute left-2 top-1/2 -translate-y-1/2 z-40 w-10 h-10 bg-black/85 hover:bg-black backdrop-blur-md border border-white/30 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95 shadow-2xl cursor-pointer pointer-events-auto"
+              aria-label="Scroll left"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+            </button>
+          )}
+
+          {canScrollRight && (
+            <button
+              onClick={scrollRight}
+              className="absolute right-2 top-1/2 -translate-y-1/2 z-40 w-10 h-10 bg-black/85 hover:bg-black backdrop-blur-md border border-white/30 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95 shadow-2xl cursor-pointer pointer-events-auto"
+              aria-label="Scroll right"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
     </>

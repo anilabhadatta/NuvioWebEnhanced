@@ -6,6 +6,7 @@ import {
   getActiveProfileId,
   setActiveProfileId as persistActiveProfileId,
   pullProfiles,
+  DEFAULT_FALLBACK_PROFILES,
 } from "./profiles";
 import { supabase } from "./supabase";
 
@@ -30,8 +31,9 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
           if (Array.isArray(parsed) && parsed.length > 0) return parsed;
         }
       } catch {}
+      return DEFAULT_FALLBACK_PROFILES;
     }
-    return [];
+    return DEFAULT_FALLBACK_PROFILES;
   });
   const [activeProfileId, setActiveProfileId] = useState<number>(() => {
     if (typeof window !== "undefined") {

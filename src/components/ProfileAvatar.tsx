@@ -39,7 +39,8 @@ export default function ProfileAvatar({
   let preset = getAvatarPreset(rawId);
   if (!preset && !rawUrl && !rawId) {
     const lower = profileName.toLowerCase();
-    if (lower.includes("tv")) preset = getAvatarPreset("tv");
+    if (lower.includes("astronaut") || lower.includes("space")) preset = getAvatarPreset("astronaut");
+    else if (lower.includes("tv")) preset = getAvatarPreset("tv");
     else if (lower.includes("anime")) preset = getAvatarPreset("anime");
     else if (lower.includes("film") || lower.includes("movie") || lower.includes("cinema")) preset = getAvatarPreset("film");
     else if (lower.includes("game") || lower.includes("play")) preset = getAvatarPreset("gamepad");
@@ -56,14 +57,15 @@ export default function ProfileAvatar({
   } else if (rawId && !preset) {
     if (rawId.startsWith("http://") || rawId.startsWith("https://")) {
       resolvedImgUrl = rawId;
-    } else if (config.avatarPublicBaseUrl) {
-      resolvedImgUrl = `${config.avatarPublicBaseUrl}/${rawId}${rawId.includes(".") ? "" : ".png"}`;
+    } else {
+      const baseUrl = config.avatarPublicBaseUrl || "https://api.nuvio.tv/storage/v1/object/public/avatars";
+      resolvedImgUrl = `${baseUrl}/${rawId}${rawId.includes(".") ? "" : ".png"}`;
     }
   }
 
   const style: React.CSSProperties = {
-    width: size,
-    height: size,
+    width: `${size}px`,
+    height: `${size}px`,
     background: bg,
   };
 
@@ -71,6 +73,7 @@ export default function ProfileAvatar({
     <div
       onClick={onClick}
       style={style}
+      suppressHydrationWarning
       className={`rounded-full flex items-center justify-center text-white shrink-0 overflow-hidden relative select-none shadow-md ${className}`}
     >
       {resolvedImgUrl && !imgError ? (
@@ -87,8 +90,9 @@ export default function ProfileAvatar({
         </div>
       ) : (
         <span
+          suppressHydrationWarning
           className="font-bold leading-none"
-          style={{ fontSize: Math.max(11, Math.round(size * 0.45)) }}
+          style={{ fontSize: `${Math.max(11, Math.round(size * 0.45))}px` }}
         >
           {initial}
         </span>

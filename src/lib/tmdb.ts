@@ -97,10 +97,10 @@ export const resolveStremioIdToMovie = async (
   const promise = (async (): Promise<TMDBMovie | null> => {
     try {
       const id = rawId.trim();
-      // Direct TMDB id form: tmdb:12345 or movie:12345 / series:12345
+      // Direct TMDB id form: tmdb:12345 or movie:12345 / series:12345, or bare numeric
       const tmdbMatch = id.match(/(?:tmdb|movie|series):(\d+)/i);
-      if (tmdbMatch) {
-        const tmdbId = parseInt(tmdbMatch[1]);
+      if (tmdbMatch || /^\d+$/.test(id)) {
+        const tmdbId = parseInt(tmdbMatch ? tmdbMatch[1] : id, 10);
         const type = fallbackType === "series" || fallbackType === "tv" ? "tv" : "movie";
         return await fetchTmdbAsMovie(tmdbId, type);
       }

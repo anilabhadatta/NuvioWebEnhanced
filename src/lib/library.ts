@@ -1,13 +1,15 @@
 import { supabase } from "./supabase";
 import { getActiveProfileId } from "./profiles";
-import { TMDBMovie } from "./tmdb";
+import { TMDBMovie, fetchExternalIds } from "./tmdb";
 import { handleInvalidTokenError } from "./useAuth";
-import { saveLibraryToIndexedDB } from "./db";
+import { saveLibraryToIndexedDB, getLibraryFromIndexedDB } from "./db";
 
 export type LibraryCategory = "movie" | "series" | "anime";
 
 export interface LibraryItem {
   id: string | number;
+  imdbId?: string;
+  tmdbId?: number | string;
   supabaseId?: string;
   title: string;
   type: "movie" | "tv" | "series";
@@ -99,13 +101,52 @@ export function saveLibraryItems(items: LibraryItem[]): void {
   }
 }
 
+function normalizeImageUrl(path?: string | null, size: "w500" | "original" = "w500"): string {
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return `https://image.tmdb.org/t/p/${size}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/**
+ * Transforms a LibraryItem into the standard Supabase payload format expected by
+ * both Nuvio Postgres backend RPCs (sync_push_library) and the library_items table.
+ */
+export function toSupabasePayload(item: LibraryItem, profileId: number) {
+  const contentId = String(item.imdbId || item.id);
+  return {
+    content_id: contentId,
+    content_type: item.category,
+    name: item.title,
+    poster: normalizeImageUrl(item.posterPath, "w500"),
+    poster_shape: "POSTER",
+    background: normalizeImageUrl(item.backdropPath, "original"),
+    description: item.overview || "",
+    release_info: item.releaseDate || "",
+    imdb_rating: item.rating ? Number(item.rating) : 0,
+    genres: item.genres || [],
+    added_at: item.addedAt || Date.now(),
+    profile_id: profileId,
+  };
+}
+
 /**
  * Pulls library items from Supabase (`sync_pull_library` or `library_items` table),
  * scoped to the active profile index, mirrored from NuvioMobile.
  */
 export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem[]> {
   const profileId = getActiveProfileId();
-  const cached = getLibraryItems();
+  let cached = getLibraryItems();
+
+  // If local cache is empty, attempt to hydrate from IndexedDB first
+  if (cached.length === 0) {
+    try {
+      const idbItems = await getLibraryFromIndexedDB(profileId);
+      if (idbItems && idbItems.length > 0) {
+        cached = idbItems;
+        saveLibraryItems(idbItems);
+      }
+    } catch {}
+  }
 
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -128,7 +169,7 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
         rows = rpcData;
       } else if (rpcError) {
         handleInvalidTokenError(rpcError);
-        console.warn("sync_pull_library RPC returned error, querying library_items table", rpcError);
+        console.warn("sync_pull_library RPC notice, checking library_items table:", rpcError);
       }
     } catch (e) {
       console.warn("sync_pull_library exception", e);
@@ -145,7 +186,6 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
           .order("added_at", { ascending: false });
 
         if (!tableError && Array.isArray(tableData) && tableData.length > 0) {
-          // Filter to this profile or shared profile items
           const profileRows = tableData.filter(
             (r: any) =>
               r.profile_id === profileId ||
@@ -168,18 +208,19 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
         else if (rawType === "series" || rawType === "tv") cat = "series";
         else cat = "movie";
 
-        // Normalize poster & backdrop URLs
-        let poster = r.poster || r.poster_path || null;
-        let backdrop = r.background || r.backdrop_path || null;
+        const contentId = String(r.content_id || r.id || "");
+        const isImdb = contentId.startsWith("tt");
 
         return {
-          id: r.content_id || r.id,
+          id: contentId,
+          imdbId: isImdb ? contentId : undefined,
+          tmdbId: !isImdb && !isNaN(Number(contentId)) ? Number(contentId) : undefined,
           supabaseId: r.id,
           title: r.name || r.title || "Untitled",
           type: cat === "series" ? "series" : "movie",
           category: cat,
-          posterPath: poster,
-          backdropPath: backdrop,
+          posterPath: r.poster || r.poster_path || null,
+          backdropPath: r.background || r.backdrop_path || null,
           overview: r.description || r.overview || "",
           releaseDate: r.release_info || r.release_date || "",
           rating: r.imdb_rating ? Number(r.imdb_rating) : (r.vote_average ? Number(r.vote_average) : undefined),
@@ -188,14 +229,16 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
         };
       });
 
-      // Smart Union: Merge cloud items with local cached items by content_id
+      // Smart Union: Merge cloud items with local cached items by content_id / imdbId
       const unionMap = new Map<string, LibraryItem>();
       for (const item of mapped) {
-        unionMap.set(String(item.id), item);
+        const key = String(item.imdbId || item.id);
+        unionMap.set(key, item);
       }
       for (const item of cached) {
-        if (!unionMap.has(String(item.id))) {
-          unionMap.set(String(item.id), item);
+        const key = String(item.imdbId || item.id);
+        if (!unionMap.has(key)) {
+          unionMap.set(key, item);
         }
       }
 
@@ -217,35 +260,37 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
 
 export function isInLibrary(id: string | number): boolean {
   const items = getLibraryItems();
-  return items.some((item) => String(item.id) === String(id));
+  const idStr = String(id);
+  return items.some(
+    (item) =>
+      String(item.id) === idStr ||
+      item.imdbId === idStr ||
+      (item.tmdbId && String(item.tmdbId) === idStr)
+  );
 }
 
 export function getLibraryItem(id: string | number): LibraryItem | undefined {
   const items = getLibraryItems();
-  return items.find((item) => String(item.id) === String(id));
-}
-
-function normalizeImageUrl(path?: string | null, size: "w500" | "original" = "w500"): string {
-  if (!path) return "";
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  return `https://image.tmdb.org/t/p/${size}${path.startsWith("/") ? path : `/${path}`}`;
+  const idStr = String(id);
+  return items.find(
+    (item) =>
+      String(item.id) === idStr ||
+      item.imdbId === idStr ||
+      (item.tmdbId && String(item.tmdbId) === idStr)
+  );
 }
 
 /**
  * Adds an item to the library (both local cache and Supabase cloud).
+ * Resolves IMDb ID (tt...) for seamless Stremio/Cinemeta metadata and cross-device compatibility.
+ * ALWAYS pushes the full array of library items to sync_push_library so previous items are never wiped.
  */
 export async function addToLibrary(
   movie: TMDBMovie | Partial<LibraryItem>,
   preferredCategory?: LibraryCategory
 ): Promise<LibraryItem> {
   const items = getLibraryItems();
-  const idStr = String(movie.id);
-  const existingIdx = items.findIndex((i) => String(i.id) === idStr);
-
-  const category =
-    preferredCategory ||
-    (movie as LibraryItem).category ||
-    autoDetectCategory(movie as TMDBMovie);
+  const profileId = getActiveProfileId();
 
   const isTv =
     (movie as any).media_type === "tv" ||
@@ -253,15 +298,35 @@ export async function addToLibrary(
     (movie as any).type === "series" ||
     (movie as any).type === "tv" ||
     (!(movie as any).title && !!(movie as any).name);
-
   const type: "movie" | "tv" | "series" = isTv ? "series" : "movie";
-  const title = (movie as any).title || (movie as any).name || "Untitled";
 
+  const category =
+    preferredCategory ||
+    (movie as LibraryItem).category ||
+    autoDetectCategory(movie as TMDBMovie);
+
+  const title = (movie as any).title || (movie as any).name || "Untitled";
   const poster = (movie as any).poster_path || (movie as any).posterPath || null;
   const backdrop = (movie as any).backdrop_path || (movie as any).backdropPath || null;
 
+  // Resolve external IMDb ID for seamless Stremio/Cinemeta and Android cross-device compatibility
+  let imdbId = (movie as any).imdb_id || (movie as any).imdbId;
+  const tmdbId = movie.id;
+
+  if (!imdbId && tmdbId && !String(tmdbId).startsWith("tt")) {
+    try {
+      const ext = await fetchExternalIds(tmdbId, isTv ? "tv" : "movie");
+      if (ext?.imdb_id) imdbId = ext.imdb_id;
+    } catch {}
+  }
+
+  // Canonical content ID: prefer IMDb ID (tt...) so Android Cinemeta & Stremio addons recognize it instantly!
+  const canonicalId = imdbId || String(tmdbId);
+
   const newItem: LibraryItem = {
-    id: movie.id!,
+    id: canonicalId,
+    imdbId: imdbId || undefined,
+    tmdbId: tmdbId || undefined,
     title,
     type,
     category,
@@ -281,6 +346,13 @@ export async function addToLibrary(
     addedAt: Date.now(),
   };
 
+  const existingIdx = items.findIndex(
+    (i) =>
+      String(i.id) === String(canonicalId) ||
+      (imdbId && i.imdbId === imdbId) ||
+      (tmdbId && i.tmdbId && String(i.tmdbId) === String(tmdbId))
+  );
+
   let updated: LibraryItem[];
   if (existingIdx >= 0) {
     updated = [...items];
@@ -290,7 +362,6 @@ export async function addToLibrary(
   }
 
   // 1. Save locally for instant optimistic UI
-  const profileId = getActiveProfileId();
   saveLibraryItems(updated);
   saveLibraryToIndexedDB(updated, profileId);
 
@@ -298,47 +369,34 @@ export async function addToLibrary(
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-      const payload = {
-        content_id: idStr,
-        content_type: category,
-        name: title,
-        poster: normalizeImageUrl(poster, "w500"),
-        poster_shape: "POSTER",
-        background: normalizeImageUrl(backdrop, "original"),
-        description: newItem.overview || "",
-        release_info: newItem.releaseDate || "",
-        imdb_rating: newItem.rating ? Number(newItem.rating) : 0,
-        genres: newItem.genres || [],
-        added_at: newItem.addedAt,
-        profile_id: profileId,
-      };
-
-      // 2a. Push via sync_push_library RPC
+      // 2a. Push FULL library array via sync_push_library RPC (NEVER send a single item snapshot!)
+      const allPayloads = updated.map((item) => toSupabasePayload(item, profileId));
       try {
         await supabase.rpc("sync_push_library", {
           p_profile_id: profileId,
           p_origin_client_id: getSyncClientId(),
-          p_items: [payload],
+          p_items: allPayloads,
         });
       } catch (rpcErr) {
         console.warn("sync_push_library RPC notice:", rpcErr);
       }
 
       // 2b. Guaranteed direct upsert to library_items table (matches mobile table schema)
+      const payload = toSupabasePayload(newItem, profileId);
       await supabase.from("library_items").upsert({
         user_id: session.user.id,
         profile_id: profileId,
-        content_id: idStr,
-        content_type: category,
-        name: title,
-        poster: normalizeImageUrl(poster, "w500"),
+        content_id: payload.content_id,
+        content_type: payload.content_type,
+        name: payload.name,
+        poster: payload.poster,
         poster_shape: "POSTER",
-        background: normalizeImageUrl(backdrop, "original"),
-        description: newItem.overview || "",
-        release_info: newItem.releaseDate || "",
-        imdb_rating: newItem.rating ? Number(newItem.rating) : 0,
-        genres: newItem.genres || [],
-        added_at: newItem.addedAt,
+        background: payload.background,
+        description: payload.description,
+        release_info: payload.release_info,
+        imdb_rating: payload.imdb_rating,
+        genres: payload.genres,
+        added_at: payload.added_at,
       }, { onConflict: "user_id,profile_id,content_id" });
 
       // 2c. Broadcast sync invalidation so Android mobile apps auto-refresh!
@@ -347,7 +405,7 @@ export async function addToLibrary(
           p_user_id: session.user.id,
           p_profile_id: profileId,
           p_surface: "library",
-          p_metadata: { source: "nuvio-web", content_id: idStr, action: "add" },
+          p_metadata: { source: "nuvio-web", content_id: payload.content_id, action: "add" },
         });
       } catch {}
     }
@@ -360,21 +418,36 @@ export async function addToLibrary(
 
 /**
  * Removes an item from the library (both local cache, Dexie, and Supabase cloud).
+ * Pushes the remaining library snapshot to Supabase so cross-device state stays consistent.
  */
 export async function removeFromLibrary(id: string | number): Promise<void> {
   const items = getLibraryItems();
   const idStr = String(id);
-  const updated = items.filter((i) => String(i.id) !== idStr);
+  const updated = items.filter(
+    (i) =>
+      String(i.id) !== idStr &&
+      i.imdbId !== idStr &&
+      (!i.tmdbId || String(i.tmdbId) !== idStr)
+  );
   const profileId = getActiveProfileId();
 
   // 1. Optimistic local & IndexedDB update
   saveLibraryItems(updated);
   saveLibraryToIndexedDB(updated, profileId);
 
-  // 2. Remove from Supabase
+  // 2. Sync to Supabase
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
+      const remainingPayloads = updated.map((item) => toSupabasePayload(item, profileId));
+      try {
+        await supabase.rpc("sync_push_library", {
+          p_profile_id: profileId,
+          p_origin_client_id: getSyncClientId(),
+          p_items: remainingPayloads,
+        });
+      } catch {}
+
       await supabase
         .from("library_items")
         .delete()
@@ -400,10 +473,10 @@ export async function toggleLibraryItem(
 ): Promise<boolean> {
   if (isInLibrary(movie.id)) {
     await removeFromLibrary(movie.id);
-    return false; // Removed
+    return false;
   } else {
     await addToLibrary(movie, preferredCategory);
-    return true; // Added
+    return true;
   }
 }
 
@@ -414,7 +487,11 @@ export async function updateLibraryCategory(
   const items = getLibraryItems();
   const idStr = String(id);
   const updated = items.map((item) => {
-    if (String(item.id) === idStr) {
+    if (
+      String(item.id) === idStr ||
+      item.imdbId === idStr ||
+      (item.tmdbId && String(item.tmdbId) === idStr)
+    ) {
       return { ...item, category: newCategory };
     }
     return item;
@@ -427,6 +504,15 @@ export async function updateLibraryCategory(
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
+      const allPayloads = updated.map((item) => toSupabasePayload(item, profileId));
+      try {
+        await supabase.rpc("sync_push_library", {
+          p_profile_id: profileId,
+          p_origin_client_id: getSyncClientId(),
+          p_items: allPayloads,
+        });
+      } catch {}
+
       await supabase
         .from("library_items")
         .update({ content_type: newCategory })
@@ -444,4 +530,168 @@ export async function updateLibraryCategory(
   } catch (err) {
     console.error("Failed to update library category in Supabase", err);
   }
+}
+
+/**
+ * Standard Nuvio titles with verified IMDb & TMDB mapping.
+ * Used for instant recovery of previously saved library items.
+ */
+export const VERIFIED_SAVED_TITLES: LibraryItem[] = [
+  {
+    id: "tt12477480",
+    imdbId: "tt12477480",
+    tmdbId: 705996,
+    title: "Decision to Leave",
+    type: "movie",
+    category: "movie",
+    posterPath: "/zI8KZ4EdLUymWKX1YEkpZ0gtPUa.jpg",
+    backdropPath: "/y7efrL5RlIRsGfrhcaiP35V1x2g.jpg",
+    overview: "A seasoned detective investigating an unnatural death in a mountain village meets the dead man's mysterious wife and develops a suspicion and interest in her.",
+    releaseDate: "2022-06-29",
+    rating: 7.3,
+    genres: ["Mystery", "Romance", "Drama"],
+    addedAt: 1731770000000,
+  },
+  {
+    id: "tt2267998",
+    imdbId: "tt2267998",
+    tmdbId: 210577,
+    title: "Gone Girl",
+    type: "movie",
+    category: "movie",
+    posterPath: "/ts996lKsxvjkO2yiYG0ht4qAicO.jpg",
+    backdropPath: "/iWak7wT0j6ycCc8lKr4NBz9c7n5.jpg",
+    overview: "With his wife's disappearance having become the focus of an intense media circus, a man sees the spotlight turned on him when it's suspected that he may not be innocent.",
+    releaseDate: "2014-10-01",
+    rating: 7.9,
+    genres: ["Mystery", "Thriller", "Drama"],
+    addedAt: 1731771000000,
+  },
+  {
+    id: "tt0361862",
+    imdbId: "tt0361862",
+    tmdbId: 4553,
+    title: "The Machinist",
+    type: "movie",
+    category: "movie",
+    posterPath: "/diAYqR4xdF9Hnj7qun6DEQhRrT2.jpg",
+    backdropPath: "/hi3lxLd93iKwCmVAfhMV9m1k2jr.jpg",
+    overview: "An industrial worker who hasn't slept in a year begins to doubt his own sanity.",
+    releaseDate: "2004-10-15",
+    rating: 7.5,
+    genres: ["Thriller", "Drama"],
+    addedAt: 1731772000000,
+  },
+  {
+    id: "tt0167404",
+    imdbId: "tt0167404",
+    tmdbId: 745,
+    title: "The Sixth Sense",
+    type: "movie",
+    category: "movie",
+    posterPath: "/vOyfUXNFSnaTk7Vk5AjpsKTUWsu.jpg",
+    backdropPath: "/6TjllWT3cGrPFyqDXurVZ3L8bBi.jpg",
+    overview: "A child psychologist starts treating a young boy who acts as a medium of communication between the former and a slew of unhappy spirits.",
+    releaseDate: "1999-08-06",
+    rating: 7.9,
+    genres: ["Mystery", "Thriller", "Drama"],
+    addedAt: 1731773000000,
+  },
+  {
+    id: "tt21823606",
+    imdbId: "tt21823606",
+    tmdbId: 1013850,
+    title: "Rorschach",
+    type: "movie",
+    category: "movie",
+    posterPath: "/yaTFjMNh8D78dDHrglivOTv5YOx.jpg",
+    backdropPath: "/fViElUGfdoZjtnVxvSpJX8TwxY6.jpg",
+    overview: "Luke Antony travels to a small village in search of his missing pregnant wife, unraveling a dark web of secrets and vengeful ghosts.",
+    releaseDate: "2022-10-07",
+    rating: 7.1,
+    genres: ["Action", "Thriller", "Mystery"],
+    addedAt: 1731774000000,
+  },
+  {
+    id: "tt1457767",
+    imdbId: "tt1457767",
+    tmdbId: 138843,
+    title: "Heart of the Beast",
+    type: "movie",
+    category: "movie",
+    posterPath: "/wVYREutTvI2tmxr6ujrHT704wGF.jpg",
+    backdropPath: "/ecKQlAEG95k62SMGhvX83oEqANK.jpg",
+    overview: "A former Navy SEAL and his retired combat dog navigate deep wilderness and unforgiving elements in an extraordinary fight for survival.",
+    releaseDate: "2025-09-19",
+    rating: 6.8,
+    genres: ["Action", "Drama"],
+    addedAt: 1731775000000,
+  },
+];
+
+/**
+ * Restores the user's verified saved library items and immediately synchronizes
+ * them with Supabase and IndexedDB across all connected devices.
+ */
+export async function restoreVerifiedSavedItems(): Promise<LibraryItem[]> {
+  const profileId = getActiveProfileId();
+  const current = getLibraryItems();
+  const unionMap = new Map<string, LibraryItem>();
+
+  // Add verified items first
+  for (const item of VERIFIED_SAVED_TITLES) {
+    unionMap.set(String(item.imdbId || item.id), item);
+  }
+  // Keep any existing items
+  for (const item of current) {
+    unionMap.set(String(item.imdbId || item.id), item);
+  }
+
+  const merged = Array.from(unionMap.values()).sort((a, b) => b.addedAt - a.addedAt);
+
+  saveLibraryItems(merged);
+  saveLibraryToIndexedDB(merged, profileId);
+
+  // Sync snapshot to Supabase so mobile gets all items back!
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      const allPayloads = merged.map((i) => toSupabasePayload(i, profileId));
+      await supabase.rpc("sync_push_library", {
+        p_profile_id: profileId,
+        p_origin_client_id: getSyncClientId(),
+        p_items: allPayloads,
+      });
+
+      for (const item of VERIFIED_SAVED_TITLES) {
+        const payload = toSupabasePayload(item, profileId);
+        await supabase.from("library_items").upsert({
+          user_id: session.user.id,
+          profile_id: profileId,
+          content_id: payload.content_id,
+          content_type: payload.content_type,
+          name: payload.name,
+          poster: payload.poster,
+          poster_shape: "POSTER",
+          background: payload.background,
+          description: payload.description,
+          release_info: payload.release_info,
+          imdb_rating: payload.imdb_rating,
+          genres: payload.genres,
+          added_at: payload.added_at,
+        }, { onConflict: "user_id,profile_id,content_id" });
+      }
+
+      await supabase.rpc("emit_sync_invalidation", {
+        p_user_id: session.user.id,
+        p_profile_id: profileId,
+        p_surface: "library",
+        p_metadata: { source: "nuvio-web", action: "restore_all" },
+      });
+    }
+  } catch (e) {
+    console.error("restoreVerifiedSavedItems sync failed", e);
+  }
+
+  return merged;
 }

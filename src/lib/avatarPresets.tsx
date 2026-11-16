@@ -112,6 +112,19 @@ export const AVATAR_PRESETS: AvatarPreset[] = [
     ),
   },
   {
+    id: "astronaut",
+    name: "Astronaut",
+    icon: (size = 24) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+        <circle cx="12" cy="10" r="7" />
+        <path d="M8 9.5a4 3.5 0 0 1 8 0c0 2-1.8 3.5-4 3.5s-4-1.5-4-3.5z" fill="currentColor" fillOpacity={0.3} />
+        <path strokeLinecap="round" d="M7 17v1.5a3.5 3.5 0 0 0 3.5 3.5h3a3.5 3.5 0 0 0 3.5-3.5V17" />
+        <path d="M9 17h6" />
+        <path d="M4 10h1M19 10h1" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     id: "user",
     name: "User Profile",
     icon: (size = 24) => (

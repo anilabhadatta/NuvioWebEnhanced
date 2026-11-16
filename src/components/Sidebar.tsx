@@ -102,7 +102,7 @@ export default function Sidebar() {
               else router.push(isAuthenticated ? "/settings" : "/login");
             }}
           >
-            <span className="text-[15px] font-semibold text-white truncate">{shownName}</span>
+            <span suppressHydrationWarning className="text-[15px] font-semibold text-white truncate">{shownName}</span>
             {profiles.length > 1 && (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-4 h-4 text-[#888] transition-transform ${profileMenuOpen ? "rotate-180" : ""}`}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />

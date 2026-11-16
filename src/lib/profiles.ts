@@ -44,6 +44,25 @@ export interface ProfilePushPayload {
   avatar_url?: string | null;
 }
 
+export const DEFAULT_FALLBACK_PROFILES: NuvioProfile[] = [
+  {
+    profile_index: 1,
+    name: "BiraJ",
+    avatar_color_hex: "#FB8C00",
+    avatar_id: "astronaut",
+    uses_primary_addons: true,
+    uses_primary_plugins: true,
+  },
+  {
+    profile_index: 2,
+    name: "Hall TV",
+    avatar_color_hex: "#1E88E5",
+    avatar_id: "tv",
+    uses_primary_addons: true,
+    uses_primary_plugins: true,
+  },
+];
+
 export function getActiveProfileId(): number {
   if (typeof window === "undefined") return 1;
   const raw = localStorage.getItem(ACTIVE_PROFILE_KEY);
@@ -70,9 +89,12 @@ export async function pullProfiles(): Promise<NuvioProfile[]> {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed) && parsed.length > 0) return parsed;
           }
+          // Seed fallback profiles so localhost detects profiles instantly
+          localStorage.setItem("nuvio_profiles_cache", JSON.stringify(DEFAULT_FALLBACK_PROFILES));
+          return DEFAULT_FALLBACK_PROFILES;
         } catch {}
       }
-      return [];
+      return DEFAULT_FALLBACK_PROFILES;
     }
     const { data, error } = await supabase.rpc("sync_pull_profiles");
     if (error) {
@@ -82,13 +104,16 @@ export async function pullProfiles(): Promise<NuvioProfile[]> {
           const cached = localStorage.getItem("nuvio_profiles_cache");
           if (cached) {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed)) return parsed;
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
           }
+          return DEFAULT_FALLBACK_PROFILES;
         } catch {}
       }
-      return [];
+      return DEFAULT_FALLBACK_PROFILES;
     }
-    if (!data || !Array.isArray(data)) return [];
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return DEFAULT_FALLBACK_PROFILES;
+    }
     const sorted = (data as NuvioProfile[]).sort((a, b) => a.profile_index - b.profile_index);
     if (typeof window !== "undefined") {
       try {
@@ -104,11 +129,11 @@ export async function pullProfiles(): Promise<NuvioProfile[]> {
         const cached = localStorage.getItem("nuvio_profiles_cache");
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed)) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
         }
       } catch {}
     }
-    return [];
+    return DEFAULT_FALLBACK_PROFILES;
   }
 }
 

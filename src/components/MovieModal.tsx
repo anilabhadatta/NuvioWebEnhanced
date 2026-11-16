@@ -117,6 +117,7 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
     fetchExternalIds(movie.id, type).then(externalIds => {
       const imdbId = externalIds?.imdb_id;
       if (!imdbId) return;
+      (movie as any).imdb_id = imdbId;
 
       // MDBList external ratings (IMDb, TMDB, Rotten Tomatoes, Metacritic).
       fetchExternalRatings(imdbId, type === "tv" ? "tv" : "movie")
