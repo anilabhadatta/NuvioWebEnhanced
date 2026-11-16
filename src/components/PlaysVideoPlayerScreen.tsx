@@ -9,6 +9,12 @@ import { saveWatchProgress } from "@/lib/watchProgress";
 import { isTraktConnected, traktScrobble } from "@/lib/trakt";
 import { autoResolveFirstStream } from "@/lib/addonService";
 import StreamPickerModal from "./StreamPickerModal";
+import ExternalPlayerModal from "./ExternalPlayerModal";
+import {
+  ExternalPlayerMediaMeta,
+  getDefaultExternalPlayer,
+  launchExternalPlayer,
+} from "@/lib/externalPlayer";
 import { PlaysVideoEngine } from "playsvideo";
 
 function formatTime(sec: number): string {
@@ -1508,44 +1514,43 @@ EventDump: ${JSON.stringify(collected)}`;
     return () => window.removeEventListener("keydown", handler);
   }, [duration, isMuted, volume, togglePlay, toggleFullscreen, resetControlsTimeout, nextEpisode, nextSearching, playNextEpisode]);
 
-  // External player URL schemes. Web has no equivalent of NuvioDesktop's
-  // file-system detection, so we offer the well-known URL handlers that
-  // major external players register on each OS — the browser confirms with
-  // the user when it launches, so unsupported schemes degrade safely.
-  const externalPlayers = useMemo(() => {
-    if (typeof navigator === "undefined") return [];
-    const ua = navigator.userAgent.toLowerCase();
-    const isMac = ua.includes("mac");
-    const list: { id: string; name: string; build: (u: string) => string }[] = [
-      { id: "vlc", name: "VLC media player", build: (u) => `vlc://${u}` },
-      { id: "potplayer", name: "PotPlayer", build: (u) => `potplayer://${u}` },
-      { id: "mpv", name: "mpv", build: (u) => `mpv://${u}` },
-    ];
-    if (isMac) {
-      list.push({ id: "iina", name: "IINA", build: (u) => `iina://weblink?url=${encodeURIComponent(u)}` });
+  const externalMediaMeta = useMemo<ExternalPlayerMediaMeta>(() => {
+    let title = "Stream";
+    if (resolvedTmdbId) {
+      if (season && episode) {
+        title = `Series - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+      } else {
+        title = `Movie (${resolvedTmdbId})`;
+      }
     }
-    return list;
-  }, []);
-
-  const openInExternalPlayer = useCallback((id: string) => {
-    const target = externalPlayers.find((p) => p.id === id);
-    if (!target || !resolvedSrc) return;
-    try {
-      const handlerUrl = target.build(resolvedSrc);
-      window.open(handlerUrl, "_self");
-    } catch (e) {
-      console.error("External open failed", e);
+    let subUrl: string | undefined = undefined;
+    if (activeExternalSub) {
+      const match = addonSubtitles.find((s) => s.id === activeExternalSub);
+      if (match?.url) subUrl = match.url;
     }
-    setShowExternalPlayer(false);
-  }, [externalPlayers, resolvedSrc]);
+    return {
+      url: typeof resolvedSrc === "string" ? resolvedSrc : "",
+      title,
+      currentTime: currentTime,
+      duration: duration,
+      subtitleUrl: subUrl,
+    };
+  }, [resolvedSrc, currentTime, duration, activeExternalSub, addonSubtitles, season, episode, resolvedTmdbId]);
 
-  const copyStreamUrl = useCallback(async () => {
-    if (!resolvedSrc) return;
-    try {
-      await navigator.clipboard.writeText(resolvedSrc);
-    } catch (_) { /* ignore */ }
-    setShowExternalPlayer(false);
-  }, [resolvedSrc]);
+  const handleOpenExternally = useCallback(
+    (forceModal: boolean = false) => {
+      if (!resolvedSrc || typeof resolvedSrc !== "string") return;
+      const defaultPlayer = getDefaultExternalPlayer();
+
+      if (forceModal || defaultPlayer === "chooser") {
+        setShowExternalPlayer(true);
+        return;
+      }
+
+      launchExternalPlayer(defaultPlayer, externalMediaMeta);
+    },
+    [resolvedSrc, externalMediaMeta]
+  );
 
   const handleAudioChange = (id: number) => {
     setSelectedAudio(id);
@@ -2243,10 +2248,14 @@ EventDump: ${JSON.stringify(collected)}`;
 
               {/* Open externally */}
               <button
-                onClick={() => setShowExternalPlayer(true)}
+                onClick={() => handleOpenExternally()}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  handleOpenExternally(true);
+                }}
                 disabled={!resolvedSrc}
-                className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg disabled:opacity-50"
-                title="Open in external player"
+                className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg disabled:opacity-50 cursor-pointer"
+                title={`Open in external player (${getDefaultExternalPlayer() === "system" ? "System Default" : getDefaultExternalPlayer()}) — Right-click for options`}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
@@ -2338,36 +2347,11 @@ EventDump: ${JSON.stringify(collected)}`;
       )}
 
       {/* External Player Modal */}
-      {showExternalPlayer && (
-        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/70 p-6" onClick={() => setShowExternalPlayer(false)}>
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-white font-bold text-lg">Open in external player</h2>
-              <button onClick={() => setShowExternalPlayer(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <p className="text-[#888] text-xs mb-3">Your browser will ask to launch the selected app. Make sure the player is installed and its URL handler is registered.</p>
-            <div className="flex flex-col gap-2">
-              {externalPlayers.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => openInExternalPlayer(p.id)}
-                  className="w-full text-left px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white font-semibold text-sm transition-colors"
-                >
-                  {p.name}
-                </button>
-              ))}
-              <button
-                onClick={copyStreamUrl}
-                className="w-full text-left px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white font-semibold text-sm transition-colors mt-1"
-              >
-                Copy stream URL
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ExternalPlayerModal
+        isOpen={showExternalPlayer}
+        onClose={() => setShowExternalPlayer(false)}
+        meta={externalMediaMeta}
+      />
 
       {/* Click outside menus to close */}
       {openMenu && <div className="absolute inset-0 z-10" onClick={() => setOpenMenu(null)} />}

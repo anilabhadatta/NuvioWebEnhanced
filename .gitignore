@@ -42,3 +42,7 @@ yarn-error.log*
 next-env.d.ts
 *.zip
 *.kiro
+*brain_test/
+_metadata/
+**/_metadata/
+*scripts/

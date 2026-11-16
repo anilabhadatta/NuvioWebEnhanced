@@ -13,10 +13,15 @@
         {
           "header": "Access-Control-Allow-Methods",
           "operation": "set",
-          "value": "GET, PUT, POST, DELETE, HEAD, OPTIONS"
+          "value": "GET, PUT, POST, DELETE, HEAD, OPTIONS, PATCH"
         },
         {
           "header": "Access-Control-Allow-Headers",
+          "operation": "set",
+          "value": "*"
+        },
+        {
+          "header": "Access-Control-Expose-Headers",
           "operation": "set",
           "value": "*"
         },
@@ -28,7 +33,14 @@
       ]
     },
     "condition": {
-      "resourceTypes": ["xmlhttprequest", "sub_frame", "main_frame", "media", "other"]
+      "resourceTypes": [
+        "xmlhttprequest",
+        "sub_frame",
+        "main_frame",
+        "media",
+        "websocket",
+        "other"
+      ]
     }
   }
 ]

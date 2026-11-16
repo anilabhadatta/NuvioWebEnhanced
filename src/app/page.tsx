@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/useAuth";
 import { supabase } from "@/lib/supabase";
 import Toast from "@/components/Toast";
+import NuvioIcon from "@/components/NuvioIcon";
 
 export default function Home() {
   const router = useRouter();
@@ -43,7 +44,10 @@ export default function Home() {
     >
       {/* Top bar */}
       <header className="flex items-center justify-between px-6 sm:px-10 py-5">
-        <span className="text-2xl font-black tracking-tight text-white">Nuvio</span>
+        <div className="flex items-center gap-2.5">
+          <NuvioIcon size={32} withBackground className="rounded-xl shadow-lg" />
+          <span className="text-2xl font-black tracking-tight text-white">Nuvio</span>
+        </div>
         <div className="flex items-center gap-3">
           {!loading && isAuthenticated ? (
             <>

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import NuvioIcon from "@/components/NuvioIcon";
 
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
 
@@ -166,7 +167,10 @@ export default function AuthScreen() {
       <div className="relative z-10 w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-6">
-          <h1 className="text-5xl font-black tracking-tight text-white mb-2">Nuvio</h1>
+          <div className="flex items-center justify-center gap-3 mb-2">
+            <NuvioIcon size={46} withBackground className="rounded-2xl shadow-xl" />
+            <h1 className="text-5xl font-black tracking-tight text-white">Nuvio</h1>
+          </div>
           <p className="text-[#888] text-sm">Stream anything. Everywhere.</p>
         </div>
 

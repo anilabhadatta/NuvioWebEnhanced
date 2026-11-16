@@ -114,7 +114,8 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
           {/* Left scroll button */}
           <button
             onClick={scrollLeft}
-            className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 z-10 w-9 h-9 bg-black/70 hover:bg-black/90 border border-white/20 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+            className="absolute left-1 top-1/2 -translate-y-1/2 z-30 w-10 h-10 bg-black/80 hover:bg-black/95 backdrop-blur-md border border-white/25 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95 shadow-xl cursor-pointer pointer-events-auto"
+            aria-label="Scroll left"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -124,7 +125,8 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
           {/* Right scroll button */}
           <button
             onClick={scrollRight}
-            className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 z-10 w-9 h-9 bg-black/70 hover:bg-black/90 border border-white/20 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+            className="absolute right-1 top-1/2 -translate-y-1/2 z-30 w-10 h-10 bg-black/80 hover:bg-black/95 backdrop-blur-md border border-white/25 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-95 shadow-xl cursor-pointer pointer-events-auto"
+            aria-label="Scroll right"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4">
               <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />

@@ -21,6 +21,8 @@ export interface PlaybackSettings {
   skipIntroEnabled: boolean;
   animeSkipEnabled: boolean;
   localWatchHistoryEnabled: boolean;
+  defaultExternalPlayer?: string;
+  alwaysUseExternalPlayer?: boolean;
 }
 
 export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
@@ -42,6 +44,8 @@ export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
   skipIntroEnabled: true,
   animeSkipEnabled: false,
   localWatchHistoryEnabled: false,
+  defaultExternalPlayer: "system",
+  alwaysUseExternalPlayer: false,
 };
 
 export function getLocalPlaybackSettings(): PlaybackSettings {
@@ -99,9 +103,15 @@ export async function pullPlaybackSettings(): Promise<PlaybackSettings> {
       skipIntroEnabled: getValue("skip_intro_enabled", DEFAULT_PLAYBACK_SETTINGS.skipIntroEnabled),
       animeSkipEnabled: getValue("anime_skip_enabled", DEFAULT_PLAYBACK_SETTINGS.animeSkipEnabled),
       localWatchHistoryEnabled: getValue("local_watch_history_enabled", DEFAULT_PLAYBACK_SETTINGS.localWatchHistoryEnabled),
+      defaultExternalPlayer: getValue("default_external_player", (typeof window !== "undefined" ? localStorage.getItem("nuvio.default_external_player") : null) || DEFAULT_PLAYBACK_SETTINGS.defaultExternalPlayer),
+      alwaysUseExternalPlayer: getValue("always_use_external_player", (typeof window !== "undefined" ? localStorage.getItem("nuvio.always_external_player") === "true" : false)),
     };
     
     localStorage.setItem(`nuvio_playback_settings_${profileId}`, JSON.stringify(finalSettings));
+    if (finalSettings.defaultExternalPlayer) {
+      localStorage.setItem("nuvio.default_external_player", finalSettings.defaultExternalPlayer);
+    }
+    localStorage.setItem("nuvio.always_external_player", String(finalSettings.alwaysUseExternalPlayer ?? false));
     return finalSettings;
   } catch (e) {
     console.error("pullPlaybackSettings error", e);
@@ -164,6 +174,14 @@ export async function pushPlaybackSettings(settings: PlaybackSettings): Promise<
     ps["skip_intro_enabled"] = encodeBoolean(settings.skipIntroEnabled);
     ps["anime_skip_enabled"] = encodeBoolean(settings.animeSkipEnabled);
     ps["local_watch_history_enabled"] = encodeBoolean(settings.localWatchHistoryEnabled);
+    if (settings.defaultExternalPlayer) {
+      ps["default_external_player"] = encodeString(settings.defaultExternalPlayer);
+      localStorage.setItem("nuvio.default_external_player", settings.defaultExternalPlayer);
+    }
+    if (settings.alwaysUseExternalPlayer !== undefined) {
+      ps["always_use_external_player"] = encodeBoolean(settings.alwaysUseExternalPlayer);
+      localStorage.setItem("nuvio.always_external_player", String(settings.alwaysUseExternalPlayer));
+    }
 
     const { error } = await supabase.rpc("sync_push_profile_settings_blob", {
       p_platform: "mobile",

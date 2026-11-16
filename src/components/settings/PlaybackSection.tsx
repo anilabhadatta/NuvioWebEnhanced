@@ -363,12 +363,79 @@ export default function PlaybackSection() {
         </div>
       </div>
 
-      <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 mb-8">
-        <p className="text-white font-semibold text-sm">External player</p>
-        <p className="text-[#888] text-xs mt-1">
-          When playing, use the &quot;Open externally&quot; option to copy the stream link or hand it off to a
-          desktop player (VLC, PotPlayer) via protocol links.
-        </p>
+      <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl divide-y divide-white/5 mb-8">
+        {/* Default External Player */}
+        <div className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-white font-semibold text-sm">Default External Player</p>
+              <p className="text-[#888] text-xs mt-0.5">
+                Choose the external media player to launch when clicking &quot;Open externally&quot;.
+              </p>
+            </div>
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-orange-500/10 text-orange-400 border border-orange-500/20">
+              Win / Mac / Linux
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 mt-4">
+            {[
+              { id: "system", name: "System Default", badge: "Recommended", desc: "Universal handoff to your OS default media player" },
+              { id: "mpv", name: "mpv", badge: "Fastest", desc: "Ultra-fast hardware decoding, mpv:// & CLI" },
+              { id: "vlc", name: "VLC media player", badge: "All OS", desc: "vlc:// protocol with resume & subtitles" },
+              { id: "potplayer", name: "PotPlayer", badge: "Windows", desc: "potplayer:// protocol with full seek" },
+              { id: "iina", name: "IINA", badge: "macOS", desc: "iina:// protocol for native macOS playback" },
+              { id: "chooser", name: "Always Ask", badge: "Menu", desc: "Show player selection popup each time" },
+            ].map((p) => {
+              const isSelected = (settings.defaultExternalPlayer || "system") === p.id;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => updateSetting("defaultExternalPlayer", p.id)}
+                  className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+                    isSelected
+                      ? "bg-white/10 border-orange-500/60 shadow-lg shadow-orange-500/5 text-white"
+                      : "bg-white/5 border-white/5 hover:bg-white/[0.08] text-[#aaa] hover:text-white"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-sm text-white">{p.name}</span>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                      isSelected ? "bg-orange-500 text-black" : "bg-white/10 text-[#888]"
+                    }`}>
+                      {p.badge}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#888] leading-tight mt-1">{p.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Always Open in External Player Toggle */}
+        <div className="px-5 py-4 flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="text-white font-semibold text-sm">Always Open in External Player</p>
+              <span className="text-[10px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded bg-white/10 text-white/80">
+                Native Default
+              </span>
+            </div>
+            <p className="text-[#888] text-xs mt-0.5">
+              Make external player your default: automatically hand off video streams to your selected desktop player instead of the web player.
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={settings.alwaysUseExternalPlayer ?? false}
+              onChange={(e) => updateSetting("alwaysUseExternalPlayer", e.target.checked)}
+            />
+            <div className="w-11 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-orange-500 peer-checked:to-pink-500"></div>
+          </label>
+        </div>
       </div>
     </div>
   );

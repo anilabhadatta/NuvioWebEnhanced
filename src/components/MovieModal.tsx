@@ -6,6 +6,14 @@ import StreamPickerModal from "./StreamPickerModal";
 import { StreamItem } from "@/lib/addonService";
 import { config } from "@/lib/config";
 import { fetchExternalRatings, ExternalRating } from "@/lib/mdblist";
+import {
+  LibraryCategory,
+  isInLibrary,
+  addToLibrary,
+  removeFromLibrary,
+  getLibraryItem,
+  autoDetectCategory,
+} from "@/lib/library";
 
 interface MovieModalProps {
   movie: TMDBMovie;
@@ -27,6 +35,41 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
   const [showStreamPicker, setShowStreamPicker] = useState(false);
   const [targetSeason, setTargetSeason] = useState<number | undefined>();
   const [targetEpisode, setTargetEpisode] = useState<number | undefined>();
+
+  // Library state
+  const [inLibrary, setInLibrary] = useState(false);
+  const [libraryCat, setLibraryCat] = useState<LibraryCategory>("movie");
+  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+
+  useEffect(() => {
+    const checkLib = () => {
+      const item = getLibraryItem(movie.id);
+      if (item) {
+        setInLibrary(true);
+        setLibraryCat(item.category);
+      } else {
+        setInLibrary(false);
+        setLibraryCat(autoDetectCategory(movie));
+      }
+    };
+    checkLib();
+    const handleUpdate = () => checkLib();
+    window.addEventListener("nuvio:library-updated", handleUpdate);
+    return () => window.removeEventListener("nuvio:library-updated", handleUpdate);
+  }, [movie]);
+
+  const handleToggleLibrary = (preferredCat?: LibraryCategory) => {
+    const targetCat = preferredCat || libraryCat || autoDetectCategory(movie);
+    if (inLibrary && !preferredCat) {
+      removeFromLibrary(movie.id);
+      setInLibrary(false);
+    } else {
+      addToLibrary(movie, targetCat);
+      setInLibrary(true);
+      setLibraryCat(targetCat);
+    }
+    setShowCategoryMenu(false);
+  };
 
   const title = movie.title || movie.name || "";
   const date = movie.release_date || movie.first_air_date || "";
@@ -167,26 +210,98 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
             </svg>
           </button>
 
-          {/* Play button overlaid on image (for movies) */}
-          {!isSeries && (
-            <div className="absolute bottom-4 left-6 flex gap-3 z-10">
-              <button
-                onClick={() => handlePlayClick()}
-                className="flex items-center gap-2 bg-white hover:bg-gray-200 text-black font-bold px-6 py-2.5 rounded-lg transition-all text-sm"
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                  <path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-                </svg>
-                Play
-              </button>
-              <button className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold px-5 py-2.5 rounded-lg transition-all text-sm backdrop-blur-sm">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                My List
-              </button>
+          {/* Action buttons overlaid on image */}
+          <div className="absolute bottom-4 left-6 flex flex-wrap items-center gap-3 z-10">
+            <button
+              onClick={() => handlePlayClick(isSeries ? selectedSeason : undefined, isSeries ? (episodes[0]?.episode_number || 1) : undefined)}
+              className="flex items-center gap-2 bg-white hover:bg-gray-200 text-black font-bold px-6 py-2.5 rounded-lg transition-all text-sm cursor-pointer shadow-lg"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+              </svg>
+              {isSeries ? "Play S" + selectedSeason + " E" + (episodes[0]?.episode_number || 1) : "Play"}
+            </button>
+
+            {/* Library button with category selection */}
+            <div className="relative">
+              <div className="flex items-center">
+                <button
+                  onClick={() => handleToggleLibrary()}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-l-lg transition-all text-sm backdrop-blur-md cursor-pointer font-semibold ${
+                    inLibrary
+                      ? "bg-gradient-to-r from-orange-500/20 to-pink-500/20 border border-orange-500/50 text-white"
+                      : "bg-white/10 hover:bg-white/20 border border-white/20 text-white"
+                  }`}
+                >
+                  {inLibrary ? (
+                    <>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-orange-400">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                      <span>In Library</span>
+                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-white/10 text-orange-300">
+                        {libraryCat}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                      </svg>
+                      <span>Add to Library</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowCategoryMenu(!showCategoryMenu)}
+                  className={`px-2 py-2.5 rounded-r-lg border-l-0 transition-all text-white backdrop-blur-md cursor-pointer ${
+                    inLibrary
+                      ? "bg-gradient-to-r from-orange-500/20 to-pink-500/20 border border-orange-500/50 hover:bg-white/20"
+                      : "bg-white/10 hover:bg-white/20 border border-white/20"
+                  }`}
+                  title="Choose Category"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Category dropdown menu */}
+              {showCategoryMenu && (
+                <div className="absolute left-0 mt-2 w-48 bg-[#1f1f1f] border border-white/15 rounded-xl shadow-2xl py-1 z-30 backdrop-blur-md">
+                  <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-[#888] tracking-wider border-b border-white/5">
+                    Categorize As
+                  </div>
+                  {[
+                    { id: "movie", label: "Movie", desc: "Feature film" },
+                    { id: "series", label: "TV Series", desc: "Episodic show" },
+                    { id: "anime", label: "Anime", desc: "Japanese animation" },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => handleToggleLibrary(c.id as LibraryCategory)}
+                      className={`w-full text-left px-3 py-2 flex items-center justify-between transition-colors ${
+                        inLibrary && libraryCat === c.id
+                          ? "bg-orange-500/15 text-orange-400 font-bold"
+                          : "text-white/80 hover:bg-white/10 hover:text-white"
+                      }`}
+                    >
+                      <div>
+                        <p className="text-xs font-semibold">{c.label}</p>
+                        <p className="text-[10px] text-[#777]">{c.desc}</p>
+                      </div>
+                      {inLibrary && libraryCat === c.id && (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-3.5 h-3.5 text-orange-400">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Details */}
