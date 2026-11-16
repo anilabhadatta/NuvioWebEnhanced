@@ -11,6 +11,7 @@ import {
   launchExternalPlayer,
   buildMpvCommandLine,
   downloadM3UPlaylist,
+  extractDirectStreamUrl,
 } from "@/lib/externalPlayer";
 import { useLockBodyScroll } from "@/lib/useLockBodyScroll";
 
@@ -43,7 +44,8 @@ export default function ExternalPlayerModal({
   if (!isOpen) return null;
 
   const handleLaunch = (id: ExternalPlayerId) => {
-    const res = launchExternalPlayer(id, meta);
+    const rawUrl = extractDirectStreamUrl(meta.url);
+    const res = launchExternalPlayer(id, { ...meta, url: rawUrl });
     if (res.success) {
       setStatusMsg(res.message);
       setTimeout(() => {
@@ -62,9 +64,10 @@ export default function ExternalPlayerModal({
   };
 
   const handleCopyUrl = async () => {
-    if (!meta.url) return;
+    const rawUrl = extractDirectStreamUrl(meta.url);
+    if (!rawUrl) return;
     try {
-      await navigator.clipboard.writeText(meta.url);
+      await navigator.clipboard.writeText(rawUrl);
       setCopiedType("url");
       setTimeout(() => setCopiedType(null), 2000);
     } catch {
@@ -73,9 +76,10 @@ export default function ExternalPlayerModal({
   };
 
   const handleCopyMpvCmd = async () => {
-    if (!meta.url) return;
+    const rawUrl = extractDirectStreamUrl(meta.url);
+    if (!rawUrl) return;
     try {
-      const cmd = buildMpvCommandLine(meta);
+      const cmd = buildMpvCommandLine({ ...meta, url: rawUrl });
       await navigator.clipboard.writeText(cmd);
       setCopiedType("cmd");
       setTimeout(() => setCopiedType(null), 2000);
@@ -85,7 +89,8 @@ export default function ExternalPlayerModal({
   };
 
   const handleDownloadM3U = () => {
-    downloadM3UPlaylist(meta);
+    const rawUrl = extractDirectStreamUrl(meta.url);
+    downloadM3UPlaylist({ ...meta, url: rawUrl });
     setStatusMsg("Downloaded .m3u playlist file");
     setTimeout(() => setStatusMsg(null), 2500);
   };

@@ -94,11 +94,48 @@ export function setAlwaysExternalPlayer(val: boolean): void {
   localStorage.setItem("nuvio.always_external_player", val ? "true" : "false");
 }
 
+export function extractDirectStreamUrl(inputUrl?: string | null): string {
+  if (!inputUrl) return "";
+  let raw = inputUrl.trim();
+
+  // If it's a streamProxy URL, extract the actual upstream target streaming URL
+  if (raw.includes("/api/streamProxy")) {
+    try {
+      const dummyOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+      const parsed = new URL(raw, dummyOrigin);
+      const targetParam = parsed.searchParams.get("url");
+      if (targetParam) {
+        raw = decodeURIComponent(targetParam);
+      }
+    } catch (_) {
+      const match = raw.match(/[?&]url=([^&]+)/);
+      if (match && match[1]) {
+        raw = decodeURIComponent(match[1]);
+      }
+    }
+  }
+
+  // Handle double-encoded URLs (e.g. https%3A%2F%2F...)
+  if (raw.startsWith("http%3A") || raw.startsWith("https%3A")) {
+    try {
+      raw = decodeURIComponent(raw);
+    } catch (_) {}
+  }
+
+  // If relative path without proxy, make it an absolute URL using current origin
+  if (raw.startsWith("/") && typeof window !== "undefined") {
+    return `${window.location.origin}${raw}`;
+  }
+
+  return raw;
+}
+
 /**
  * Generates an Extended M3U playlist file content with all playback metadata.
  * MPV, VLC, PotPlayer, and IINA natively parse #EXTINF and #EXTVLCOPT / #EXT-MPV-OPTIONS.
  */
 export function buildM3UContent(meta: ExternalPlayerMediaMeta): string {
+  const url = extractDirectStreamUrl(meta.url);
   const title = meta.title || "Stream";
   const startTime = meta.currentTime && meta.currentTime > 0 ? Math.floor(meta.currentTime) : 0;
   const lines = [
@@ -116,7 +153,7 @@ export function buildM3UContent(meta: ExternalPlayerMediaMeta): string {
     lines.push(`#EXT-MPV-OPTIONS:--sub-file=${meta.subtitleUrl}`);
   }
 
-  lines.push(meta.url);
+  lines.push(url);
   return lines.join("\n") + "\n";
 }
 
@@ -145,7 +182,7 @@ export function buildPlayerProtocolUrl(
   playerId: ExternalPlayerId,
   meta: ExternalPlayerMediaMeta
 ): string {
-  const url = meta.url;
+  const url = extractDirectStreamUrl(meta.url);
   const title = meta.title || "Stream";
   const startTime = meta.currentTime && meta.currentTime > 0 ? Math.floor(meta.currentTime) : 0;
   const subUrl = meta.subtitleUrl;
@@ -153,17 +190,14 @@ export function buildPlayerProtocolUrl(
 
   switch (playerId) {
     case "mpv": {
-      // Direct mpv:// protocol handler.
-      // mpv natively strips mpv:// and plays the URL.
-      // For mpv-handler, query parameters like ?url=...&title=...&start=... are passed.
-      if (startTime > 0 || subUrl || title) {
-        let params = `url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
-        if (startTime > 0) params += `&start=${startTime}`;
-        if (subUrl) params += `&sub_file=${encodeURIComponent(subUrl)}`;
-        // mpv-handler format
-        return `mpv://play/?${params}`;
+      // Standard mpv registered in OS (Windows: "mpv.exe" "%1", macOS, Linux).
+      // mpv natively recognizes mpv://http:// and mpv://https://, strips the "mpv://" prefix,
+      // and plays the stream URL directly with hardware acceleration!
+      // (Using mpv://play/?url=... breaks standard mpv installations with "No file - mpv").
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        return `mpv://${url}`;
       }
-      return `mpv://${url}`;
+      return `mpv://https://${url}`;
     }
 
     case "vlc": {
@@ -172,7 +206,10 @@ export function buildPlayerProtocolUrl(
         if (subUrl) vlcMac += `&sub=${encodeURIComponent(subUrl)}`;
         return vlcMac;
       }
-      return `vlc://${url}`;
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        return `vlc://${url}`;
+      }
+      return `vlc://https://${url}`;
     }
 
     case "potplayer": {
@@ -200,8 +237,9 @@ export function buildPlayerProtocolUrl(
  * Copies the ready-to-run terminal mpv command line to clipboard.
  */
 export function buildMpvCommandLine(meta: ExternalPlayerMediaMeta): string {
+  const url = extractDirectStreamUrl(meta.url);
   const startTime = meta.currentTime && meta.currentTime > 0 ? Math.floor(meta.currentTime) : 0;
-  let cmd = `mpv "${meta.url}"`;
+  let cmd = `mpv "${url}"`;
   if (meta.title) cmd += ` --title="${meta.title}"`;
   if (startTime > 0) cmd += ` --start=${startTime}`;
   if (meta.subtitleUrl) cmd += ` --sub-file="${meta.subtitleUrl}"`;
@@ -215,16 +253,22 @@ export function launchExternalPlayer(
   playerId: ExternalPlayerId,
   meta: ExternalPlayerMediaMeta
 ): { success: boolean; message: string } {
-  if (!meta.url) {
+  const directUrl = extractDirectStreamUrl(meta.url);
+  if (!directUrl) {
     return { success: false, message: "No stream URL available" };
   }
 
+  const sanitizedMeta: ExternalPlayerMediaMeta = {
+    ...meta,
+    url: directUrl,
+  };
+
   if (playerId === "system") {
-    downloadM3UPlaylist(meta);
+    downloadM3UPlaylist(sanitizedMeta);
     return { success: true, message: "Handed off to System Default Player (.m3u)" };
   }
 
-  const targetUrl = buildPlayerProtocolUrl(playerId, meta);
+  const targetUrl = buildPlayerProtocolUrl(playerId, sanitizedMeta);
 
   try {
     // Hidden anchor click avoids opening empty about:blank browser tabs

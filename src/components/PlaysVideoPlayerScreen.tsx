@@ -14,6 +14,7 @@ import {
   ExternalPlayerMediaMeta,
   getDefaultExternalPlayer,
   launchExternalPlayer,
+  extractDirectStreamUrl,
 } from "@/lib/externalPlayer";
 import { PlaysVideoEngine } from "playsvideo";
 
@@ -1528,18 +1529,31 @@ EventDump: ${JSON.stringify(collected)}`;
       const match = addonSubtitles.find((s) => s.id === activeExternalSub);
       if (match?.url) subUrl = match.url;
     }
+
+    let bestUrl = "";
+    if (resolvedSrc && typeof resolvedSrc === "string") {
+      bestUrl = extractDirectStreamUrl(resolvedSrc);
+    }
+    if (!bestUrl && streamUrl) {
+      try {
+        bestUrl = extractDirectStreamUrl(decodeURIComponent(streamUrl));
+      } catch (_) {
+        bestUrl = extractDirectStreamUrl(streamUrl);
+      }
+    }
+
     return {
-      url: typeof resolvedSrc === "string" ? resolvedSrc : "",
+      url: bestUrl,
       title,
       currentTime: currentTime,
       duration: duration,
       subtitleUrl: subUrl,
     };
-  }, [resolvedSrc, currentTime, duration, activeExternalSub, addonSubtitles, season, episode, resolvedTmdbId]);
+  }, [resolvedSrc, streamUrl, currentTime, duration, activeExternalSub, addonSubtitles, season, episode, resolvedTmdbId]);
 
   const handleOpenExternally = useCallback(
     (forceModal: boolean = false) => {
-      if (!resolvedSrc || typeof resolvedSrc !== "string") return;
+      if (!externalMediaMeta.url) return;
       const defaultPlayer = getDefaultExternalPlayer();
 
       if (forceModal || defaultPlayer === "chooser") {
@@ -1549,7 +1563,7 @@ EventDump: ${JSON.stringify(collected)}`;
 
       launchExternalPlayer(defaultPlayer, externalMediaMeta);
     },
-    [resolvedSrc, externalMediaMeta]
+    [externalMediaMeta]
   );
 
   const handleAudioChange = (id: number) => {
@@ -2253,7 +2267,7 @@ EventDump: ${JSON.stringify(collected)}`;
                   e.preventDefault();
                   handleOpenExternally(true);
                 }}
-                disabled={!resolvedSrc}
+                disabled={!externalMediaMeta.url}
                 className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-lg disabled:opacity-50 cursor-pointer"
                 title={`Open in external player (${getDefaultExternalPlayer() === "system" ? "System Default" : getDefaultExternalPlayer()}) — Right-click for options`}
               >
