@@ -5,8 +5,12 @@ import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://nuvio-web.vercel.app");
+
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://nuvio-web-enhanced.vercel.app"),
+  metadataBase: new URL(siteUrl),
   title: "Nuvio — Stream Anything",
   description: "Your personal media hub. Browse catalogs, manage addons, and play in a powerful in-browser player.",
   icons: {

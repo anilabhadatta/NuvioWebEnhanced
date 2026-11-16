@@ -10,7 +10,6 @@ import {
   updateLibraryCategory,
   addToLibrary,
   isInLibrary,
-  restoreVerifiedSavedItems,
 } from "@/lib/library";
 import { TMDBMovie, TMDB_IMAGE_W500, tmdb, TMDB_API_KEY } from "@/lib/tmdb";
 import MovieModal from "./MovieModal";
@@ -148,7 +147,6 @@ export default function LibraryView() {
     return () => clearTimeout(timer);
   }, [addSearchQuery]);
 
-  const [restoring, setRestoring] = useState(false);
   const [failedPosters, setFailedPosters] = useState<Record<string, boolean>>({});
 
   const handleCardClick = (item: LibraryItem) => {
@@ -180,7 +178,7 @@ export default function LibraryView() {
     if (!itemToDelete) return;
     setIsDeleting(true);
     try {
-      await removeFromLibrary(itemToDelete.id);
+      await removeFromLibrary(itemToDelete.id, itemToDelete.title);
       setItemToDelete(null);
     } finally {
       setIsDeleting(false);
@@ -262,28 +260,6 @@ export default function LibraryView() {
               <span className="text-[10px] text-emerald-400 mt-1.5 font-medium">{lastSyncedText}</span>
             </div>
           </div>
-
-          {/* Restore & Repair Saved Movies Button */}
-          <button
-            onClick={async () => {
-              setRestoring(true);
-              try {
-                const restored = await restoreVerifiedSavedItems();
-                setItems(restored);
-                setLastSyncedText("Synced just now");
-              } finally {
-                setRestoring(false);
-              }
-            }}
-            disabled={restoring}
-            className="flex items-center gap-1.5 bg-orange-500/15 hover:bg-orange-500/25 border border-orange-500/30 text-orange-400 font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer hover:scale-105 disabled:opacity-50"
-            title="Restore and re-sync verified metadata and posters for your library"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-3.5 h-3.5 ${restoring ? "animate-spin" : ""}`}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-            </svg>
-            <span>{restoring ? "Syncing..." : "Repair & Sync Library"}</span>
-          </button>
 
           {/* Add to Library Button */}
           <button
@@ -434,7 +410,7 @@ export default function LibraryView() {
           ) : displayedItems.length > 0 ? (
             /* Populated Cards Grid */
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {displayedItems.map((item) => {
+              {displayedItems.map((item, idx) => {
                 const badge = getCategoryBadge(item.category);
                 const rawPoster = item.posterPath || item.backdropPath;
                 const imgSrc = rawPoster?.startsWith("http")
@@ -442,11 +418,13 @@ export default function LibraryView() {
                   : rawPoster
                   ? `${TMDB_IMAGE_W500}${rawPoster}`
                   : null;
-                const year = item.releaseDate ? item.releaseDate.slice(0, 4) : "";
+                const year = item.releaseDate
+                  ? String(item.releaseDate).match(/\b(19\d\d|20\d\d)\b/)?.[1] || String(item.releaseDate).slice(0, 4)
+                  : "";
 
                 return (
                   <div
-                    key={item.id}
+                    key={`lib-${item.id || item.imdbId || item.title}-${idx}`}
                     onClick={() => handleCardClick(item)}
                     className="group relative bg-[#181818] border border-white/5 hover:border-white/20 rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl flex flex-col"
                   >
@@ -457,7 +435,6 @@ export default function LibraryView() {
                           src={imgSrc}
                           alt={item.title}
                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                          crossOrigin="anonymous"
                           loading="lazy"
                           onError={() => setFailedPosters((prev) => ({ ...prev, [String(item.id)]: true }))}
                         />
@@ -606,34 +583,15 @@ export default function LibraryView() {
                   ? "Try searching for a different movie, series, or anime."
                   : "Save your favorite movies, TV shows, and anime to keep track of what you want to watch across all your devices."}
               </p>
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <div className="flex items-center justify-center">
                 <button
                   onClick={() => {
                     setAddSearchQuery("");
                     setShowAddModal(true);
                   }}
-                  className="bg-white hover:bg-gray-200 text-black font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg cursor-pointer hover:scale-105"
+                  className="bg-white hover:bg-gray-200 text-black font-bold text-xs px-6 py-3 rounded-xl transition-all shadow-lg cursor-pointer hover:scale-105"
                 >
                   + Add Media to Library
-                </button>
-                <button
-                  onClick={async () => {
-                    setRestoring(true);
-                    try {
-                      const restored = await restoreVerifiedSavedItems();
-                      setItems(restored);
-                      setLastSyncedText("Synced just now");
-                    } finally {
-                      setRestoring(false);
-                    }
-                  }}
-                  disabled={restoring}
-                  className="bg-orange-500/15 hover:bg-orange-500/25 border border-orange-500/40 text-orange-400 font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg cursor-pointer hover:scale-105 flex items-center gap-2"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-3.5 h-3.5 ${restoring ? "animate-spin" : ""}`}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                  </svg>
-                  {restoring ? "Restoring to Cloud..." : "Restore Saved Library (6 Movies)"}
                 </button>
               </div>
             </div>
@@ -699,8 +657,8 @@ export default function LibraryView() {
             <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
               {addSearchResults.length > 0 ? (
                 addSearchResults.map((m) => {
-                  const isSaved = isInLibrary(m.id);
                   const title = m.title || m.name || "";
+                  const isSaved = isInLibrary(m.id, title);
                   const year = (m.release_date || m.first_air_date || "").slice(0, 4);
                   const isTv = m.media_type === "tv";
                   const poster = m.poster_path ? `${TMDB_IMAGE_W500}${m.poster_path}` : null;

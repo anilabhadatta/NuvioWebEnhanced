@@ -49,8 +49,9 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
   const [libraryBusy, setLibraryBusy] = useState(false);
 
   useEffect(() => {
+    const movieTitle = movie.title || movie.name || "";
     const checkLib = () => {
-      const item = getLibraryItem(movie.id);
+      const item = getLibraryItem(movie.id, movieTitle);
       if (item) {
         setInLibrary(true);
         setLibraryCat(item.category);
@@ -67,12 +68,13 @@ export default function MovieModal({ movie, onClose, onPlay }: MovieModalProps) 
 
   const handleToggleLibrary = async (preferredCat?: LibraryCategory) => {
     const targetCat = preferredCat || libraryCat || autoDetectCategory(movie);
+    const movieTitle = movie.title || movie.name || "";
     setShowCategoryMenu(false);
     setLibraryBusy(true);
     try {
       if (inLibrary && !preferredCat) {
         setInLibrary(false);
-        await removeFromLibrary(movie.id);
+        await removeFromLibrary(movie.id, movieTitle);
       } else {
         setInLibrary(true);
         setLibraryCat(targetCat);

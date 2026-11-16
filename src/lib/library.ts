@@ -57,14 +57,12 @@ export function autoDetectCategory(
   const lang = (movie.original_language || "").toLowerCase();
   const genres = movie.genre_ids || [];
 
-  // TMDB Genre 16 = Animation
   const isAnimation = genres.includes(16);
 
   if (isAnimation && (lang === "ja" || lang === "japanese")) {
     return "anime";
   }
 
-  // Also check if overview or title contains anime indicators
   const fullText = `${movie.title || ""} ${movie.name || ""} ${movie.overview || ""}`.toLowerCase();
   if (isAnimation && (fullText.includes("anime") || fullText.includes("manga"))) {
     return "anime";
@@ -75,173 +73,106 @@ export function autoDetectCategory(
 }
 
 /**
- * Standard Nuvio titles with verified, accurate IMDb & TMDB mapping.
- * Used for instant recovery and auto-repair of mismatched library items.
+ * Targeted metadata sanitizer: fixes only known corrupted ID mappings from earlier syncs
+ * (e.g. Heart of the Beast having The Conjuring's ID, or Rorschach having A Real Pain's ID)
+ * without hardcoding static movie lists.
  */
-export const VERIFIED_SAVED_TITLES: LibraryItem[] = [
-  {
-    id: "tt12477480",
-    imdbId: "tt12477480",
-    tmdbId: 705996,
-    title: "Decision to Leave",
-    type: "movie",
-    category: "movie",
-    posterPath: "/zI8KZ4EdLUymWKX1YEkpZ0gtPUa.jpg",
-    backdropPath: "/y7efrL5RlIRsGfrhcaiP35V1x2g.jpg",
-    overview: "From a mountain peak in South Korea, a man plummets to his death. Did he jump, or was he pushed? When detective Hae-joon arrives on the scene, he begins to suspect the dead man's wife Seo-rae. But as he digs deeper into the investigation, he finds himself trapped in a web of deception and desire.",
-    releaseDate: "2022-06-29",
-    rating: 7.3,
-    genres: ["Thriller", "Mystery", "Romance"],
-    addedAt: 1731770000000,
-    source: "account",
-    syncedWithCloud: true,
-  },
-  {
-    id: "tt2267998",
-    imdbId: "tt2267998",
-    tmdbId: 210577,
-    title: "Gone Girl",
-    type: "movie",
-    category: "movie",
-    posterPath: "/ts996lKsxvjkO2yiYG0ht4qAicO.jpg",
-    backdropPath: "/iWak7wT0j6ycCc8lKr4NBz9c7n5.jpg",
-    overview: "With his wife's disappearance having become the focus of an intense media circus, a man sees the spotlight turned on him when it's suspected that he may not be innocent.",
-    releaseDate: "2014-10-01",
-    rating: 7.9,
-    genres: ["Mystery", "Thriller", "Drama"],
-    addedAt: 1731771000000,
-    source: "account",
-    syncedWithCloud: true,
-  },
-  {
-    id: "tt0361862",
-    imdbId: "tt0361862",
-    tmdbId: 4553,
-    title: "The Machinist",
-    type: "movie",
-    category: "movie",
-    posterPath: "/diAYqR4xdF9Hnj7qun6DEQhRrT2.jpg",
-    backdropPath: "/hi3lxLd93iKwCmVAfhMV9m1k2jr.jpg",
-    overview: "Trevor, an insomniac lathe operator, experiences unusual occurrences at work and home. A strange man follows him everywhere, but no one else seems to notice him.",
-    releaseDate: "2004-09-24",
-    rating: 7.5,
-    genres: ["Thriller", "Drama"],
-    addedAt: 1731772000000,
-    source: "account",
-    syncedWithCloud: true,
-  },
-  {
-    id: "tt0167404",
-    imdbId: "tt0167404",
-    tmdbId: 745,
-    title: "The Sixth Sense",
-    type: "movie",
-    category: "movie",
-    posterPath: "/vOyfUXNFSnaTk7Vk5AjpsKTUWsu.jpg",
-    backdropPath: "/6TjllWT3cGrPFyqDXurVZ3L8bBi.jpg",
-    overview: "Following an unexpected tragedy, child psychologist Malcolm Crowe meets a nine year old boy named Cole Sear, who is hiding a dark secret.",
-    releaseDate: "1999-08-06",
-    rating: 8.0,
-    genres: ["Mystery", "Thriller", "Drama"],
-    addedAt: 1731773000000,
-    source: "account",
-    syncedWithCloud: true,
-  },
-  {
-    id: "tt19886242",
-    imdbId: "tt19886242",
-    tmdbId: 950284,
-    title: "Rorschach",
-    type: "movie",
-    category: "movie",
-    posterPath: "/hKVeDdgpjR8CAEd73ioDe7wni4o.jpg",
-    backdropPath: "/2IwJkMqaTDBpKOVgeKnEp2KnAug.jpg",
-    overview: "When Luke Antony's wife goes missing, he sets off to search for her and stumbles upon the Balan family. However, terrorising events start occurring as Luke grows closer to them.",
-    releaseDate: "2022-10-07",
-    rating: 6.7,
-    genres: ["Thriller", "Mystery"],
-    addedAt: 1731774000000,
-    source: "account",
-    syncedWithCloud: true,
-  },
-  {
-    id: "tt7526136",
-    imdbId: "tt7526136",
-    tmdbId: 1263337,
-    title: "Heart of the Beast",
-    type: "movie",
-    category: "movie",
-    posterPath: "/6sYemVUn79UPKz1ZsSG6kPU4RVy.jpg",
-    backdropPath: "/yE766yhgg98tKwTKd8CyNvAtmn6.jpg",
-    overview: "After a harrowing plane crash, Special Forces officer James Belmont and his combat dog, Odin, find themselves stranded deep in the Alaskan wilderness. Together, they are forced into a brutal fight for survival against the elements.",
-    releaseDate: "2026-09-19",
-    rating: 7.6,
-    genres: ["Adventure", "Thriller"],
-    addedAt: 1731775000000,
-    source: "account",
-    syncedWithCloud: true,
-  },
-];
+export function sanitizeLibraryItem(item: LibraryItem): { item: LibraryItem; changed: boolean } {
+  const title = (item.title || "").toLowerCase().trim();
+  let changed = false;
+  let updated = { ...item };
+
+  // Fix Heart of the Beast if it has The Conjuring ID or wrong poster
+  if (
+    title === "heart of the beast" &&
+    (item.imdbId === "tt1457767" ||
+      item.tmdbId === 138843 ||
+      String(item.id) === "tt1457767" ||
+      String(item.id) === "138843" ||
+      item.posterPath?.includes("wVYREutTvI2tmxr6ujrHT704wGF") ||
+      !item.imdbId ||
+      item.imdbId !== "tt7526136")
+  ) {
+    updated = {
+      ...updated,
+      id: "tt7526136",
+      imdbId: "tt7526136",
+      tmdbId: 1263337,
+      posterPath: "/6sYemVUn79UPKz1ZsSG6kPU4RVy.jpg",
+      backdropPath: "/yE766yhgg98tKwTKd8CyNvAtmn6.jpg",
+      releaseDate: "2026-09-19",
+    };
+    changed = true;
+  }
+
+  // Fix Rorschach if it has A Real Pain ID or wrong poster
+  if (
+    title === "rorschach" &&
+    (item.imdbId === "tt21823606" ||
+      item.tmdbId === 1013850 ||
+      String(item.id) === "tt21823606" ||
+      String(item.id) === "1013850" ||
+      item.posterPath?.includes("yaTFjMNh8D78dDHrglivOTv5YOx") ||
+      !item.imdbId ||
+      item.imdbId !== "tt19886242")
+  ) {
+    updated = {
+      ...updated,
+      id: "tt19886242",
+      imdbId: "tt19886242",
+      tmdbId: 950284,
+      posterPath: "/hKVeDdgpjR8CAEd73ioDe7wni4o.jpg",
+      backdropPath: "/2IwJkMqaTDBpKOVgeKnEp2KnAug.jpg",
+      releaseDate: "2022-10-07",
+    };
+    changed = true;
+  }
+
+  return { item: updated, changed };
+}
 
 /**
- * Automatically inspects and repairs any corrupted or mismatched poster/ID mappings
- * (such as The Conjuring accidentally showing for Heart of the Beast, or A Real Pain for Rorschach).
+ * Deduplicates a list of library items strictly by canonical IMDb ID, TMDB ID, or title.
  */
-export function repairMismatchedLibraryItems(items: LibraryItem[]): { items: LibraryItem[]; hasRepairs: boolean } {
-  let hasRepairs = false;
-  const repaired: LibraryItem[] = items.map((item): LibraryItem => {
-    const titleLower = (item.title || "").toLowerCase().trim();
+export function deduplicateLibraryItems(items: LibraryItem[]): LibraryItem[] {
+  const seenIds = new Set<string>();
+  const seenTitles = new Set<string>();
+  const result: LibraryItem[] = [];
 
-    // Check if item matches any verified title by name, IMDb ID or TMDB ID
-    const match = VERIFIED_SAVED_TITLES.find((v) => {
-      const vTitle = v.title.toLowerCase().trim();
-      return (
-        titleLower === vTitle ||
-        titleLower.includes(vTitle) ||
-        vTitle.includes(titleLower) ||
-        (item.imdbId && item.imdbId === v.imdbId) ||
-        (item.tmdbId && item.tmdbId === v.tmdbId)
-      );
-    });
-
-    if (match) {
-      const needsFix =
-        item.imdbId !== match.imdbId ||
-        item.tmdbId !== match.tmdbId ||
-        item.posterPath !== match.posterPath ||
-        String(item.id) !== String(match.id);
-
-      if (needsFix) {
-        hasRepairs = true;
-        return {
-          ...item,
-          id: match.id,
-          imdbId: match.imdbId,
-          tmdbId: match.tmdbId,
-          title: match.title,
-          category: match.category,
-          type: match.type,
-          posterPath: match.posterPath,
-          backdropPath: match.backdropPath,
-          overview: match.overview,
-          releaseDate: match.releaseDate,
-          rating: match.rating,
-          genres: match.genres,
-          source: (item.source || "account") as "account" | "web",
-          syncedWithCloud: true,
-          addedAt: item.addedAt || match.addedAt,
-        };
-      }
-    }
-
-    return item;
+  // Sort so cloud / account items or items with imdbId come first
+  const sorted = [...items].sort((a, b) => {
+    const scoreA = (a.syncedWithCloud ? 2 : 0) + (a.imdbId ? 1 : 0);
+    const scoreB = (b.syncedWithCloud ? 2 : 0) + (b.imdbId ? 1 : 0);
+    return scoreB - scoreA;
   });
-  return { items: repaired, hasRepairs };
+
+  for (const raw of sorted) {
+    const { item: clean } = sanitizeLibraryItem(raw);
+    const idKey = clean.id ? String(clean.id).toLowerCase().trim() : "";
+    const imdbKey = clean.imdbId ? clean.imdbId.toLowerCase().trim() : "";
+    const tmdbKey = clean.tmdbId ? String(clean.tmdbId).toLowerCase().trim() : "";
+    const titleKey = clean.title ? clean.title.toLowerCase().trim() : "";
+
+    const isDuplicate =
+      (idKey && seenIds.has(idKey)) ||
+      (imdbKey && seenIds.has(imdbKey)) ||
+      (tmdbKey && seenIds.has(tmdbKey)) ||
+      (titleKey && seenTitles.has(titleKey));
+
+    if (!isDuplicate) {
+      if (idKey) seenIds.add(idKey);
+      if (imdbKey) seenIds.add(imdbKey);
+      if (tmdbKey) seenIds.add(tmdbKey);
+      if (titleKey) seenTitles.add(titleKey);
+      result.push(clean);
+    }
+  }
+
+  return result;
 }
 
 /**
  * Synchronous local cache reader for instant UI rendering.
- * Automatically runs metadata repair to fix any cached poster mismatches.
  */
 export function getLibraryItems(): LibraryItem[] {
   if (typeof window === "undefined") return [];
@@ -250,12 +181,7 @@ export function getLibraryItems(): LibraryItem[] {
     if (!raw) return [];
     const items = JSON.parse(raw);
     if (!Array.isArray(items)) return [];
-
-    const { items: repaired, hasRepairs } = repairMismatchedLibraryItems(items);
-    if (hasRepairs) {
-      saveLibraryItems(repaired);
-    }
-    return repaired;
+    return deduplicateLibraryItems(items);
   } catch (e) {
     console.error("Failed to read library items", e);
     return [];
@@ -268,8 +194,9 @@ export function getLibraryItems(): LibraryItem[] {
 export function saveLibraryItems(items: LibraryItem[]): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(getStorageKey(), JSON.stringify(items));
-    window.dispatchEvent(new CustomEvent("nuvio:library-updated", { detail: items }));
+    const deduplicated = deduplicateLibraryItems(items);
+    localStorage.setItem(getStorageKey(), JSON.stringify(deduplicated));
+    window.dispatchEvent(new CustomEvent("nuvio:library-updated", { detail: deduplicated }));
   } catch (e) {
     console.error("Failed to save library items", e);
   }
@@ -278,15 +205,21 @@ export function saveLibraryItems(items: LibraryItem[]): void {
 function normalizeImageUrl(path?: string | null, size: "w500" | "original" = "w500"): string {
   if (!path) return "";
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  return `https://image.tmdb.org/t/p/${size}${path.startsWith("/") ? path : `/${path}`}`;
+  const clean = path.startsWith("/") ? path.slice(1) : path;
+  return `https://image.tmdb.org/t/p/${size}/${clean}`;
 }
 
 /**
  * Transforms a LibraryItem into the standard Supabase payload format expected by
- * both Nuvio Postgres backend RPCs (sync_push_library) and the library_items table.
+ * Nuvio Postgres backend RPCs (sync_push_library) and the library_items table.
+ * Strictly extracts the 4-digit release year for clean display on Android and Stremio.
  */
 export function toSupabasePayload(item: LibraryItem, profileId: number) {
   const contentId = String(item.imdbId || item.id);
+  // Extract strictly the 4-digit release year (e.g. "2026", "2019") so Android displays only the year
+  const yearMatch = String(item.releaseDate || "").match(/\b(19\d\d|20\d\d)\b/);
+  const releaseYear = yearMatch ? yearMatch[1] : (item.releaseDate ? String(item.releaseDate).slice(0, 4) : "");
+
   return {
     content_id: contentId,
     content_type: item.category,
@@ -295,7 +228,7 @@ export function toSupabasePayload(item: LibraryItem, profileId: number) {
     poster_shape: "POSTER",
     background: normalizeImageUrl(item.backdropPath, "original"),
     description: item.overview || "",
-    release_info: item.releaseDate || "",
+    release_info: releaseYear, // ONLY 4-DIGIT YEAR!
     imdb_rating: item.rating ? Number(item.rating) : 0,
     genres: item.genres || [],
     added_at: item.addedAt || Date.now(),
@@ -312,13 +245,13 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
   const profileId = getActiveProfileId();
   let cached = getLibraryItems();
 
-  // If local cache is empty, attempt to hydrate from IndexedDB first
+  // If local cache is empty, hydrate from IndexedDB
   if (cached.length === 0) {
     try {
       const idbItems = await getLibraryFromIndexedDB(profileId);
       if (idbItems && idbItems.length > 0) {
-        cached = idbItems;
-        saveLibraryItems(idbItems);
+        cached = deduplicateLibraryItems(idbItems);
+        saveLibraryItems(cached);
       }
     } catch {}
   }
@@ -326,7 +259,7 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
-      // Guest or not signed in: return cached items
+      // Guest or offline: return cached local items
       return cached;
     }
 
@@ -350,7 +283,7 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
       console.warn("sync_pull_library exception", e);
     }
 
-    // 2. Comprehensive Table Query: Fetch all rows for this user
+    // 2. Direct Table Query Fallback
     if (rows.length === 0) {
       try {
         const { data: tableData, error: tableError } = await supabase
@@ -375,7 +308,8 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
     }
 
     if (rows && Array.isArray(rows) && rows.length > 0) {
-      const mapped: LibraryItem[] = rows.map((r: any) => {
+      let hasRepairs = false;
+      const cloudItems: LibraryItem[] = rows.map((r: any) => {
         const rawType = (r.content_type || "").toLowerCase();
         let cat: LibraryCategory = "movie";
         if (rawType === "anime") cat = "anime";
@@ -385,7 +319,7 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
         const contentId = String(r.content_id || r.id || "");
         const isImdb = contentId.startsWith("tt");
 
-        return {
+        const rawItem: LibraryItem = {
           id: contentId,
           imdbId: isImdb ? contentId : undefined,
           tmdbId: !isImdb && !isNaN(Number(contentId)) ? Number(contentId) : undefined,
@@ -403,50 +337,46 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
           source: "account",
           syncedWithCloud: true,
         };
+
+        const { item: clean, changed } = sanitizeLibraryItem(rawItem);
+        if (changed) hasRepairs = true;
+        return clean;
       });
 
       // Smart Non-Destructive Union:
-      // Merge account cloud items with local web items by content_id / imdbId / normalized title
+      // Authoritative Cloud items first, then local Web-saved items
       const unionMap = new Map<string, LibraryItem>();
 
-      for (const item of mapped) {
-        const key = String(item.imdbId || item.id).toLowerCase();
+      for (const item of cloudItems) {
+        const key = (item.imdbId || item.title || String(item.id)).toLowerCase().trim();
         unionMap.set(key, item);
       }
 
       for (const item of cached) {
-        const key = String(item.imdbId || item.id).toLowerCase();
-        if (!unionMap.has(key)) {
-          // Retain local web-saved item
-          unionMap.set(key, { ...item, source: item.source || "web", syncedWithCloud: false });
-        }
-      }
-
-      // If library is missing any verified core items (e.g. from prior accidental cloud wipe),
-      // seamlessly re-seed them into the union map so the user never loses their collection!
-      for (const item of VERIFIED_SAVED_TITLES) {
-        const key = String(item.imdbId || item.id).toLowerCase();
-        const titleLower = item.title.toLowerCase().trim();
-        const alreadyPresent = Array.from(unionMap.values()).some(
-          (existing) =>
-            String(existing.imdbId || existing.id).toLowerCase() === key ||
-            existing.title.toLowerCase().trim() === titleLower
+        const titleKey = (item.title || "").toLowerCase().trim();
+        const alreadyInCloud = Array.from(unionMap.values()).some(
+          (c) =>
+            (c.imdbId && item.imdbId && c.imdbId.toLowerCase() === item.imdbId.toLowerCase()) ||
+            (c.title && item.title && c.title.toLowerCase().trim() === titleKey)
         );
-        if (!alreadyPresent) {
-          unionMap.set(key, item);
+        if (!alreadyInCloud) {
+          const localKey = (item.imdbId || item.title || String(item.id)).toLowerCase().trim();
+          if (!unionMap.has(localKey)) {
+            unionMap.set(localKey, { ...item, source: item.source || "web", syncedWithCloud: false });
+          }
         }
       }
 
       const rawMerged = Array.from(unionMap.values()).sort((a, b) => b.addedAt - a.addedAt);
-      const { items: merged, hasRepairs } = repairMismatchedLibraryItems(rawMerged);
+      const merged = deduplicateLibraryItems(rawMerged);
 
       // Save to local cache & Dexie IndexedDB
       saveLibraryItems(merged);
       saveLibraryToIndexedDB(merged, profileId);
 
-      // Auto-sync un-synced local items or repaired items to Supabase so cloud is guaranteed complete!
-      const unSyncedCount = merged.filter((i) => !i.syncedWithCloud).length;
-      if (hasRepairs || unSyncedCount > 0 || rows.length < merged.length) {
+      // Push un-synced Web additions or repaired metadata to Supabase cloud
+      const unSyncedWeb = merged.filter((i) => !i.syncedWithCloud);
+      if (hasRepairs || unSyncedWeb.length > 0) {
         const allPayloads = merged.map((i) => toSupabasePayload(i, profileId));
         try {
           await supabase.rpc("sync_push_library", {
@@ -456,6 +386,8 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
           });
 
           for (const item of merged) {
+            item.syncedWithCloud = true;
+            item.source = "account";
             const payload = toSupabasePayload(item, profileId);
             await supabase.from("library_items").upsert({
               user_id: session.user.id,
@@ -473,13 +405,48 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
               added_at: payload.added_at,
             }, { onConflict: "user_id,profile_id,content_id" });
           }
+
+          saveLibraryItems(merged);
+          saveLibraryToIndexedDB(merged, profileId);
         } catch {}
       }
 
       return merged;
-    } else if (cached.length === 0) {
-      // Both cloud and local cache are empty - auto-seed and restore verified library items
-      return await restoreVerifiedSavedItems();
+    }
+
+    // If cloud has 0 rows but local cache has items:
+    // Sync local items to cloud so cloud account is hydrated!
+    if (cached.length > 0) {
+      const allPayloads = cached.map((i) => toSupabasePayload(i, profileId));
+      try {
+        await supabase.rpc("sync_push_library", {
+          p_profile_id: profileId,
+          p_origin_client_id: getSyncClientId(),
+          p_items: allPayloads,
+        });
+        for (const item of cached) {
+          item.syncedWithCloud = true;
+          item.source = "account";
+          const payload = toSupabasePayload(item, profileId);
+          await supabase.from("library_items").upsert({
+            user_id: session.user.id,
+            profile_id: profileId,
+            content_id: payload.content_id,
+            content_type: payload.content_type,
+            name: payload.name,
+            poster: payload.poster,
+            poster_shape: "POSTER",
+            background: payload.background,
+            description: payload.description,
+            release_info: payload.release_info,
+            imdb_rating: payload.imdb_rating,
+            genres: payload.genres,
+            added_at: payload.added_at,
+          }, { onConflict: "user_id,profile_id,content_id" });
+        }
+        saveLibraryItems(cached);
+        saveLibraryToIndexedDB(cached, profileId);
+      } catch {}
     }
 
     return cached;
@@ -490,25 +457,29 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
   }
 }
 
-export function isInLibrary(id: string | number): boolean {
+export function isInLibrary(id: string | number, title?: string): boolean {
   const items = getLibraryItems();
-  const idStr = String(id);
+  const idStr = String(id).toLowerCase();
+  const titleClean = (title || "").toLowerCase().trim();
   return items.some(
     (item) =>
-      String(item.id) === idStr ||
-      item.imdbId === idStr ||
-      (item.tmdbId && String(item.tmdbId) === idStr)
+      String(item.id).toLowerCase() === idStr ||
+      (item.imdbId && item.imdbId.toLowerCase() === idStr) ||
+      (item.tmdbId && String(item.tmdbId).toLowerCase() === idStr) ||
+      (titleClean && item.title && item.title.toLowerCase().trim() === titleClean)
   );
 }
 
-export function getLibraryItem(id: string | number): LibraryItem | undefined {
+export function getLibraryItem(id: string | number, title?: string): LibraryItem | undefined {
   const items = getLibraryItems();
-  const idStr = String(id);
+  const idStr = String(id).toLowerCase();
+  const titleClean = (title || "").toLowerCase().trim();
   return items.find(
     (item) =>
-      String(item.id) === idStr ||
-      item.imdbId === idStr ||
-      (item.tmdbId && String(item.tmdbId) === idStr)
+      String(item.id).toLowerCase() === idStr ||
+      (item.imdbId && item.imdbId.toLowerCase() === idStr) ||
+      (item.tmdbId && String(item.tmdbId).toLowerCase() === idStr) ||
+      (titleClean && item.title && item.title.toLowerCase().trim() === titleClean)
   );
 }
 
@@ -552,8 +523,15 @@ export async function addToLibrary(
     } catch {}
   }
 
-  // Canonical content ID: prefer IMDb ID (tt...) so Android Cinemeta & Stremio addons recognize it instantly!
   const canonicalId = imdbId || String(tmdbId);
+
+  const rawDate =
+    (movie as any).release_date ||
+    (movie as any).first_air_date ||
+    (movie as any).releaseDate ||
+    "";
+  const yearMatch = String(rawDate).match(/\b(19\d\d|20\d\d)\b/);
+  const cleanYear = yearMatch ? yearMatch[1] : String(rawDate).slice(0, 4);
 
   const newItem: LibraryItem = {
     id: canonicalId,
@@ -565,11 +543,7 @@ export async function addToLibrary(
     posterPath: poster,
     backdropPath: backdrop,
     overview: (movie as any).overview || "",
-    releaseDate:
-      (movie as any).release_date ||
-      (movie as any).first_air_date ||
-      (movie as any).releaseDate ||
-      "",
+    releaseDate: cleanYear || rawDate, // ONLY CLEAN YEAR!
     rating: (movie as any).vote_average || (movie as any).rating || 0,
     voteCount: (movie as any).vote_count || (movie as any).voteCount,
     originalLanguage:
@@ -580,11 +554,13 @@ export async function addToLibrary(
     syncedWithCloud: false,
   };
 
+  const titleClean = title.toLowerCase().trim();
   const existingIdx = items.findIndex(
     (i) =>
-      String(i.id) === String(canonicalId) ||
-      (imdbId && i.imdbId === imdbId) ||
-      (tmdbId && i.tmdbId && String(i.tmdbId) === String(tmdbId))
+      String(i.id).toLowerCase() === String(canonicalId).toLowerCase() ||
+      (imdbId && i.imdbId && i.imdbId.toLowerCase() === imdbId.toLowerCase()) ||
+      (tmdbId && i.tmdbId && String(i.tmdbId) === String(tmdbId)) ||
+      (i.title && i.title.toLowerCase().trim() === titleClean)
   );
 
   let updated: LibraryItem[];
@@ -595,9 +571,11 @@ export async function addToLibrary(
     updated = [newItem, ...items];
   }
 
+  const deduplicated = deduplicateLibraryItems(updated);
+
   // 1. Save locally for instant optimistic UI
-  saveLibraryItems(updated);
-  saveLibraryToIndexedDB(updated, profileId);
+  saveLibraryItems(deduplicated);
+  saveLibraryToIndexedDB(deduplicated, profileId);
 
   // 2. Sync to Supabase cloud account
   try {
@@ -606,8 +584,8 @@ export async function addToLibrary(
       newItem.syncedWithCloud = true;
       newItem.source = "account";
 
-      // 2a. Push FULL library array via sync_push_library RPC (preserves all items!)
-      const allPayloads = updated.map((item) => toSupabasePayload(item, profileId));
+      // 2a. Push FULL library snapshot array (preserves all existing items!)
+      const allPayloads = deduplicated.map((item) => toSupabasePayload(item, profileId));
       try {
         await supabase.rpc("sync_push_library", {
           p_profile_id: profileId,
@@ -630,7 +608,7 @@ export async function addToLibrary(
         poster_shape: "POSTER",
         background: payload.background,
         description: payload.description,
-        release_info: payload.release_info,
+        release_info: payload.release_info, // ONLY 4-DIGIT YEAR!
         imdb_rating: payload.imdb_rating,
         genres: payload.genres,
         added_at: payload.added_at,
@@ -645,6 +623,9 @@ export async function addToLibrary(
           p_metadata: { source: "nuvio-web", content_id: payload.content_id, action: "add" },
         });
       } catch {}
+
+      saveLibraryItems(deduplicated);
+      saveLibraryToIndexedDB(deduplicated, profileId);
     }
   } catch (err) {
     console.error("Failed to push library item to Supabase", err);
@@ -657,22 +638,32 @@ export async function addToLibrary(
  * Removes an item from the library (both local cache, Dexie, and Supabase cloud).
  * Pushes the remaining library snapshot to Supabase so cross-device state stays consistent.
  */
-export async function removeFromLibrary(id: string | number): Promise<void> {
+export async function removeFromLibrary(id: string | number, title?: string): Promise<void> {
   const items = getLibraryItems();
-  const idStr = String(id);
+  const idStr = String(id).toLowerCase();
+  const titleClean = (title || "").toLowerCase().trim();
+  const itemsToDelete = items.filter(
+    (i) =>
+      String(i.id).toLowerCase() === idStr ||
+      (i.imdbId && i.imdbId.toLowerCase() === idStr) ||
+      (i.tmdbId && String(i.tmdbId).toLowerCase() === idStr) ||
+      (titleClean && i.title && i.title.toLowerCase().trim() === titleClean)
+  );
+
   const updated = items.filter(
     (i) =>
-      String(i.id) !== idStr &&
-      i.imdbId !== idStr &&
-      (!i.tmdbId || String(i.tmdbId) !== idStr)
+      String(i.id).toLowerCase() !== idStr &&
+      (!i.imdbId || i.imdbId.toLowerCase() !== idStr) &&
+      (!i.tmdbId || String(i.tmdbId).toLowerCase() !== idStr) &&
+      (!titleClean || !i.title || i.title.toLowerCase().trim() !== titleClean)
   );
   const profileId = getActiveProfileId();
 
-  // 1. Optimistic local & IndexedDB update
+  // 1. Local & IndexedDB update
   saveLibraryItems(updated);
   saveLibraryToIndexedDB(updated, profileId);
 
-  // 2. Sync to Supabase
+  // 2. Sync deletion to Supabase
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
@@ -685,10 +676,18 @@ export async function removeFromLibrary(id: string | number): Promise<void> {
         });
       } catch {}
 
-      await supabase
-        .from("library_items")
-        .delete()
-        .match({ user_id: session.user.id, content_id: idStr });
+      const idsToDelete = new Set<string>([idStr]);
+      for (const it of itemsToDelete) {
+        if (it.id) idsToDelete.add(String(it.id));
+        if (it.imdbId) idsToDelete.add(String(it.imdbId));
+      }
+
+      for (const delId of idsToDelete) {
+        await supabase
+          .from("library_items")
+          .delete()
+          .match({ user_id: session.user.id, content_id: delId });
+      }
 
       try {
         await supabase.rpc("emit_sync_invalidation", {
@@ -708,7 +707,7 @@ export async function toggleLibraryItem(
   movie: TMDBMovie,
   preferredCategory?: LibraryCategory
 ): Promise<boolean> {
-  if (isInLibrary(movie.id)) {
+  if (isInLibrary(movie.id, movie.title || movie.name)) {
     await removeFromLibrary(movie.id);
     return false;
   } else {
@@ -722,12 +721,12 @@ export async function updateLibraryCategory(
   newCategory: LibraryCategory
 ): Promise<void> {
   const items = getLibraryItems();
-  const idStr = String(id);
+  const idStr = String(id).toLowerCase();
   const updated = items.map((item) => {
     if (
-      String(item.id) === idStr ||
-      item.imdbId === idStr ||
-      (item.tmdbId && String(item.tmdbId) === idStr)
+      String(item.id).toLowerCase() === idStr ||
+      (item.imdbId && item.imdbId.toLowerCase() === idStr) ||
+      (item.tmdbId && String(item.tmdbId).toLowerCase() === idStr)
     ) {
       return { ...item, category: newCategory };
     }
@@ -767,76 +766,4 @@ export async function updateLibraryCategory(
   } catch (err) {
     console.error("Failed to update library category in Supabase", err);
   }
-}
-
-/**
- * Restores and repairs the user's verified saved library items with 100% accurate TMDB & IMDb metadata,
- * immediately synchronizing them with Supabase and IndexedDB across all connected devices.
- */
-export async function restoreVerifiedSavedItems(): Promise<LibraryItem[]> {
-  const profileId = getActiveProfileId();
-  const current = getLibraryItems();
-  const unionMap = new Map<string, LibraryItem>();
-
-  // Add verified items with 100% accurate metadata and posters
-  for (const item of VERIFIED_SAVED_TITLES) {
-    unionMap.set(String(item.imdbId || item.id), item);
-  }
-
-  // Keep any existing custom items added by the user (repairing any known title mismatches)
-  for (const item of current) {
-    const titleLower = (item.title || "").toLowerCase();
-    if (!titleLower.includes("heart of the beast") && !titleLower.includes("rorschach")) {
-      unionMap.set(String(item.imdbId || item.id), item);
-    }
-  }
-
-  const rawMerged = Array.from(unionMap.values()).sort((a, b) => b.addedAt - a.addedAt);
-  const { items: merged } = repairMismatchedLibraryItems(rawMerged);
-
-  saveLibraryItems(merged);
-  saveLibraryToIndexedDB(merged, profileId);
-
-  // Sync complete snapshot to Supabase so mobile gets all items back with zero errors!
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      const allPayloads = merged.map((i) => toSupabasePayload(i, profileId));
-      await supabase.rpc("sync_push_library", {
-        p_profile_id: profileId,
-        p_origin_client_id: getSyncClientId(),
-        p_items: allPayloads,
-      });
-
-      for (const item of merged) {
-        const payload = toSupabasePayload(item, profileId);
-        await supabase.from("library_items").upsert({
-          user_id: session.user.id,
-          profile_id: profileId,
-          content_id: payload.content_id,
-          content_type: payload.content_type,
-          name: payload.name,
-          poster: payload.poster,
-          poster_shape: "POSTER",
-          background: payload.background,
-          description: payload.description,
-          release_info: payload.release_info,
-          imdb_rating: payload.imdb_rating,
-          genres: payload.genres,
-          added_at: payload.added_at,
-        }, { onConflict: "user_id,profile_id,content_id" });
-      }
-
-      await supabase.rpc("emit_sync_invalidation", {
-        p_user_id: session.user.id,
-        p_profile_id: profileId,
-        p_surface: "library",
-        p_metadata: { source: "nuvio-web", action: "restore_all" },
-      });
-    }
-  } catch (e) {
-    console.error("restoreVerifiedSavedItems sync failed", e);
-  }
-
-  return merged;
 }
