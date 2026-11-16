@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 import Sidebar from "./Sidebar";
 import { config } from "@/lib/config";
 import { useAuth } from "@/lib/useAuth";
+import { useProfiles } from "@/lib/useProfiles";
+import ProfileAvatar from "./ProfileAvatar";
 import AddonsSection from "./settings/AddonsSection";
 import PluginsSection from "./settings/PluginsSection";
 import ProfilesSection from "./settings/ProfilesSection";
@@ -27,6 +29,7 @@ const CATEGORIES = [
 export default function SettingsScreen() {
   const router = useRouter();
   const { displayName } = useAuth();
+  const { activeProfile } = useProfiles();
   const [active, setActive] = useState("profiles");
 
   const handleSignOut = async () => {
@@ -66,12 +69,17 @@ export default function SettingsScreen() {
               <h2 className="text-2xl font-bold text-white mb-8">Account</h2>
               <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl p-6">
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="w-14 h-14 rounded-full bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-white font-bold text-xl">
-                    {(displayName?.trim()?.[0] || "A").toUpperCase()}
-                  </div>
+                  <ProfileAvatar
+                    profile={activeProfile}
+                    name={displayName}
+                    size={56}
+                    className="text-xl font-bold shadow-lg"
+                  />
                   <div>
-                    <p className="text-white font-semibold">{displayName}</p>
-                    <p className="text-[#888] text-sm">Signed in</p>
+                    <p className="text-white font-semibold text-lg">{activeProfile?.name || displayName}</p>
+                    <p className="text-[#888] text-sm">
+                      {activeProfile ? `Profile #${activeProfile.profile_index} • Signed in` : "Signed in"}
+                    </p>
                   </div>
                 </div>
                 <button

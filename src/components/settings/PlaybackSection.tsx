@@ -363,17 +363,19 @@ export default function PlaybackSection() {
         </div>
       </div>
 
+      <p className="text-xs font-bold text-[#666] uppercase tracking-widest mb-3">External player</p>
       <div className="bg-[#1a1a1a] border border-white/5 rounded-2xl divide-y divide-white/5 mb-8">
         {/* Default External Player */}
         <div className="p-5">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <p className="text-white font-semibold text-sm">Default External Player</p>
-              <p className="text-[#888] text-xs mt-0.5">
-                Choose the external media player to launch when clicking &quot;Open externally&quot;.
+              <p className="text-white font-semibold text-sm">External player</p>
+              <p className="text-[#888] text-xs mt-1">
+                When playing, use the &quot;Open externally&quot; option to copy the stream link or hand it off to a
+                desktop player (VLC, PotPlayer, mpv, IINA) via protocol links or your OS default player.
               </p>
             </div>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-orange-500/10 text-orange-400 border border-orange-500/20">
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-orange-500/10 text-orange-400 border border-orange-500/20 shrink-0 ml-4">
               Win / Mac / Linux
             </span>
           </div>

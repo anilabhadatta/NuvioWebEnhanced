@@ -61,23 +61,79 @@ export function setActiveProfileId(index: number) {
 export async function pullProfiles(): Promise<NuvioProfile[]> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
+    if (!session) {
+      // Fallback to local cache so localhost and offline retain saved profiles
+      if (typeof window !== "undefined") {
+        try {
+          const cached = localStorage.getItem("nuvio_profiles_cache");
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          }
+        } catch {}
+      }
+      return [];
+    }
     const { data, error } = await supabase.rpc("sync_pull_profiles");
     if (error) {
       handleInvalidTokenError(error);
+      if (typeof window !== "undefined") {
+        try {
+          const cached = localStorage.getItem("nuvio_profiles_cache");
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        } catch {}
+      }
       return [];
     }
-    if (!data) return [];
-    return (data as NuvioProfile[]).sort((a, b) => a.profile_index - b.profile_index);
+    if (!data || !Array.isArray(data)) return [];
+    const sorted = (data as NuvioProfile[]).sort((a, b) => a.profile_index - b.profile_index);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("nuvio_profiles_cache", JSON.stringify(sorted));
+      } catch {}
+    }
+    return sorted;
   } catch (e) {
     console.error("pullProfiles failed", e);
     handleInvalidTokenError(e);
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("nuvio_profiles_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+    }
     return [];
   }
 }
 
 export async function pushProfiles(profiles: ProfilePushPayload[]): Promise<boolean> {
+  // Always update local cache for instant UI responsiveness
+  if (typeof window !== "undefined") {
+    try {
+      const localProfiles: NuvioProfile[] = profiles.map((p) => ({
+        profile_index: p.profile_index,
+        name: p.name,
+        avatar_color_hex: p.avatar_color_hex,
+        avatar_id: p.avatar_id,
+        avatar_url: p.avatar_url,
+        uses_primary_addons: p.uses_primary_addons,
+        uses_primary_plugins: p.uses_primary_plugins,
+      }));
+      localStorage.setItem("nuvio_profiles_cache", JSON.stringify(localProfiles));
+      window.dispatchEvent(new CustomEvent("nuvio:profile-changed", { detail: getActiveProfileId() }));
+    } catch {}
+  }
+
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return true; // Local mode succeeded
+
     const { error } = await supabase.rpc("sync_push_profiles", {
       p_client_max_profiles: MAX_PROFILES,
       p_profiles: profiles,
@@ -99,6 +155,8 @@ export async function createProfile(
   existing: NuvioProfile[],
   name: string,
   avatarColorHex: string,
+  avatarId?: string | null,
+  avatarUrl?: string | null,
 ): Promise<boolean> {
   const used = new Set(existing.map((p) => p.profile_index));
   let nextIndex = 0;
@@ -116,7 +174,13 @@ export async function createProfile(
     avatar_id: p.avatar_id,
     avatar_url: p.avatar_url,
   }));
-  payloads.push({ profile_index: nextIndex, name, avatar_color_hex: avatarColorHex });
+  payloads.push({
+    profile_index: nextIndex,
+    name,
+    avatar_color_hex: avatarColorHex,
+    avatar_id: avatarId || null,
+    avatar_url: avatarUrl || null,
+  });
   return pushProfiles(payloads);
 }
 
@@ -125,25 +189,54 @@ export async function updateProfile(
   profileIndex: number,
   name: string,
   avatarColorHex: string,
+  avatarId?: string | null,
+  avatarUrl?: string | null,
 ): Promise<boolean> {
   const payloads: ProfilePushPayload[] = existing.map((p) =>
     p.profile_index === profileIndex
-      ? { profile_index: profileIndex, name, avatar_color_hex: avatarColorHex,
-          uses_primary_addons: p.uses_primary_addons, uses_primary_plugins: p.uses_primary_plugins,
-          avatar_id: p.avatar_id, avatar_url: p.avatar_url }
-      : { profile_index: p.profile_index, name: p.name, avatar_color_hex: p.avatar_color_hex,
-          uses_primary_addons: p.uses_primary_addons, uses_primary_plugins: p.uses_primary_plugins,
-          avatar_id: p.avatar_id, avatar_url: p.avatar_url },
+      ? {
+          profile_index: profileIndex,
+          name,
+          avatar_color_hex: avatarColorHex,
+          uses_primary_addons: p.uses_primary_addons,
+          uses_primary_plugins: p.uses_primary_plugins,
+          avatar_id: avatarId !== undefined ? avatarId : p.avatar_id,
+          avatar_url: avatarUrl !== undefined ? avatarUrl : p.avatar_url,
+        }
+      : {
+          profile_index: p.profile_index,
+          name: p.name,
+          avatar_color_hex: p.avatar_color_hex,
+          uses_primary_addons: p.uses_primary_addons,
+          uses_primary_plugins: p.uses_primary_plugins,
+          avatar_id: p.avatar_id,
+          avatar_url: p.avatar_url,
+        },
   );
   return pushProfiles(payloads);
 }
 
 export async function deleteProfile(profileIndex: number): Promise<boolean> {
+  // Update local cache first
+  if (typeof window !== "undefined") {
+    try {
+      const cached = localStorage.getItem("nuvio_profiles_cache");
+      if (cached) {
+        const list: NuvioProfile[] = JSON.parse(cached);
+        const filtered = list.filter((p) => p.profile_index !== profileIndex);
+        localStorage.setItem("nuvio_profiles_cache", JSON.stringify(filtered));
+      }
+    } catch {}
+  }
+
   try {
-    const { error } = await supabase.rpc("sync_delete_profile_data", { p_profile_id: profileIndex });
-    if (error) {
-      console.error("deleteProfile failed", error);
-      return false;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      const { error } = await supabase.rpc("sync_delete_profile_data", { p_profile_id: profileIndex });
+      if (error) {
+        console.error("deleteProfile failed", error);
+        return false;
+      }
     }
     if (getActiveProfileId() === profileIndex) setActiveProfileId(1);
     return true;

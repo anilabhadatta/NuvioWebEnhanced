@@ -7,6 +7,7 @@ import {
   setActiveProfileId as persistActiveProfileId,
   pullProfiles,
 } from "./profiles";
+import { supabase } from "./supabase";
 
 export interface ProfilesState {
   profiles: NuvioProfile[];
@@ -24,7 +25,10 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     if (typeof window !== "undefined") {
       try {
         const cached = localStorage.getItem("nuvio_profiles_cache");
-        if (cached) return JSON.parse(cached);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
       } catch {}
     }
     return [];
@@ -40,28 +44,65 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     const list = await pullProfiles();
-    setProfiles(list);
+    if (list && list.length > 0) {
+      setProfiles(list);
+      try {
+        localStorage.setItem("nuvio_profiles_cache", JSON.stringify(list));
+      } catch {}
+    } else {
+      // Retain existing cached profiles if network/auth hasn't finished hydrating
+      try {
+        const cached = localStorage.getItem("nuvio_profiles_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) setProfiles(parsed);
+        }
+      } catch {}
+    }
     setLoading(false);
-    try {
-      localStorage.setItem("nuvio_profiles_cache", JSON.stringify(list));
-    } catch {}
   }, []);
 
   useEffect(() => {
     try {
       const cached = localStorage.getItem("nuvio_profiles_cache");
-      if (cached) setProfiles(JSON.parse(cached));
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) setProfiles(parsed);
+      }
     } catch {}
 
     setActiveProfileId(getActiveProfileId());
     refresh();
 
-    const onChange = () => setActiveProfileId(getActiveProfileId());
+    const onChange = () => {
+      setActiveProfileId(getActiveProfileId());
+      try {
+        const cached = localStorage.getItem("nuvio_profiles_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) setProfiles(parsed);
+        }
+      } catch {}
+    };
     window.addEventListener("nuvio:profile-changed", onChange);
     window.addEventListener("storage", onChange);
+
+    // Auto-refresh when user signs in or session hydrates on localhost!
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        refresh();
+      } else if (event === "SIGNED_OUT") {
+        setProfiles([]);
+        try {
+          localStorage.removeItem("nuvio_profiles_cache");
+        } catch {}
+      }
+    });
+
     return () => {
       window.removeEventListener("nuvio:profile-changed", onChange);
       window.removeEventListener("storage", onChange);
+      sub.subscription.unsubscribe();
     };
   }, [refresh]);
 
@@ -70,7 +111,7 @@ export function ProfilesProvider({ children }: { children: React.ReactNode }) {
     setActiveProfileId(index);
   }, []);
 
-  const activeProfile = profiles.find((p) => p.profile_index === activeProfileId) ?? null;
+  const activeProfile = profiles.find((p) => p.profile_index === activeProfileId) || profiles[0] || null;
   const value = { profiles, activeProfileId, activeProfile, loading, refresh, switchProfile };
 
   return React.createElement(ProfilesContext.Provider, { value }, children);
@@ -111,29 +152,64 @@ export function useProfiles(): ProfilesState {
   const refresh = useCallback(async () => {
     setLoading(true);
     const list = await pullProfiles();
-    setProfiles(list);
+    if (list && list.length > 0) {
+      setProfiles(list);
+      try {
+        localStorage.setItem("nuvio_profiles_cache", JSON.stringify(list));
+      } catch {}
+    } else {
+      try {
+        const cached = localStorage.getItem("nuvio_profiles_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) setProfiles(parsed);
+        }
+      } catch {}
+    }
     setLoading(false);
-    try {
-      localStorage.setItem("nuvio_profiles_cache", JSON.stringify(list));
-    } catch {}
   }, []);
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     try {
       const cached = localStorage.getItem("nuvio_profiles_cache");
-      if (cached) setProfiles(JSON.parse(cached));
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) setProfiles(parsed);
+      }
     } catch {}
 
     setActiveProfileId(getActiveProfileId());
     refresh();
 
-    const onChange = () => setActiveProfileId(getActiveProfileId());
+    const onChange = () => {
+      setActiveProfileId(getActiveProfileId());
+      try {
+        const cached = localStorage.getItem("nuvio_profiles_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) setProfiles(parsed);
+        }
+      } catch {}
+    };
     window.addEventListener("nuvio:profile-changed", onChange);
     window.addEventListener("storage", onChange);
+
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        refresh();
+      } else if (event === "SIGNED_OUT") {
+        setProfiles([]);
+        try {
+          localStorage.removeItem("nuvio_profiles_cache");
+        } catch {}
+      }
+    });
+
     return () => {
       window.removeEventListener("nuvio:profile-changed", onChange);
       window.removeEventListener("storage", onChange);
+      sub.subscription.unsubscribe();
     };
   }, [refresh]);
 
@@ -143,7 +219,7 @@ export function useProfiles(): ProfilesState {
     setActiveProfileId(index);
   }, []);
 
-  const activeProfile = profiles.find((p) => p.profile_index === activeProfileId) ?? null;
+  const activeProfile = profiles.find((p) => p.profile_index === activeProfileId) || profiles[0] || null;
 
   return { profiles, activeProfileId, activeProfile, loading, refresh, switchProfile };
 }

@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { config } from "@/lib/config";
 import { useAuth } from "@/lib/useAuth";
 import { useProfiles } from "@/lib/useProfiles";
+import ProfileAvatar from "@/components/ProfileAvatar";
 
 const NAV_ITEMS = [
   {
@@ -87,19 +88,22 @@ export default function Sidebar() {
       {/* User profile at top - with profile quick-switcher */}
       <div className="relative border-b border-white/5">
         <div className="flex items-center gap-3 p-5 pb-4">
-          <div
-            className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 cursor-pointer overflow-hidden"
-            style={{ background: avatarColor || "linear-gradient(to bottom right, #fb923c, #ec4899)" }}
+          <ProfileAvatar
+            profile={activeProfile}
+            name={shownName}
+            size={36}
+            className="cursor-pointer hover:scale-105 transition-transform"
             onClick={() => router.push(isAuthenticated ? "/settings" : "/login")}
-          >
-            {avatarInitial}
-          </div>
+          />
           <button
             className="flex-1 flex items-center justify-between min-w-0 group"
-            onClick={() => { if (isAuthenticated && profiles.length > 0) setProfileMenuOpen((o) => !o); else router.push(isAuthenticated ? "/settings" : "/login"); }}
+            onClick={() => {
+              if (profiles.length > 1) setProfileMenuOpen((o) => !o);
+              else router.push(isAuthenticated ? "/settings" : "/login");
+            }}
           >
             <span className="text-[15px] font-semibold text-white truncate">{shownName}</span>
-            {isAuthenticated && profiles.length > 1 && (
+            {profiles.length > 1 && (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-4 h-4 text-[#888] transition-transform ${profileMenuOpen ? "rotate-180" : ""}`}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
               </svg>
@@ -115,9 +119,11 @@ export default function Sidebar() {
                 onClick={() => { switchProfile(p.profile_index); setProfileMenuOpen(false); }}
                 className={`flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-white/5 transition-colors ${p.profile_index === activeProfileId ? "bg-white/5" : ""}`}
               >
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs shrink-0" style={{ background: p.avatar_color_hex }}>
-                  {(p.name?.trim()?.[0] || "?").toUpperCase()}
-                </div>
+                <ProfileAvatar
+                  profile={p}
+                  size={28}
+                  className="shrink-0"
+                />
                 <span className="text-sm text-white truncate flex-1">{p.name || `Profile ${p.profile_index}`}</span>
                 {p.profile_index === activeProfileId && (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-4 h-4 text-green-400 shrink-0">
