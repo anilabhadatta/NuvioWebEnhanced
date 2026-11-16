@@ -10,6 +10,7 @@ import {
   updateLibraryCategory,
   addToLibrary,
   isInLibrary,
+  deduplicateLibraryItems,
 } from "@/lib/library";
 import { TMDBMovie, TMDB_IMAGE_W500, tmdb, TMDB_API_KEY } from "@/lib/tmdb";
 import MovieModal from "./MovieModal";
@@ -96,9 +97,9 @@ export default function LibraryView() {
     };
   }, [items]);
 
-  // Filtered and sorted items
+  // Filtered and sorted items with guaranteed deduplication
   const displayedItems = useMemo(() => {
-    let list = items;
+    let list = deduplicateLibraryItems(items);
     if (activeCategory !== "all") {
       list = list.filter((i) => i.category === activeCategory);
     }
@@ -423,7 +424,7 @@ export default function LibraryView() {
 
                 return (
                   <div
-                    key={`lib-${item.id || item.imdbId || item.title}-${idx}`}
+                    key={`lib-${item.id || item.imdbId || item.title}-${item.source || 'acc'}-${idx}`}
                     onClick={() => handleCardClick(item)}
                     className="group relative bg-[#181818] border border-white/5 hover:border-white/20 rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl flex flex-col"
                   >
@@ -435,6 +436,7 @@ export default function LibraryView() {
                           alt={item.title}
                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                           loading="lazy"
+                          referrerPolicy="no-referrer"
                           onError={() => setFailedPosters((prev) => ({ ...prev, [String(item.id)]: true }))}
                         />
                       ) : (

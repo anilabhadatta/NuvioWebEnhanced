@@ -14,12 +14,12 @@ export default function SearchPage() {
   const [selectedMovie, setSelectedMovie] = useState<TMDBMovie | null>(null);
   const [failedPosters, setFailedPosters] = useState<Record<string, boolean>>({});
 
-  // 1. Restore search state from sessionStorage if query was non-empty
+  // 1. Restore search state only when returning from an opened movie modal
   useEffect(() => {
     const q = sessionStorage.getItem("lastSearchQuery");
     const r = sessionStorage.getItem("lastSearchResults");
     const m = sessionStorage.getItem("lastOpenedMovie");
-    if (q && q.trim()) {
+    if (m && q && q.trim()) {
       setQuery(q);
       if (r) {
         try {
@@ -174,6 +174,7 @@ export default function SearchPage() {
                             alt={title}
                             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                             loading="lazy"
+                            referrerPolicy="no-referrer"
                             onError={() =>
                               setFailedPosters((prev) => ({ ...prev, [String(movie.id)]: true }))
                             }

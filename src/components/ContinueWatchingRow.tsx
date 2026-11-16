@@ -365,7 +365,7 @@ export default function ContinueWatchingRow({ first }: { first?: boolean }) {
                         alt={title_}
                         className="w-full h-full object-cover transition-opacity duration-700 opacity-0"
                         loading="lazy"
-                        crossOrigin="anonymous"
+                        referrerPolicy="no-referrer"
                         onLoad={(e) => (e.currentTarget.style.opacity = '1')}
                         ref={(img) => { if (img?.complete) { img.style.transition = 'none'; img.style.opacity = '1'; } }}
                       />

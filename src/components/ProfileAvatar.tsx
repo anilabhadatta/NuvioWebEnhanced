@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { NuvioProfile } from "@/lib/profiles";
 import { getAvatarPreset } from "@/lib/avatarPresets";
 import { config } from "@/lib/config";
@@ -26,37 +26,29 @@ export default function ProfileAvatar({
   className = "",
   onClick,
 }: ProfileAvatarProps) {
+  const [mounted, setMounted] = useState(false);
   const [imgError, setImgError] = useState(false);
 
-  // Compute resolved attributes
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Compute resolved attributes dynamically from Nuvio account / profile
   const profileName = name || profile?.name || "Account";
   const initial = (profileName.trim()?.[0] || "A").toUpperCase();
   const bg = colorHex || profile?.avatar_color_hex || "linear-gradient(135deg, #fb923c, #ec4899)";
   const rawUrl = avatarUrl !== undefined ? avatarUrl : profile?.avatar_url;
   const rawId = avatarId !== undefined ? avatarId : profile?.avatar_id;
 
-  // Check if rawId is a known built-in preset or infer from name if unset
-  let preset = getAvatarPreset(rawId);
-  if (!preset && !rawUrl && !rawId) {
-    const lower = profileName.toLowerCase();
-    if (lower.includes("astronaut") || lower.includes("space")) preset = getAvatarPreset("astronaut");
-    else if (lower.includes("tv")) preset = getAvatarPreset("tv");
-    else if (lower.includes("anime")) preset = getAvatarPreset("anime");
-    else if (lower.includes("film") || lower.includes("movie") || lower.includes("cinema")) preset = getAvatarPreset("film");
-    else if (lower.includes("game") || lower.includes("play")) preset = getAvatarPreset("gamepad");
-    else if (lower.includes("cat") || lower.includes("pet") || lower.includes("kid")) preset = getAvatarPreset("cat");
-    else if (lower.includes("popcorn")) preset = getAvatarPreset("popcorn");
-    else if (lower.includes("rocket")) preset = getAvatarPreset("rocket");
-    else if (lower.includes("nuvio")) preset = getAvatarPreset("nuvio");
-  }
+  const preset = getAvatarPreset(rawId);
 
-  // Determine image source URL if any
+  // Determine dynamic image source URL directly from account / profile
   let resolvedImgUrl: string | null = null;
-  if (rawUrl && rawUrl.trim()) {
+  if (rawUrl && typeof rawUrl === "string" && rawUrl.trim()) {
     resolvedImgUrl = rawUrl.trim();
-  } else if (rawId && !preset) {
+  } else if (rawId && typeof rawId === "string" && !preset) {
     if (rawId.startsWith("http://") || rawId.startsWith("https://")) {
-      resolvedImgUrl = rawId;
+      resolvedImgUrl = rawId.trim();
     } else {
       const baseUrl = config.avatarPublicBaseUrl || "https://api.nuvio.tv/storage/v1/object/public/avatars";
       resolvedImgUrl = `${baseUrl}/${rawId}${rawId.includes(".") ? "" : ".png"}`;
@@ -76,12 +68,11 @@ export default function ProfileAvatar({
       suppressHydrationWarning
       className={`rounded-full flex items-center justify-center text-white shrink-0 overflow-hidden relative select-none shadow-md ${className}`}
     >
-      {resolvedImgUrl && !imgError ? (
+      {mounted && resolvedImgUrl && !imgError ? (
         <img
           src={resolvedImgUrl}
           alt={profileName}
           className="w-full h-full object-cover"
-          crossOrigin="anonymous"
           onError={() => setImgError(true)}
         />
       ) : preset ? (

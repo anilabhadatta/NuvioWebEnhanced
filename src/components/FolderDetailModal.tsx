@@ -149,7 +149,7 @@ export default function FolderDetailModal({ folder, onClose, onSelectMovie }: Fo
                         alt={meta.name}
                         className="w-full h-full object-cover"
                         loading="lazy"
-                        crossOrigin="anonymous"
+                        referrerPolicy="no-referrer"
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-center p-3 text-xs text-gray-500 font-semibold">

@@ -91,16 +91,18 @@ export function sanitizeLibraryItem(item: LibraryItem): { item: LibraryItem; cha
       String(item.id) === "138843" ||
       item.posterPath?.includes("wVYREutTvI2tmxr6ujrHT704wGF") ||
       !item.imdbId ||
-      item.imdbId !== "tt7526136")
+      item.imdbId !== "tt7526136" ||
+      item.releaseDate !== "2026")
   ) {
     updated = {
       ...updated,
       id: "tt7526136",
       imdbId: "tt7526136",
       tmdbId: 1263337,
+      title: "Heart of the Beast",
       posterPath: "/6sYemVUn79UPKz1ZsSG6kPU4RVy.jpg",
       backdropPath: "/yE766yhgg98tKwTKd8CyNvAtmn6.jpg",
-      releaseDate: "2026-09-19",
+      releaseDate: "2026",
     };
     changed = true;
   }
@@ -114,18 +116,29 @@ export function sanitizeLibraryItem(item: LibraryItem): { item: LibraryItem; cha
       String(item.id) === "1013850" ||
       item.posterPath?.includes("yaTFjMNh8D78dDHrglivOTv5YOx") ||
       !item.imdbId ||
-      item.imdbId !== "tt19886242")
+      item.imdbId !== "tt19886242" ||
+      item.releaseDate !== "2022")
   ) {
     updated = {
       ...updated,
       id: "tt19886242",
       imdbId: "tt19886242",
       tmdbId: 950284,
+      title: "Rorschach",
       posterPath: "/hKVeDdgpjR8CAEd73ioDe7wni4o.jpg",
       backdropPath: "/2IwJkMqaTDBpKOVgeKnEp2KnAug.jpg",
-      releaseDate: "2022-10-07",
+      releaseDate: "2022",
     };
     changed = true;
+  }
+
+  // Ensure releaseDate is clean 4-digit year everywhere
+  if (updated.releaseDate) {
+    const yearMatch = String(updated.releaseDate).match(/\b(19\d\d|20\d\d)\b/);
+    if (yearMatch && updated.releaseDate !== yearMatch[1]) {
+      updated.releaseDate = yearMatch[1];
+      changed = true;
+    }
   }
 
   return { item: updated, changed };
@@ -210,6 +223,35 @@ function normalizeImageUrl(path?: string | null, size: "w500" | "original" = "w5
 }
 
 /**
+ * Helper to safely upsert library items into Supabase library_items table,
+ * trying both composite index variations to guarantee cross-device persistence with Android.
+ */
+async function syncItemRowToSupabase(sessionUserId: string, profileId: number, payload: ReturnType<typeof toSupabasePayload>) {
+  const row = {
+    user_id: sessionUserId,
+    profile_id: profileId,
+    content_id: payload.content_id,
+    content_type: payload.content_type,
+    name: payload.name,
+    poster: payload.poster,
+    poster_shape: "POSTER",
+    background: payload.background,
+    description: payload.description,
+    release_info: payload.release_info, // ONLY 4-DIGIT YEAR!
+    imdb_rating: payload.imdb_rating,
+    genres: payload.genres,
+    added_at: payload.added_at,
+  };
+
+  try {
+    const { error } = await supabase.from("library_items").upsert(row, { onConflict: "user_id,profile_id,content_id" });
+    if (error) {
+      await supabase.from("library_items").upsert(row, { onConflict: "user_id,content_id" });
+    }
+  } catch {}
+}
+
+/**
  * Transforms a LibraryItem into the standard Supabase payload format expected by
  * Nuvio Postgres backend RPCs (sync_push_library) and the library_items table.
  * Strictly extracts the 4-digit release year for clean display on Android and Stremio.
@@ -220,9 +262,13 @@ export function toSupabasePayload(item: LibraryItem, profileId: number) {
   const yearMatch = String(item.releaseDate || "").match(/\b(19\d\d|20\d\d)\b/);
   const releaseYear = yearMatch ? yearMatch[1] : (item.releaseDate ? String(item.releaseDate).slice(0, 4) : "");
 
+  // Stremio / Cinemeta / Android compatibility:
+  // Content type in Supabase MUST be "movie" or "series" so Cinemeta can provide metadata on mobile without "No addon provides meta" error
+  const stremioType = item.type === "series" || item.category === "series" ? "series" : "movie";
+
   return {
     content_id: contentId,
-    content_type: item.category,
+    content_type: stremioType,
     name: item.title,
     poster: normalizeImageUrl(item.posterPath, "w500"),
     poster_shape: "POSTER",
@@ -374,9 +420,9 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
       saveLibraryItems(merged);
       saveLibraryToIndexedDB(merged, profileId);
 
-      // Push un-synced Web additions or repaired metadata to Supabase cloud
+      // Push un-synced Web additions, repaired metadata, or complete library snapshot when forceRemote is true
       const unSyncedWeb = merged.filter((i) => !i.syncedWithCloud);
-      if (hasRepairs || unSyncedWeb.length > 0) {
+      if (hasRepairs || unSyncedWeb.length > 0 || forceRemote) {
         const allPayloads = merged.map((i) => toSupabasePayload(i, profileId));
         try {
           await supabase.rpc("sync_push_library", {
@@ -389,26 +435,14 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
             item.syncedWithCloud = true;
             item.source = "account";
             const payload = toSupabasePayload(item, profileId);
-            await supabase.from("library_items").upsert({
-              user_id: session.user.id,
-              profile_id: profileId,
-              content_id: payload.content_id,
-              content_type: payload.content_type,
-              name: payload.name,
-              poster: payload.poster,
-              poster_shape: "POSTER",
-              background: payload.background,
-              description: payload.description,
-              release_info: payload.release_info,
-              imdb_rating: payload.imdb_rating,
-              genres: payload.genres,
-              added_at: payload.added_at,
-            }, { onConflict: "user_id,profile_id,content_id" });
+            await syncItemRowToSupabase(session.user.id, profileId, payload);
           }
 
           saveLibraryItems(merged);
           saveLibraryToIndexedDB(merged, profileId);
-        } catch {}
+        } catch (e) {
+          console.warn("sync_push_library / table upsert exception", e);
+        }
       }
 
       return merged;
@@ -428,25 +462,13 @@ export async function pullLibraryItems(forceRemote = false): Promise<LibraryItem
           item.syncedWithCloud = true;
           item.source = "account";
           const payload = toSupabasePayload(item, profileId);
-          await supabase.from("library_items").upsert({
-            user_id: session.user.id,
-            profile_id: profileId,
-            content_id: payload.content_id,
-            content_type: payload.content_type,
-            name: payload.name,
-            poster: payload.poster,
-            poster_shape: "POSTER",
-            background: payload.background,
-            description: payload.description,
-            release_info: payload.release_info,
-            imdb_rating: payload.imdb_rating,
-            genres: payload.genres,
-            added_at: payload.added_at,
-          }, { onConflict: "user_id,profile_id,content_id" });
+          await syncItemRowToSupabase(session.user.id, profileId, payload);
         }
         saveLibraryItems(cached);
         saveLibraryToIndexedDB(cached, profileId);
-      } catch {}
+      } catch (e) {
+        console.warn("Hydrate cloud from local exception", e);
+      }
     }
 
     return cached;
@@ -596,31 +618,20 @@ export async function addToLibrary(
         console.warn("sync_push_library RPC notice:", rpcErr);
       }
 
-      // 2b. Guaranteed direct upsert to library_items table (matches mobile table schema)
-      const payload = toSupabasePayload(newItem, profileId);
-      await supabase.from("library_items").upsert({
-        user_id: session.user.id,
-        profile_id: profileId,
-        content_id: payload.content_id,
-        content_type: payload.content_type,
-        name: payload.name,
-        poster: payload.poster,
-        poster_shape: "POSTER",
-        background: payload.background,
-        description: payload.description,
-        release_info: payload.release_info, // ONLY 4-DIGIT YEAR!
-        imdb_rating: payload.imdb_rating,
-        genres: payload.genres,
-        added_at: payload.added_at,
-      }, { onConflict: "user_id,profile_id,content_id" });
+      // 2b. Guaranteed direct upsert of ALL library items to library_items table (ensures Android gets entire library!)
+      for (const item of deduplicated) {
+        const payload = toSupabasePayload(item, profileId);
+        await syncItemRowToSupabase(session.user.id, profileId, payload);
+      }
 
       // 2c. Broadcast sync invalidation so Android mobile apps auto-refresh!
       try {
+        const addedContentId = String(newItem.imdbId || newItem.id);
         await supabase.rpc("emit_sync_invalidation", {
           p_user_id: session.user.id,
           p_profile_id: profileId,
           p_surface: "library",
-          p_metadata: { source: "nuvio-web", content_id: payload.content_id, action: "add" },
+          p_metadata: { source: "nuvio-web", content_id: addedContentId, action: "add" },
         });
       } catch {}
 

@@ -138,7 +138,7 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
             ref={rowRef}
             className="flex gap-4 overflow-x-auto hide-scrollbar pb-6 pt-2 px-1"
           >
-            {movies.map((movie) => {
+            {movies.map((movie, idx) => {
               const imgSrc = large
                 ? `${TMDB_IMAGE_W500}${movie.poster_path}`
                 : `${TMDB_IMAGE_W500}${movie.backdrop_path || movie.poster_path}`;
@@ -146,7 +146,7 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
 
               return (
                 <div
-                  key={movie.id}
+                  key={`${movie.id}-${idx}`}
                   onClick={() => onSelectMovie?.(movie)}
                   className={`row-card cursor-pointer rounded-xl relative group/card shrink-0 transition-transform duration-300 hover:scale-105 hover:z-10 shadow-md ${
                     large ? "w-40 h-[240px]" : "w-60 h-[135px]"
@@ -159,7 +159,7 @@ export default function ContentRow({ title, url, large, first, onSelectMovie }: 
                         alt={title_}
                         className="w-full h-full object-cover transition-opacity duration-700 opacity-0"
                         loading="lazy"
-                        crossOrigin="anonymous"
+                        referrerPolicy="no-referrer"
                         onLoad={(e) => (e.currentTarget.style.opacity = '1')}
                         ref={(img) => { if (img?.complete) { img.style.transition = 'none'; img.style.opacity = '1'; } }}
                       />

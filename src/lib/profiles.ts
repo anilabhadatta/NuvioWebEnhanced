@@ -47,17 +47,8 @@ export interface ProfilePushPayload {
 export const DEFAULT_FALLBACK_PROFILES: NuvioProfile[] = [
   {
     profile_index: 1,
-    name: "BiraJ",
+    name: "Default Profile",
     avatar_color_hex: "#FB8C00",
-    avatar_id: "astronaut",
-    uses_primary_addons: true,
-    uses_primary_plugins: true,
-  },
-  {
-    profile_index: 2,
-    name: "Hall TV",
-    avatar_color_hex: "#1E88E5",
-    avatar_id: "tv",
     uses_primary_addons: true,
     uses_primary_plugins: true,
   },
@@ -81,7 +72,7 @@ export async function pullProfiles(): Promise<NuvioProfile[]> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
-      // Fallback to local cache so localhost and offline retain saved profiles
+      // Fallback to local cache so offline and local guests retain profiles
       if (typeof window !== "undefined") {
         try {
           const cached = localStorage.getItem("nuvio_profiles_cache");
@@ -89,32 +80,57 @@ export async function pullProfiles(): Promise<NuvioProfile[]> {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed) && parsed.length > 0) return parsed;
           }
-          // Seed fallback profiles so localhost detects profiles instantly
-          localStorage.setItem("nuvio_profiles_cache", JSON.stringify(DEFAULT_FALLBACK_PROFILES));
-          return DEFAULT_FALLBACK_PROFILES;
         } catch {}
       }
       return DEFAULT_FALLBACK_PROFILES;
     }
-    const { data, error } = await supabase.rpc("sync_pull_profiles");
-    if (error) {
-      handleInvalidTokenError(error);
-      if (typeof window !== "undefined") {
-        try {
-          const cached = localStorage.getItem("nuvio_profiles_cache");
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-          }
-          return DEFAULT_FALLBACK_PROFILES;
-        } catch {}
+
+    let userProfiles: NuvioProfile[] = [];
+
+    // 1. Primary: Supabase sync_pull_profiles RPC
+    try {
+      const { data, error } = await supabase.rpc("sync_pull_profiles");
+      if (error) {
+        handleInvalidTokenError(error);
+      } else if (data && Array.isArray(data) && data.length > 0) {
+        userProfiles = data;
       }
-      return DEFAULT_FALLBACK_PROFILES;
+    } catch (e) {
+      console.warn("sync_pull_profiles exception", e);
     }
-    if (!data || !Array.isArray(data) || data.length === 0) {
-      return DEFAULT_FALLBACK_PROFILES;
+
+    // 2. Direct table fallback if RPC returned 0 rows
+    if (userProfiles.length === 0) {
+      try {
+        const { data: tableData } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("user_id", session.user.id)
+          .order("profile_index", { ascending: true });
+        if (tableData && Array.isArray(tableData) && tableData.length > 0) {
+          userProfiles = tableData;
+        }
+      } catch {}
     }
-    const sorted = (data as NuvioProfile[]).sort((a, b) => a.profile_index - b.profile_index);
+
+    // 3. Dynamic fallback using authenticated Supabase user metadata
+    if (userProfiles.length === 0) {
+      const meta = (session.user.user_metadata || {}) as Record<string, any>;
+      const dynamicName = meta.full_name || meta.name || session.user.email?.split("@")[0] || "Profile 1";
+      const dynamicAvatar = meta.avatar_url || meta.picture || null;
+      userProfiles = [
+        {
+          profile_index: 1,
+          name: dynamicName,
+          avatar_color_hex: "#FB8C00",
+          avatar_url: dynamicAvatar,
+          uses_primary_addons: true,
+          uses_primary_plugins: true,
+        },
+      ];
+    }
+
+    const sorted = userProfiles.sort((a, b) => a.profile_index - b.profile_index);
     if (typeof window !== "undefined") {
       try {
         localStorage.setItem("nuvio_profiles_cache", JSON.stringify(sorted));
