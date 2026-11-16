@@ -6,6 +6,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const openAppBtn = document.getElementById("openAppBtn");
 
   const RULESET_ID = "cors_rules";
+  const ext = typeof chrome !== "undefined" && chrome.runtime ? chrome : (typeof browser !== "undefined" ? browser : null);
 
   const updateUI = (enabled) => {
     toggle.checked = enabled;
@@ -22,15 +23,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // 1. Check current enabled rulesets via declarativeNetRequest API
   try {
-    if (chrome.declarativeNetRequest && chrome.declarativeNetRequest.getEnabledRulesets) {
-      const enabledRulesets = await chrome.declarativeNetRequest.getEnabledRulesets();
+    if (ext && ext.declarativeNetRequest && ext.declarativeNetRequest.getEnabledRulesets) {
+      const enabledRulesets = await ext.declarativeNetRequest.getEnabledRulesets();
       const isEnabled = enabledRulesets.includes(RULESET_ID);
       updateUI(isEnabled);
-    } else {
+    } else if (ext && ext.storage && ext.storage.local) {
       // Fallback to storage
-      chrome.storage.local.get(["cors_enabled"], (res) => {
-        updateUI(res.cors_enabled !== false);
+      ext.storage.local.get(["cors_enabled"], (res) => {
+        updateUI(res && res.cors_enabled !== false);
       });
+    } else {
+      updateUI(true);
     }
   } catch {
     updateUI(true);
@@ -40,13 +43,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   toggle.addEventListener("change", async () => {
     const shouldEnable = toggle.checked;
     try {
-      if (chrome.declarativeNetRequest && chrome.declarativeNetRequest.updateEnabledRulesets) {
-        await chrome.declarativeNetRequest.updateEnabledRulesets({
+      if (ext && ext.declarativeNetRequest && ext.declarativeNetRequest.updateEnabledRulesets) {
+        await ext.declarativeNetRequest.updateEnabledRulesets({
           enableRulesetIds: shouldEnable ? [RULESET_ID] : [],
           disableRulesetIds: shouldEnable ? [] : [RULESET_ID],
         });
       }
-      chrome.storage.local.set({ cors_enabled: shouldEnable });
+      if (ext && ext.storage && ext.storage.local) {
+        ext.storage.local.set({ cors_enabled: shouldEnable });
+      }
       updateUI(shouldEnable);
     } catch (err) {
       console.error("Failed to toggle CORS ruleset:", err);
@@ -55,24 +60,31 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // 3. Open Nuvio Web action
+  // 3. Open Nuvio Web action (Universal across Desktop, Android, iPad, and iOS)
   openAppBtn.addEventListener("click", () => {
-    chrome.tabs.query({ url: "*://*/*" }, (tabs) => {
-      const nuvioTab = tabs.find(
-        (t) =>
-          t.url &&
-          (t.url.includes("localhost:3000") ||
-            t.url.includes("nuvioweb") ||
-            t.url.includes("nuvio-web-enhanced"))
-      );
-      if (nuvioTab && nuvioTab.id) {
-        chrome.tabs.update(nuvioTab.id, { active: true });
-        if (nuvioTab.windowId) {
-          chrome.windows.update(nuvioTab.windowId, { focused: true });
+    const targetUrl = "https://nuvio-web.vercel.app";
+
+    if (ext && ext.tabs && ext.tabs.query) {
+      ext.tabs.query({ url: "*://*/*" }, (tabs) => {
+        const nuvioTab = tabs && tabs.find(
+          (t) =>
+            t.url &&
+            (t.url.includes("localhost:3000") ||
+              t.url.includes("nuvio-web") ||
+              t.url.includes("nuvioweb") ||
+              t.url.includes("nuvio.app"))
+        );
+        if (nuvioTab && nuvioTab.id) {
+          ext.tabs.update(nuvioTab.id, { active: true });
+          if (nuvioTab.windowId && ext.windows && ext.windows.update) {
+            ext.windows.update(nuvioTab.windowId, { focused: true });
+          }
+        } else {
+          ext.tabs.create({ url: targetUrl });
         }
-      } else {
-        chrome.tabs.create({ url: "http://localhost:3000" });
-      }
-    });
+      });
+    } else {
+      window.open(targetUrl, "_blank");
+    }
   });
 });

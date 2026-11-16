@@ -3,7 +3,6 @@
   "name": "Nuvio CORS Unlocker",
   "version": "1.0.0",
   "description": "Unlocks CORS headers for TorBox, Real-Debrid, and streaming media APIs to enable WebCodecs hardware decoding in Nuvio Web.",
-  "minimum_chrome_version": "102",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -35,5 +34,11 @@
         "path": "rules.json"
       }
     ]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "cors-unlocker@nuvio.app",
+      "strict_min_version": "109.0"
+    }
   }
 }

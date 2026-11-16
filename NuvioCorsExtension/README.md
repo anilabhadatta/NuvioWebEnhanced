@@ -1,15 +1,18 @@
 # Nuvio CORS Unlocker Extension
 
-A lightweight, high-performance Chromium extension (Manifest V3) designed for **Nuvio Web**. It unlocks Cross-Origin Resource Sharing (CORS) headers on debrid video streams and external media CDNs, enabling zero-latency playback and direct **WebCodecs hardware acceleration**.
+A lightweight, high-performance universal WebExtension (Manifest V3) designed for **Nuvio Web**. It unlocks Cross-Origin Resource Sharing (CORS) headers on debrid video streams and external media CDNs, enabling zero-latency playback and direct **WebCodecs hardware acceleration**.
 
 ---
 
-## Supported Browsers
+## Universal Multi-Platform Compatibility
 
-- **Google Chrome** (v102+)
-- **Brave Browser** (v102+)
-- **Microsoft Edge** (v102+)
-- Any modern Chromium-based browser (Opera, Vivaldi, Arc, etc.)
+| Operating System | Supported Browsers | Installation Method |
+|---|---|---|
+| **Windows** | Chrome, Brave, Edge, Opera, Vivaldi, Firefox | Load unpacked or ZIP via `chrome://extensions` or `about:debugging` |
+| **macOS** | Chrome, Brave, Edge, Safari, Firefox, Orion | Load unpacked in Chrome/Brave/Edge or convert to Safari via `xcrun` |
+| **Linux** | Chrome, Chromium, Brave, Edge, Firefox | Load unpacked or ZIP in browser extension manager |
+| **Android** | Kiwi Browser, Lemur Browser, Firefox Nightly, Iceraven | Load unpacked folder or install ZIP via browser Extensions menu |
+| **iPadOS & iOS** | Orion Browser (native Chrome/Firefox extension support), Safari (via Web Extension App) | Install directly in Orion via Extensions menu, or build for Safari |
 
 ---
 
@@ -24,41 +27,49 @@ When running directly in the browser:
 
 ---
 
-## Installation Guide
+## Installation Guide by Platform
 
-### Option 1: Install from Release ZIP (Recommended)
-1. Download or locate `nuvio-cors-extension-v1.0.0.zip`.
-2. Extract the ZIP file to a convenient folder on your computer.
-3. Follow the browser-specific steps below.
+### 1. Windows / macOS / Linux (Desktop Chromium)
+1. Download or extract `nuvio-cors-extension-v1.0.0.zip`.
+2. Open your browser and navigate to the extension manager:
+   - **Chrome:** `chrome://extensions/`
+   - **Brave:** `brave://extensions/`
+   - **Edge:** `edge://extensions/`
+3. Toggle on **Developer mode** (top-right switch).
+4. Click **Load unpacked** and select the `NuvioCorsExtension` directory.
+5. Pin the Nuvio icon to your toolbar.
 
-### Option 2: Load Unpacked Source
-You can load the `NuvioCorsExtension` directory directly:
+### 2. Desktop Firefox
+1. Open Firefox and go to `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on...**.
+3. Select `manifest.json` inside the `NuvioCorsExtension` directory.
 
-#### For Google Chrome:
-1. Open Chrome and navigate to `chrome://extensions/`.
-2. Turn on **Developer mode** using the toggle switch in the top-right corner.
-3. Click the **Load unpacked** button in the top-left toolbar.
-4. Select the `NuvioCorsExtension` folder (or extracted release folder).
-5. The extension icon will appear in your extensions list and toolbar!
+### 3. Android (Kiwi Browser or Lemur Browser)
+1. Install **Kiwi Browser** or **Lemur Browser** from Google Play or GitHub.
+2. Download or copy `nuvio-cors-extension-v1.0.0.zip` to your device.
+3. Open Kiwi/Lemur, tap the 3-dot menu (`⋮`), and select **Extensions**.
+4. Enable **Developer mode**.
+5. Tap **+(from .zip / .crx / .user.js)** and select the ZIP file.
+6. The extension is now active on Android!
 
-#### For Brave Browser:
-1. Open Brave and navigate to `brave://extensions/`.
-2. Enable **Developer mode** in the top-right corner.
-3. Click **Load unpacked**.
-4. Select the `NuvioCorsExtension` folder.
-5. *Note:* The extension operates independently of Brave Shields; you do not need to lower shields.
+### 4. iPadOS & iOS (Orion Browser - Recommended)
+1. Install **Orion Browser by Kagi** from the App Store (iPad and iPhone).
+2. Open Orion, tap the gear icon / menu (`⋯`), and tap **Extensions**.
+3. Tap **Install from File...** or install the unpacked folder.
+4. Orion runs the extension using its native WebKit WebExtensions engine!
 
-#### For Microsoft Edge:
-1. Open Edge and navigate to `edge://extensions/`.
-2. Toggle on **Developer mode** in the left sidebar.
-3. Click **Load unpacked**.
-4. Select the `NuvioCorsExtension` folder.
+### 5. macOS / iPadOS / iOS (Apple Safari via Xcode Converter)
+On a Mac, you can package this extension into a signed Safari Extension for macOS and iOS/iPadOS using Apple's official tool:
+```bash
+xcrun safari-web-extension-converter NuvioCorsExtension --app-name "Nuvio CORS Unlocker"
+```
+Open the generated Xcode project, build, and enable under Safari Settings > Extensions.
 
 ---
 
 ## How It Works
 
-This extension utilizes the modern **Chrome Declarative Net Request API** (`declarativeNetRequest`). Rather than intercepting and inspecting request bodies in JavaScript, the Chromium browser engine itself safely appends the necessary CORS response headers at the network layer:
+This extension utilizes the W3C standard **Declarative Net Request API** (`declarativeNetRequest`). Rather than intercepting and inspecting request bodies in JavaScript, the browser network stack itself appends the necessary CORS response headers at the lowest layer:
 
 - `Access-Control-Allow-Origin: *`
 - `Access-Control-Allow-Methods: GET, PUT, POST, DELETE, HEAD, OPTIONS, PATCH`
