@@ -8,6 +8,7 @@ import { config } from "@/lib/config";
 import { useAuth } from "@/lib/useAuth";
 import { useProfiles } from "@/lib/useProfiles";
 import ProfileAvatar from "@/components/ProfileAvatar";
+import SignOutConfirmModal from "@/components/SignOutConfirmModal";
 
 const NAV_ITEMS = [
   {
@@ -65,6 +66,8 @@ export default function Sidebar() {
   const { profiles, activeProfile, activeProfileId, switchProfile } = useProfiles();
   const [profileMenuOpen, setProfileMenuOpen] = React.useState(false);
   const [localTestingActive, setLocalTestingActive] = React.useState(false);
+  const [showSignOutConfirm, setShowSignOutConfirm] = React.useState(false);
+  const [signingOut, setSigningOut] = React.useState(false);
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -72,10 +75,22 @@ export default function Sidebar() {
     }
   }, [pathname]);
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    localStorage.removeItem("nuvio_anon");
-    router.push("/");
+  const handleSignOutConfirm = async () => {
+    setSigningOut(true);
+    try {
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.removeItem("nuvio_is_authenticated_cache");
+          localStorage.removeItem("nuvio_display_name_cache");
+          localStorage.removeItem("nuvio_anon");
+        } catch {}
+      }
+      await supabase.auth.signOut();
+      setShowSignOutConfirm(false);
+      router.push("/");
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   // Prefer the active profile's name when profiles exist; otherwise the account name.
@@ -174,8 +189,8 @@ export default function Sidebar() {
       <div className="p-3 border-t border-white/5">
         {isAuthenticated ? (
           <button
-            onClick={handleSignOut}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium text-[#888] hover:text-white hover:bg-white/5 w-full transition-all duration-150"
+            onClick={() => setShowSignOutConfirm(true)}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium text-[#888] hover:text-white hover:bg-white/5 w-full transition-all duration-150 cursor-pointer"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
@@ -194,6 +209,15 @@ export default function Sidebar() {
           </Link>
         )}
       </div>
+
+      {/* Two-step Sign Out Confirmation Modal */}
+      <SignOutConfirmModal
+        isOpen={showSignOutConfirm}
+        onClose={() => setShowSignOutConfirm(false)}
+        onConfirm={handleSignOutConfirm}
+        userDisplayName={shownName}
+        signingOut={signingOut}
+      />
     </aside>
   );
 }

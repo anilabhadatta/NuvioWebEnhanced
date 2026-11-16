@@ -7,11 +7,14 @@ import { useAuth } from "@/lib/useAuth";
 import { supabase } from "@/lib/supabase";
 import Toast from "@/components/Toast";
 import NuvioIcon from "@/components/NuvioIcon";
+import SignOutConfirmModal from "@/components/SignOutConfirmModal";
 
 export default function Home() {
   const router = useRouter();
   const { isAuthenticated, loading, displayName } = useAuth();
   const [showToast, setShowToast] = React.useState(false);
+  const [showSignOutConfirm, setShowSignOutConfirm] = React.useState(false);
+  const [signingOut, setSigningOut] = React.useState(false);
 
   React.useEffect(() => {
     if (showToast) {
@@ -31,10 +34,22 @@ export default function Home() {
     }
   };
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    try { localStorage.removeItem("nuvio_anon"); } catch { /* ignore */ }
-    router.refresh();
+  const handleSignOutConfirm = async () => {
+    setSigningOut(true);
+    try {
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.removeItem("nuvio_is_authenticated_cache");
+          localStorage.removeItem("nuvio_display_name_cache");
+          localStorage.removeItem("nuvio_anon");
+        } catch {}
+      }
+      await supabase.auth.signOut();
+      setShowSignOutConfirm(false);
+      router.refresh();
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   return (
@@ -55,8 +70,8 @@ export default function Home() {
                 Signed in as <span className="text-white font-semibold">{displayName}</span>
               </span>
               <button
-                onClick={handleSignOut}
-                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-semibold transition-colors"
+                onClick={() => setShowSignOutConfirm(true)}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-semibold transition-colors cursor-pointer"
               >
                 Logout
               </button>
@@ -126,6 +141,15 @@ export default function Home() {
           onClose={() => setShowToast(false)}
         />
       )}
+
+      {/* Two-step Sign Out Confirmation Modal */}
+      <SignOutConfirmModal
+        isOpen={showSignOutConfirm}
+        onClose={() => setShowSignOutConfirm(false)}
+        onConfirm={handleSignOutConfirm}
+        userDisplayName={displayName}
+        signingOut={signingOut}
+      />
     </div>
   );
 }

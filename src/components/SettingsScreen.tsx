@@ -15,6 +15,7 @@ import CollectionsSection from "./settings/CollectionsSection";
 import IntegrationsSection from "./settings/IntegrationsSection";
 import PlaybackSection from "./settings/PlaybackSection";
 import AdvancedSection from "./settings/AdvancedSection";
+import SignOutConfirmModal from "./SignOutConfirmModal";
 
 const CATEGORIES = [
   { id: "account", label: "Account" },
@@ -32,11 +33,25 @@ export default function SettingsScreen() {
   const { displayName } = useAuth();
   const { activeProfile } = useProfiles();
   const [active, setActive] = useState("profiles");
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    localStorage.removeItem("nuvio_anon");
-    router.push("/");
+  const handleSignOutConfirm = async () => {
+    setSigningOut(true);
+    try {
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.removeItem("nuvio_is_authenticated_cache");
+          localStorage.removeItem("nuvio_display_name_cache");
+          localStorage.removeItem("nuvio_anon");
+        } catch {}
+      }
+      await supabase.auth.signOut();
+      setShowSignOutConfirm(false);
+      router.push("/");
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   return (
@@ -84,8 +99,8 @@ export default function SettingsScreen() {
                   </div>
                 </div>
                 <button
-                  onClick={handleSignOut}
-                  className="flex items-center gap-2 text-red-400 hover:text-red-300 font-semibold bg-red-400/10 hover:bg-red-400/20 px-4 py-2.5 rounded-xl text-sm transition-colors"
+                  onClick={() => setShowSignOutConfirm(true)}
+                  className="flex items-center gap-2 text-red-400 hover:text-red-300 font-semibold bg-red-400/10 hover:bg-red-400/20 px-4 py-2.5 rounded-xl text-sm transition-colors cursor-pointer"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
@@ -95,6 +110,15 @@ export default function SettingsScreen() {
               </div>
             </div>
           )}
+
+          {/* Two-step Sign Out Confirmation Modal */}
+          <SignOutConfirmModal
+            isOpen={showSignOutConfirm}
+            onClose={() => setShowSignOutConfirm(false)}
+            onConfirm={handleSignOutConfirm}
+            userDisplayName={activeProfile?.name || displayName}
+            signingOut={signingOut}
+          />
 
           {active === "profiles" && <ProfilesSection />}
           {active === "addons" && <AddonsSection />}
