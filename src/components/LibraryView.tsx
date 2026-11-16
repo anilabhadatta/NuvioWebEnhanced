@@ -239,7 +239,6 @@ export default function LibraryView() {
               onClick={() => refreshLibrary(true)}
               disabled={syncing}
               className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white/90 hover:text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50"
-              title="Bi-directional cloud sync with Nuvio Android and Supabase"
             >
               <svg
                 viewBox="0 0 24 24"
