@@ -5,6 +5,8 @@ import { LibraryItem } from "./library";
 
 export interface DexieLibraryItem {
   id: string; // content_id or TMDB id
+  imdbId?: string;
+  tmdbId?: number | string;
   profileId: number;
   contentType: string; // movie, series, anime
   title: string;
@@ -15,6 +17,7 @@ export interface DexieLibraryItem {
   rating?: number;
   genres?: string[];
   addedAt: number;
+  source?: "account" | "web";
   syncedWithCloud?: boolean;
 }
 
@@ -69,6 +72,8 @@ export async function saveLibraryToIndexedDB(
   try {
     const records: DexieLibraryItem[] = items.map((i) => ({
       id: String(i.id),
+      imdbId: i.imdbId,
+      tmdbId: i.tmdbId,
       profileId,
       contentType: i.category,
       title: i.title,
@@ -79,7 +84,8 @@ export async function saveLibraryToIndexedDB(
       rating: i.rating,
       genres: i.genres,
       addedAt: i.addedAt,
-      syncedWithCloud: true,
+      source: i.source || "account",
+      syncedWithCloud: i.syncedWithCloud !== false,
     }));
 
     await db.transaction("rw", db.library, async () => {
@@ -101,6 +107,8 @@ export async function getLibraryFromIndexedDB(profileId: number): Promise<Librar
     const records = await db.library.where("profileId").equals(profileId).toArray();
     return records.map((r: DexieLibraryItem) => ({
       id: r.id,
+      imdbId: r.imdbId,
+      tmdbId: r.tmdbId,
       title: r.title,
       type: r.contentType === "series" ? "series" : "movie",
       category: (r.contentType as any) || "movie",
@@ -111,6 +119,8 @@ export async function getLibraryFromIndexedDB(profileId: number): Promise<Librar
       rating: r.rating,
       genres: r.genres || [],
       addedAt: r.addedAt || Date.now(),
+      source: r.source || "account",
+      syncedWithCloud: r.syncedWithCloud !== false,
     }));
   } catch (err) {
     console.warn("Failed to read library from IndexedDB:", err);
